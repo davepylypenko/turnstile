@@ -123,3 +123,59 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
     if s == "APPROVED":
         return "wait for the lead to merge"
     return "done"
+
+STORY_FROM = {
+    "PLANNED": [],
+    "IN_PROGRESS": ["PLANNED", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"],
+    "INTEGRATION_REVIEW": ["IN_PROGRESS", "ENV_TESTING"],
+    "ENV_TESTING": ["INTEGRATION_REVIEW"],
+    "DONE": ["ENV_TESTING"],
+}
+PR_AT_LEAST_READY = ["READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
+
+def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None) -> List[str]:
+    out: List[str] = []
+    if target not in STORY_STATES:
+        return ["MISSING valid target state (one of %s)" % ", ".join(STORY_STATES)]
+    src = story.get("state")
+    if src not in STORY_FROM[target]:
+        return ["MISSING allowed transition: %s from %s" % (target, src)]
+    if target == "IN_PROGRESS":
+        if src != "PLANNED" and not reason:
+            out.append("MISSING --reason to reopen a story")
+        for dep in story.get("after") or []:
+            if (stories.get(dep) or {}).get("state") != "DONE" and not reason:
+                out.append("MISSING story %s to be DONE first (or --reason for a lead override)" % dep)
+        return out
+    if target == "INTEGRATION_REVIEW":
+        mine = [pid for pid, p in prs.items() if p.get("story") == story.get("_id")]
+        for pid in mine:
+            if prs[pid].get("state") not in PR_AT_LEAST_READY:
+                out.append("MISSING PR %s at least READY (is %s)" % (pid, prs[pid].get("state")))
+        if not (story.get("evidence") or {}).get("deploy", {}).get("build"):
+            out.append("MISSING evidence.deploy.build (stack top deployed to the story env slot)")
+        return out
+    if target == "ENV_TESTING":
+        ir = (story.get("evidence") or {}).get("integration_review") or {}
+        if not ir.get("clean") or not ir.get("head"):
+            out.append("MISSING evidence.integration_review.clean with head")
+        return out
+    if target == "DONE":
+        et = (story.get("evidence") or {}).get("env_test") or {}
+        cases = et.get("cases") or {}
+        if not et.get("report"):
+            out.append("MISSING evidence.env_test.report")
+        if cases.get("fail", 1) != 0:
+            out.append("MISSING evidence.env_test.cases.fail == 0 (has %s)" % cases.get("fail"))
+        if et.get("figma_parity") != "pass":
+            out.append("MISSING evidence.env_test.figma_parity == pass (has %s)" % et.get("figma_parity"))
+        return out
+    return out
+
+def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
+    s = story.get("state")
+    return {"PLANNED": "wait for the lead to start it",
+            "IN_PROGRESS": "bring every PR to READY, deploy the stack top, then pass INTEGRATION_REVIEW",
+            "INTEGRATION_REVIEW": "run the story-reviewer agent until clean, then pass ENV_TESTING",
+            "ENV_TESTING": "run the tester agent; fix bugs; re-run; then pass DONE",
+            "DONE": "wait for the lead's word to send the story's units to humans"}.get(s, "")
