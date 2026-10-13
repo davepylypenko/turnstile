@@ -96,17 +96,24 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]
     def for_head(key):
         e = ev.get(key)
         return e if e and rules.same_head(e.get("head"), h) else None
+    # the gate's GitHub context: `gate_check` (null for a skill gate that posts no check, e.g. pr-review), default the gate name
+    gate_check = repo_cfg["gate_check"] if "gate_check" in repo_cfg else repo_cfg.get("gate")
     if target in ("AI_REVIEW", "READY", "ON_HUMAN_REVIEW"):
         ci = for_head("ci")
-        if ci and ci.get("status") == "success" and facts.ci != "success":
-            out.append("MISSING CI success on GitHub for head %s (is %s); evidence says success" % (h, facts.ci))
+        # entering AI_REVIEW the gate has not run yet: CI there excludes the gate's contexts; READY onward needs the whole rollup
+        actual_ci = facts.ci_without(repo_cfg.get("ci_ignore", [gate_check] if gate_check else [])) if target == "AI_REVIEW" else facts.ci
+        if ci and ci.get("status") == "success" and actual_ci != "success":
+            out.append("MISSING CI success on GitHub for head %s (is %s); evidence says success" % (h, actual_ci))
+        if facts.unsigned:
+            out.append("MISSING every commit signed (unsigned: %s)" % ", ".join(facts.unsigned))
+        if pr.get("base") and facts.base and facts.base != pr.get("base"):
+            out.append("MISSING PR base %s on GitHub (is %s): ticket PRs go into the planned story/epic branch" % (pr.get("base"), facts.base))
     if target in ("READY", "ON_HUMAN_REVIEW"):
-        gate_name = repo_cfg.get("gate")
         g = for_head("gate")
-        if gate_name and g and g.get("result") == "pass":
-            actual = facts.checks.get(gate_name)
+        if gate_check and g and g.get("result") == "pass":
+            actual = facts.checks.get(gate_check)
             if actual != "success":
-                out.append("MISSING gate %s == success on GitHub for head %s (is %s); evidence says pass" % (gate_name, h, actual or "absent"))
+                out.append("MISSING gate %s == success on GitHub for head %s (is %s); evidence says pass" % (gate_check, h, actual or "absent"))
         c = for_head("copilot")
         if repo_cfg.get("copilot") and c and c.get("open_threads") == 0 and facts.copilot_threads_open != 0:
             out.append("MISSING Copilot threads == 0 on GitHub for head %s (has %d); evidence says 0" % (h, facts.copilot_threads_open))

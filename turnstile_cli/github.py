@@ -7,7 +7,8 @@ from .rules import same_head
 BOT = "copilot-pull-request-reviewer"
 BOT_LOGINS = {BOT, "Snyk-Agent", "application-pdffiller"}
 QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
-  isDraft merged mergeCommit{oid} headRefOid reviewDecision
+  isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision
+  allCommits: commits(last:100){totalCount nodes{commit{oid signature{isValid}}}}
   latestReviews(first:30){nodes{author{__typename login} state commit{oid}}}
   reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{__typename login}}}}}
   commits(last:1){nodes{commit{oid signature{isValid} statusCheckRollup{state contexts(first:100){totalCount nodes{
@@ -32,6 +33,16 @@ class PrFacts:
     human_threads_open: int = 0
     copilot_threads_open: int = 0
     head_signed: Optional[bool] = None
+    base: Optional[str] = None
+    unsigned: List[str] = field(default_factory=list)  # every commit of the PR without a valid signature (spec §3 DEV DoD)
+
+    def ci_without(self, names) -> str:
+        """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
+        the CI that AI_REVIEW requires). Falls back to the rollup when the context list is truncated or holds nothing else."""
+        rest = [v for k, v in self.checks.items() if k not in set(names or [])]
+        if not self.checks_complete or not rest:
+            return self.ci
+        return "failure" if "failure" in rest else "pending" if "pending" in rest else "success"
 
 def _low(x: Optional[str]) -> str:
     return (x or "unknown").lower()
@@ -95,7 +106,9 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
         elif not is_bot(author):
             human_open += 1
     sig = last.get("signature")
-    return PrFacts(id=pr_id, head=head, merged=bool(pr.get("merged")),
+    unsigned = [((n.get("commit") or {}).get("oid") or "")[:12] for n in (pr.get("allCommits") or {}).get("nodes") or []
+                if not ((n.get("commit") or {}).get("signature") or {}).get("isValid")]
+    return PrFacts(base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
                    checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes),
                    human_threads_open=human_open, copilot_threads_open=copilot_open,

@@ -476,6 +476,35 @@ class PassCmd(unittest.TestCase):
         self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca0000"}
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io), 0)
 
+    def test_ci_excludes_the_gate_and_skill_gates_need_no_check(self):
+        # R3-4: the gate runs in AI_REVIEW, so a red/pending gate context must not make DEV -> AI_REVIEW impossible
+        self.io.facts["docs-platform#2"] = {"ci": "failure", "checks": {"pdf-review": "failure", "gate / gate": "failure", "ci / Unit tests": "success"}}
+        data = self.data(); data["epic"]["repos"]["docs-platform"]["ci_ignore"] = ["pdf-review", "gate / gate"]; self.write(data)
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0, out)
+        self.io.facts["docs-platform#2"]["checks"]["pdf-review"] = "success"  # READY needs the whole rollup, gate included
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "READY", opts(head="bbbbbbbb22222222", ci="success", deep_review="reports/R.md",
+                                                                             gate="pdf-review:pass", copilot=0), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING CI success on GitHub for head bbbbbbbb22222222 (is failure)", out)
+        # R3-5: a skill gate (pr-review) posts no GitHub context; gate_check: null skips the context check, the report stays required
+        self.io.facts["jsfiller#1"] = {"checks": {"ci / Unit tests": "success"}}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("gate pdf-review == success on GitHub", out)
+        data = self.data(); data["epic"]["repos"]["jsfiller"]["gate_check"] = None; self.write(data)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 0, out)
+
+    def test_every_commit_signed_and_base_matches(self):
+        # spec §3 DEV DoD (every commit signed) and §4.2 (ticket PRs go into the planned branch), checked against GitHub
+        self.io.facts["jsfiller#1"] = {"unsigned": ["deadbeef0001"]}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING every commit signed (unsigned: deadbeef0001)", out)
+        self.io.facts["jsfiller#1"] = {"base": "develop"}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING PR base epic_myd-1 on GitHub (is develop)", out)
+        self.io.facts["jsfiller#1"] = {"base": "epic_myd-1"}
+        self.to_ready()
+
     def test_next_ah_id_tolerates_odd_ids(self):
         self.assertEqual(pass_cmd._next_ah_id({"awaiting_human": [{"id": "ah-x"}, {"id": "ah-4"}, {"id": "zz"}]}), "ah-5")
         self.assertEqual(pass_cmd._next_ah_id({"awaiting_human": []}), "ah-1")
@@ -515,3 +544,13 @@ class RealGitCommit(unittest.TestCase):
         files = run("git", "show", "--name-only", "--format=", "HEAD").stdout.split()
         self.assertEqual(files, ["delivery/state.json"])
         self.assertIn("M  other.md", run("git", "status", "--porcelain").stdout)
+
+class Round3Parse(unittest.TestCase):
+    def test_parse_reads_base_and_unsigned_commits(self):
+        from turnstile_cli import github
+        f = github.parse("jsfiller#1", {"headRefOid": H, "baseRefName": "epic_x", "allCommits": {"nodes": [
+            {"commit": {"oid": "a" * 40, "signature": {"isValid": True}}}, {"commit": {"oid": "b" * 40, "signature": None}}]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE", "contexts": {"totalCount": 2, "nodes": [
+                {"context": "pdf-review", "state": "FAILURE"}, {"name": "ci / Unit tests", "conclusion": "SUCCESS"}]}}}}]}})
+        self.assertEqual(f.base, "epic_x"); self.assertEqual(f.unsigned, ["b" * 12])
+        self.assertEqual(f.ci, "failure"); self.assertEqual(f.ci_without(["pdf-review"]), "success")

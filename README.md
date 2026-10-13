@@ -52,7 +52,7 @@ unresolved threads, merge state. The pass is refused when the recorded `--head` 
 one, when `gh` fails, and when the evidence contradicts GitHub for that head: `--ci success` with a rollup that is not
 success, `--gate <name>:pass` while that StatusContext/CheckRun is pending, failed or absent, `--copilot 0` with open
 Copilot threads, `--approvals a,b` with a login missing from `latestReviews` for the head, unresolved human threads or
-changes requested at APPROVED, `MERGED` while GitHub shows the PR open. Self-reported evidence never outranks GitHub. `--offline` skips the check with a loud `WARN` line and records
+changes requested at APPROVED, `MERGED` while GitHub shows the PR open, any unsigned commit in the PR, a PR base that is not the recorded `base`. Self-reported evidence never outranks GitHub. The gate's GitHub context is `epic.repos.<repo>.gate_check` (default: the gate name; `null` for a skill gate that posts no check, e.g. `pr-review`, where the report file is the evidence). Entering AI_REVIEW, CI is the check contexts minus `ci_ignore` (default: the gate's context; jsfiller/docs-platform: `["pdf-review", "gate / gate"]`), because the gate runs during AI_REVIEW; from READY on the whole rollup must be green. `--offline` skips the check with a loud `WARN` line and records
 `evidence.head_verified: false`; `READY` and `ON_HUMAN_REVIEW` stay refused until a pass runs online for that head.
 
 ### The lead's word (`awaiting_human`)
