@@ -54,7 +54,10 @@ def locked(delivery: pathlib.Path, wait: bool = True):
     path = pathlib.Path(delivery) / "state.json"
     if not path.exists():
         raise TurnstileError("state file not found: %s" % path)
-    with open(str(path), "r") as f:
+    # lock a stable sidecar, never state.json itself: os.replace gives state.json a new inode, and a lock on the old
+    # inode would no longer exclude a process that opens the new one
+    lock = pathlib.Path(tempfile.gettempdir()) / ("turnstile-%s.lock" % digest(str(path.resolve()))[:16])
+    with open(str(lock), "a") as f:
         try:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except OSError:
