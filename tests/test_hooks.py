@@ -27,6 +27,12 @@ class BashGuard(unittest.TestCase):
         for cmd in cmds:
             r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
 
+    def test_blocks_round2_evasions(self):
+        self.assertBlocked(['git -C "/my dir" push --force', '"git" push --force', "gh --repo=o/r pr merge 1", "gh pr --repo o/r merge 1",
+                            'gh "pr" merge 1', "gh pr 'merge' 1", "gh api --method=PUT repos/o/r/pulls/1/merge",
+                            "gh api -XPUT repos/o/r/pulls/1/merge", "git pull --rebase", "git pull -r origin x"])
+        self.assertAllowed(["git pull origin develop", "gh pr view 1 --repo o/r"])
+
     def test_blocks(self):
         self.assertBlocked(["gh pr merge 1", "gh pr ready 1", "gh pr edit 1 --add-reviewer x", "git push --force origin x", "git push -f",
                             "git rebase develop", "git commit --no-gpg-sign -m x", "git commit -m 'x\n\nCo-Authored-By: a'",

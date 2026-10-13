@@ -3,30 +3,34 @@ sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, block
 
 # global options that may sit between the binary and its subcommand: git -C dir / -c k=v / --opt[=v]; gh -R / --repo owner/repo
-GIT = r"\bgit(?:\s+(?:-[Cc]\s+\S+|--?[\w.-]+(?:=\S+)?))*\s+"
-GH = r"\bgh(?:\s+(?:-R|--repo)\s+\S+)*\s+"
+GIT = r"\bgit(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+)|--?[\w.-]+(?:=\S+)?))*\s+"
+GH = r"\bgh(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+"
+PR = r"pr(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+"
 COPILOT = "copilot-pull-request-reviewer[bot]"
-WRITE_FLAGS = r"(?:-X\s+(?:POST|PUT|PATCH)|--method\s+(?:POST|PUT|PATCH)|\s-[fF]\s|--field|--raw-field|--input|\s-d\s)"
+WRITE_FLAGS = r"(?:-X\s*(?:POST|PUT|PATCH)|--method[\s=]+(?:POST|PUT|PATCH)|\s-[fF]\s|--field|--raw-field|--input|\s-d\s)"
 
 RULES = [
-    ("merge", GH + r"pr\s+merge\b"),
-    ("ready", GH + r"pr\s+ready\b"),
+    ("merge", GH + PR + r"merge\b"),
+    ("ready", GH + PR + r"ready\b"),
     ("add-reviewer", r"--add-reviewer\b"),
     ("graphql-merge-or-ready", r"\b(?:markPullRequestReadyForReview|mergePullRequest|requestReviews|ready_for_review)\b"),
     ("force-push", GIT + r"push\b[^\n;&|]*(\s[\"']?--force(-with-lease)?\b|\s-[a-z]*f[a-z]*\b|\s\+\S)"),
-    ("rebase", GIT + r"rebase\b"),
+    ("rebase", GIT + r"rebase\b|" + GIT + r"pull\b[^\n;&|]*\s(?:--rebase\b|-r\b)"),
     ("unsigned", r"--no-gpg-sign\b|commit\.gpgsign\s*=\s*false"),
     ("empty-variant-tag", r"service_github_tag=(?:''|\"\"|(?=[\"']?(?:\s|&|$)))"),
 ]
 # a PR/commit write: the only places where a trailer or the footer can land
-WRITE_CTX = re.compile(GIT + r"commit\b|" + GH + r"pr\s+(?:create|edit)\b|" + GH + r"api\b", re.I)
+WRITE_CTX = re.compile(GIT + r"commit\b|" + GH + PR + r"(?:create|edit)\b|" + GH + r"api\b", re.I)
 CONTENT_RULES = [("trailer", r"Co-Authored-By"), ("footer", r"Generated with \[Claude Code\]")]
 STATE_WRITE = [r">{1,2}\s*[\"']?[^\s\"'|;&]*state\.json", r"\bsed\s+(?:-[a-zA-Z]*i|--in-place)\b", r"\btee\b", r"\bpython3?\s+-c\b",
                r"\b(?:cp|mv|rm|install|truncate|dd)\b"]
-APPROVE = [r"(?:\bturnstile|turnstile_cli)\s+(?:--delivery\s+\S+\s+)?approve\b", r"turnstile_cli[^\n]*\bapprove\s*\("]
+APPROVE = [r"(?:\bturnstile|turnstile_cli)\s+(?:--delivery[=\s]\S+\s+)?approve\b", r"turnstile_cli[^\n]*\bapprove\s*\("]
 
 def check(cmd: str) -> None:
-    flat = cmd.replace("\\\n", " ")
+    for flat in (cmd.replace("\\\n", " "), re.sub(r"[\"'\\]", "", cmd.replace("\\\n", " "))):  # also unquoted: gh "pr" merge
+        _check(flat)
+
+def _check(flat: str) -> None:
     for name, rx in RULES:
         if re.search(rx, flat, re.I | re.M):
             block("blocked by rule %s. The lead performs this action, or approve it through turnstile." % name)
