@@ -5,7 +5,7 @@ TOKEN = "/*__TURNSTILE_STATE__*/null"
 
 def render(data: dict, delivery: pathlib.Path) -> pathlib.Path:
     html = TEMPLATE.read_text()
-    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    payload = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
     html = html.replace(TOKEN, payload)
     html = html.replace("__TURNSTILE_UPDATED__", datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
     out = pathlib.Path(delivery) / "board.html"

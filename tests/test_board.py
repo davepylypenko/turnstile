@@ -19,4 +19,12 @@ class Board(unittest.TestCase):
         data = json.loads(json.dumps(FIX)); data["bugs"] = [{"id": "b1", "title": "</script><b>x", "state": "todo", "story": "S1", "source": "", "pr": "", "note": ""}]
         html = board.render(data, d).read_text()
         self.assertNotIn("</script><b>x", html)
-        self.assertIn("<\\/script>", html)
+        self.assertIn("\\u003c/script>", html)
+    def test_html_comment_opener_and_link_values_are_inert(self):
+        d = pathlib.Path(tempfile.mkdtemp())
+        data = json.loads(json.dumps(FIX)); data["epic"]["key"] = "<!--<script>"
+        html = board.render(data, d).read_text()
+        self.assertNotIn("<!--<script>", html)
+        tpl = board.TEMPLATE.read_text()
+        self.assertIn("esc(prUrl(id))", tpl); self.assertIn("esc(prUrl(b.pr))", tpl)
+        self.assertIn("/^https:\\/\\//.test(h.slack_permalink", tpl)

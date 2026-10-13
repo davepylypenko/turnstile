@@ -56,8 +56,8 @@ function prs() {
     '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th></tr></thead><tbody>' +
     rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
       const h = (p.evidence || {}).human || {};
-      return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + prUrl(id) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
-        '<td>' + (h.slack_permalink ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
+      return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
+        '<td>' + (/^https:\/\//.test(h.slack_permalink || '') ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
         '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + '</td><td>' + esc(p.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>').join('');
@@ -75,7 +75,7 @@ function stories() {
 function bugs() {
   document.getElementById('bugs').innerHTML = '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Bug</th><th>Source</th><th>PR</th><th>State</th><th>Note</th></tr></thead><tbody>' +
     (STATE.bugs || []).map(b => '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
-      (b.pr ? '<a href="' + prUrl(b.pr) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td>' + badge(b.state) + '</td><td>' + esc(b.note) + '</td></tr>').join('') + '</tbody></table></div>';
+      (b.pr ? '<a href="' + esc(prUrl(b.pr)) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td>' + badge(b.state) + '</td><td>' + esc(b.note) + '</td></tr>').join('') + '</tbody></table></div>';
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
