@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turnstile Board</title>
+<meta name="description" content="Epic delivery state: PRs, stories, bugs and what waits for humans.">
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --ink:#1c1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb;
+  --dev:#9ca3af; --ai:#f59e0b; --ready:#10b981; --human:#3b82f6; --rework:#ef4444; --approved:#8b5cf6; --merged:#111827; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; } }
+:root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; }
+* { box-sizing:border-box } body { margin:0; padding:16px; background:var(--bg); color:var(--ink); font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif }
+h1 { font-size:20px; margin:0 0 4px } .updated { color:var(--muted); font-size:12px; margin-bottom:12px }
+.tiles { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px } .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:110px }
+.tile b { display:block; font-size:22px } .tile span { color:var(--muted); font-size:12px }
+h2 { font-size:16px; margin:20px 0 8px } .scroll { overflow-x:auto } table { border-collapse:collapse; width:100%; background:var(--card); border:1px solid var(--line); border-radius:8px }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; font-size:13px } th { color:var(--muted); font-weight:600 }
+.badge { display:inline-block; padding:1px 8px; border-radius:999px; color:#fff; font-size:11px; font-weight:600 }
+.k { font-family: ui-monospace, Menlo, monospace; font-size:12px } .muted { color:var(--muted) } a { color:var(--accent) }
+.tabs button { background:none; border:1px solid var(--line); border-radius:6px; padding:4px 10px; margin-right:6px; color:var(--ink); cursor:pointer } .tabs button.on { border-color:var(--accent); color:var(--accent) }
+.hidden { display:none }
+</style>
+</head>
+<body>
+<h1 id="title">Turnstile</h1>
+<div class="updated">updated __TURNSTILE_UPDATED__</div>
+<div class="tiles" id="tiles"></div>
+<div class="tabs"><button data-tab="prs" class="on">PRs</button><button data-tab="stories">Stories</button><button data-tab="bugs">Bugs</button><button data-tab="awaiting">Awaiting humans</button></div>
+<div id="prs"></div><div id="stories" class="hidden"></div><div id="bugs" class="hidden"></div><div id="awaiting" class="hidden"></div>
+<script>
+const STATE = /*__TURNSTILE_STATE__*/null;
+const COLORS = { DEV:'var(--dev)', AI_REVIEW:'var(--ai)', READY:'var(--ready)', ON_HUMAN_REVIEW:'var(--human)', REWORK:'var(--rework)', APPROVED:'var(--approved)', MERGED:'var(--merged)' };
+const PR_STATES = Object.keys(COLORS);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const badge = s => '<span class="badge" style="background:' + (COLORS[s] || 'var(--muted)') + '">' + esc(s) + '</span>';
+const prUrl = id => { const [repo, n] = id.split('#'); return 'https://github.com/' + (((STATE || {}).epic || {}).github_org || 'pdffiller') + '/' + repo + '/pull/' + n; };
+const short = h => h ? String(h).slice(0, 8) : '—';
+function tiles() {
+  const prs = Object.values(STATE.prs || {});
+  const t = PR_STATES.map(s => ({ n: prs.filter(p => p.state === s).length, l: s }));
+  t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: (STATE.bugs || []).filter(b => b.state !== 'done').length, l: 'Open bugs' },
+         { n: (STATE.awaiting_human || []).filter(a => !a.approved_at).length, l: 'Awaiting humans' });
+  document.getElementById('tiles').innerHTML = t.map(x => '<div class="tile"><b>' + x.n + '</b><span>' + esc(x.l) + '</span></div>').join('');
+}
+function gateCell(p) {
+  const e = p.evidence || {}, cur = p.head;
+  const mark = (name, ev, ok) => ev ? (name + ' ' + (ok && ev.head && cur && (cur.startsWith(ev.head) || ev.head.startsWith(cur)) ? '✓' : '✗') + ' ' + short(ev.head)) : name + ' —';
+  return [mark('deep', e.deep_review, e.deep_review && e.deep_review.clean), mark(e.gate ? e.gate.name : 'gate', e.gate, e.gate && e.gate.result === 'pass'),
+          e.copilot ? mark('copilot', e.copilot, e.copilot.open_threads === 0) : ''].filter(Boolean).join(' · ');
+}
+function prs() {
+  const byRepo = {};
+  Object.entries(STATE.prs || {}).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
+  document.getElementById('prs').innerHTML = Object.entries(byRepo).map(([repo, rows]) =>
+    '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th></tr></thead><tbody>' +
+    rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
+      const h = (p.evidence || {}).human || {};
+      return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + prUrl(id) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
+        '<td>' + (h.slack_permalink ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
+        '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
+        '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + '</td><td>' + esc(p.next_action) + '</td></tr>';
+    }).join('') + '</tbody></table></div>').join('');
+}
+function stories() {
+  document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
+    Object.entries(STATE.stories || {}).map(([sid, s]) => {
+      const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
+      const e = s.evidence || {};
+      const ev = ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—'),
+                  'env ' + (e.env_test ? (e.env_test.cases.fail === 0 && e.env_test.figma_parity === 'pass' ? '✓' : '✗ ' + e.env_test.cases.fail + ' fail') : '—')].join(' · ');
+      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+function bugs() {
+  document.getElementById('bugs').innerHTML = '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Bug</th><th>Source</th><th>PR</th><th>State</th><th>Note</th></tr></thead><tbody>' +
+    (STATE.bugs || []).map(b => '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
+      (b.pr ? '<a href="' + prUrl(b.pr) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td>' + badge(b.state) + '</td><td>' + esc(b.note) + '</td></tr>').join('') + '</tbody></table></div>';
+}
+function awaiting() {
+  document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
+    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  ['prs', 'stories', 'bugs', 'awaiting'].forEach(id => document.getElementById(id).classList.toggle('hidden', id !== b.dataset.tab));
+}));
+if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); }
+</script>
+</body>
+</html>
