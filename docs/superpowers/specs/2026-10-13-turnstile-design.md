@@ -1,4 +1,6 @@
-# epic-delivery — design spec (2026-10-13)
+# Turnstile — design spec (2026-10-13)
+
+*A turnstile lets one through at a time, only with a valid ticket. Here the ticket is evidence for the current head.*
 
 Claude Code plugin that runs the delivery of a multi-repo epic through a strict, evidence-based flow.
 Owner: Davyd Pylypenko. Canonical source: Davyd's personal GitHub repository; a vendored copy lives in
@@ -34,8 +36,8 @@ only when the epic ends. Path: `context/workitems/<workitem>/delivery/` (next to
 
 ```
 delivery/
-  state.yaml      # single source of truth; written only by `transition` (see §5)
-  ledger.md       # append-only event log, written by `transition`
+  state.yaml      # single source of truth; written only by `turnstile pass` (see §5)
+  ledger.md       # append-only event log, written by `turnstile pass`
   plan.md         # kick-off analysis output: stories, PR plan, merge order, test-case map (lead-approved)
   decisions.md    # decisions taken + open questions for humans
   briefs/         # agent briefs
@@ -104,7 +106,7 @@ awaiting_human:
       approved_at: null }
 ```
 
-Invariant: **every piece of evidence carries the `head` it was produced for.** A push changes `head`; `reconcile`
+Invariant: **every piece of evidence carries the `head` it was produced for.** A push changes `head`; `turnstile reconcile`
 detects it and the PR drops to `REWORK` (after being sent) or `AI_REVIEW` (before). "Ready only with Copilot closed" and
 "On human review only while the sent head is unchanged" are consequences of the schema, not rules to remember.
 
@@ -137,12 +139,12 @@ source → fix → re-run deep review **and** the repo gate → until both are c
 3. `copilot` — where connected, after every push.
 
 Rules above the table:
-- A push is a new head; evidence for the old head is void. `reconcile` moves the PR, nobody decides "this one is small".
+- A push is a new head; evidence for the old head is void. `turnstile reconcile` moves the PR, nobody decides "this one is small".
 - AI_REVIEW never waits for anything. `blocked_by` only affects sending and merging.
 - Only READY goes to humans. No "the gate will catch up".
 - Human threads are replied to and resolved only by the lead or with the lead's word. Copilot threads are resolved only
   after a fix or a recorded justification.
-- One transition = one `transition` call, which performs Jira, ledger, board and the git commit of the state.
+- One transition = one `turnstile pass` call, which performs Jira, ledger, board and the git commit of the state.
 
 ## 4. Story lifecycle and kick-off analysis
 
@@ -177,16 +179,16 @@ the scarcest resource, so it receives already integrated, tested code.
 
 ## 5. Commands
 
-Shipped as scripts in the plugin (Python 3, standard library + `gh`), invoked by the skill. The orchestrator never edits
+Shipped as one CLI `turnstile` in the plugin (Python 3, standard library + `gh`), invoked by the skill. The orchestrator never edits
 `state.yaml` by hand.
 
-### `transition`
+### `turnstile pass`
 
 ```
-transition pr jsfiller#13222 AI_REVIEW --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run> --copilot 0
-transition pr jsfiller#13222 ON_HUMAN_REVIEW --slack <permalink> --reviewers isachivka --approved ah-12
-transition story S1 ENV_TESTING --report reports/ENV-S1.md
-transition pr jsfiller#13222 REWORK --reason "human thread r4231213730"
+turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run> --copilot 0
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --slack <permalink> --reviewers isachivka --approved ah-12
+turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md
+turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"
 ```
 
 Always in this order: validate DoD of the current state and DoR of the target, including `head` equality of all
@@ -196,36 +198,36 @@ print the artifact publish instruction and the Jira transition to perform. The s
 performs the Jira transition through the Atlassian MCP (no API token; decision 2026-10-13) and records `jira.synced`.
 The command's last line is a one-line summary for the lead's message.
 
-### `reconcile`
+### `turnstile reconcile`
 
 Read-only. For every PR: GitHub head, check-runs (CI, gate), approvals, unresolved threads (human vs Copilot),
 draft/ready, merged state; Jira status. Compares with `state.yaml` and prints a list of discrepancies with the proposed
-`transition` for each unambiguous case: push after send → REWORK; new human thread → REWORK; approval + 0 threads →
+`turnstile pass` for each unambiguous case: push after send → REWORK; new human thread → REWORK; approval + 0 threads →
 APPROVED; merged → MERGED; gate red on the current head → evidence void. It changes nothing. Runs at session start and on
 demand (`status`).
 
-### `render-board`
+### `turnstile render-board`
 
 `state.yaml` → `board.html` (tiles per state, repo tables with PR / Slack permalink / AI gate heads / blocked-by /
 note, story tiles with gate evidence, bugs tab with the db-backed status dropdowns, legend with the Jira mapping).
-Called by `transition`; also standalone.
+Called by `turnstile pass`; also standalone.
 
 ### Skill commands
 
 `init` (worktree + `delivery/` + kick-off analysis → `plan.md`), `status` (reconcile + where-we-are + `awaiting_human`),
-`transition`, `dispatch <agent> <brief>` (standardised agent launch with the brief template), `story-gate <S>`
+`turnstile pass`, `dispatch <agent> <brief>` (standardised agent launch with the brief template), `story-gate <S>`
 (integration review then env testing, with the transitions in between), `plan` (re-plan after a scope change, needs
 lead approval again).
 
 ## 6. Hooks (physical guards; apply to subagents too)
 
 - PreToolUse `slack_send_message` / `slack_send_message_draft`: blocked unless `awaiting_human` has a `send|reply` entry
-  for that PR with `approved_at` set (set by `transition --approved <id>` after the lead's word).
+  for that PR with `approved_at` set (set by `turnstile pass … --approved <id>` after the lead's word).
 - PreToolUse Bash: block `gh pr merge`, `gh pr ready`, `gh pr edit --add-reviewer`, `requested_reviewers` POST for
   humans (Copilot bot allowed), `git push --force*`, `git rebase` on epic/story branches, `--no-gpg-sign`, Prometey
   `ensure` with an empty `service_github_tag`.
 - Commit message: block `Co-Authored-By`. PR body (`gh pr create/edit`): block the "Generated with" footer.
-- PostToolUse Edit/Write on `state.yaml`: warn "state changes only through transition" and run `reconcile`.
+- PostToolUse Edit/Write on `state.yaml`: warn "state changes only through transition" and run `turnstile reconcile`.
 
 ## 7. Agents
 
@@ -259,13 +261,13 @@ resume after limits/watchdog, report in `reports/` per template, ≤8 lines back
 
 ## 8. Packaging
 
-Plugin `epic-delivery`:
+Plugin `turnstile`:
 
 ```
 .claude-plugin/plugin.json
-skills/epic-delivery/SKILL.md            # short: states, commands, when what; links to references
-skills/epic-delivery/references/          # DoR/DoD tables, templates (plan, brief, PR body, Slack messages, reports, evidence), env recipes
-scripts/transition  scripts/reconcile  scripts/render-board
+skills/turnstile/SKILL.md            # short: states, commands, when what; links to references
+skills/turnstile/references/          # DoR/DoD tables, templates (plan, brief, PR body, Slack messages, reports, evidence), env recipes
+scripts/turnstile (subcommands: pass, reconcile, render-board, status)
 agents/{implementer,reviewer,story-reviewer,stack-step,comments-handler,investigator,tester,deployer}.md
 hooks/hooks.json + hooks/*.sh
 templates/state.yaml  templates/CLAUDE.md.workspace  templates/board.html
@@ -273,7 +275,7 @@ docs/superpowers/specs/                   # this spec and future ones
 ```
 
 - **Canonical repo:** Davyd's personal GitHub repository (outside the pdffiller organisation). Versioned by tags.
-- **Team copy:** vendored into `pdffiller/pdffiller-knowledge` (path to agree, e.g. `plugins/epic-delivery/`) by tag,
+- **Team copy:** vendored into `pdffiller/pdffiller-knowledge` (path to agree, e.g. `plugins/turnstile/`) by tag,
   the way skill sources live in the playground today; the team installs from there.
 - Personal items (greeting, channels, reviewer logins, dev recipe) are removed from the plugin: channels and roles live
   in `state.yaml`, environment recipes in `references/env/`. `prometey-variant` and `front-release` stay separate skills
@@ -283,20 +285,20 @@ docs/superpowers/specs/                   # this spec and future ones
 
 1. Knowledge worktree in the workspace on `epic/myd-16538-l2f-funnel`; `MYD-16538-docs/` moves to
    `context/workitems/pdfd-429-l2f-editor-funnel/delivery/` as is (ledger, briefs, reports, board).
-2. An agent generates `state.yaml` from the board + GitHub (`reconcile` fills heads, checks, threads); stories of the
+2. An agent generates `state.yaml` from the board + GitHub (`turnstile reconcile` fills heads, checks, threads); stories of the
    current epic = the dispatch-plan waves; `decisions.md` from the `CLAUDE.md` table.
 3. The workspace `CLAUDE.md` shrinks to the pointer at `delivery/` and the plugin.
-4. From then on every transition goes through `transition`; the first `reconcile` shows where the state and reality differ.
+4. From then on every transition goes through `turnstile pass`; the first `turnstile reconcile` shows where the state and reality differ.
 5. The remaining stories (jsfiller stack 13359→13384, MyDocs, module) finish under the new flow, including the tester
    gate before anything else is sent to humans.
 
 ## 10. Testing the plugin itself
 
-- `transition`/`reconcile`/`render-board`: unit tests on fixture `state.yaml` files (every DoR/DoD branch, head mismatch,
-  parallel stories, blocked_by resolution, idempotent re-runs); `reconcile` tested against recorded `gh` JSON.
+- `turnstile pass`/`turnstile reconcile`/`turnstile render-board`: unit tests on fixture `state.yaml` files (every DoR/DoD branch, head mismatch,
+  parallel stories, blocked_by resolution, idempotent re-runs); `turnstile reconcile` tested against recorded `gh` JSON.
 - Hooks: shell tests that forbidden commands are blocked and allowed ones pass.
 - Agents: one dry run each on a throwaway branch in a sandbox repo before the first real use.
-- Migration: `reconcile` on the generated MYD-16538 state must report zero unexplained discrepancies before cut-over.
+- Migration: `turnstile reconcile` on the generated MYD-16538 state must report zero unexplained discrepancies before cut-over.
 
 ## 11. Decisions log (2026-10-13)
 
@@ -312,6 +314,6 @@ docs/superpowers/specs/                   # this spec and future ones
 
 ## 12. Open questions
 
-1. Path and name of the vendored copy inside `pdffiller-knowledge` (`plugins/epic-delivery/` vs playground).
+1. Path and name of the vendored copy inside `pdffiller-knowledge` (`plugins/turnstile/` vs playground).
 2. Tolerance defaults for Figma parity per product (1 px / exact colour proposed).
 3. Whether `init` should create the Jira "story" issues when the decomposition lacks them, or only reference them in `plan.md`.
