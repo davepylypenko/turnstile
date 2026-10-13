@@ -76,6 +76,13 @@ def find_entry(awaiting: Optional[List[dict]], ah_id: Optional[str]) -> Optional
             return a
     return None
 
+def latest_entry(awaiting: Optional[List[dict]], type_: str, key: str, ident: Optional[str]) -> Optional[dict]:
+    """The newest awaiting_human entry of this type for this PR/story that is neither voided nor consumed (R2-6)."""
+    for a in reversed(awaiting or []):
+        if a.get("type") == type_ and a.get(key) == ident and not a.get("voided_at") and not a.get("consumed_at"):
+            return a
+    return None
+
 def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ident: Optional[str],
                          awaiting: Optional[List[dict]], out: List[str]) -> Optional[dict]:
     """The lead's word for an action: an awaiting_human entry of the right type for this PR/story,
@@ -244,7 +251,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             if (stories.get(dep) or {}).get("state") != "DONE" and not override:
                 out.append("MISSING story %s to be DONE first (or --reason with the lead's override)" % dep)
         if not override:
-            entry = next((a for a in awaiting or [] if a.get("type") == "start_story" and a.get("story") == sid), None)
+            entry = latest_entry(awaiting, "start_story", "story", sid)
             check_approved_entry(approved or (entry or {}).get("id"), "start_story", "story", sid, awaiting, out)
         return out
     if target == "INTEGRATION_REVIEW":
@@ -275,7 +282,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         for b in bugs or []:
             if b.get("story") == sid and b.get("state") != "done":
                 out.append("MISSING bug %s to be done (is %s)" % (b.get("id"), b.get("state")))
-        entry = next((a for a in awaiting or [] if a.get("type") == "story_done" and a.get("story") == sid), None)
+        entry = latest_entry(awaiting, "story_done", "story", sid)
         check_approved_entry(approved or (entry or {}).get("id"), "story_done", "story", sid, awaiting, out)
         return out
     return out

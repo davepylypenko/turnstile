@@ -69,11 +69,11 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             else:
                 out.append(Proposal(pid, "head_changed", msg + " (DEV: pushes are expected; pass AI_REVIEW with --head when CI is green)", None))
             continue
-        if st == "ON_HUMAN_REVIEW" and f.human_threads_open > 0:
+        if st in ("ON_HUMAN_REVIEW", "APPROVED") and f.human_threads_open > 0:
             reason = "%d human thread(s)" % f.human_threads_open
             _propose(out, data, pid, "human_thread", "%d unresolved human thread(s)" % f.human_threads_open, "REWORK",
                      'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
-        elif st == "ON_HUMAN_REVIEW" and f.changes_requested:
+        elif st in ("ON_HUMAN_REVIEW", "APPROVED") and f.changes_requested:
             reason = "changes requested by %s" % ", ".join(f.changes_requested)
             _propose(out, data, pid, "changes_requested", reason, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
         elif st == "ON_HUMAN_REVIEW" and f.approvals and f.human_threads_open == 0:

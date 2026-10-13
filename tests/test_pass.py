@@ -338,6 +338,61 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(data["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 3, "fail": 0})
         self.assertTrue(data["awaiting_human"][0]["consumed_at"])
 
+    def test_reopen_voids_the_open_story_done_and_done_uses_the_newest_entry(self):
+        # R2-6: a story_done approval is for one test run; leaving ENV_TESTING backwards voids it, a later run opens a new one
+        data = self.data()
+        for pid in ("jsfiller#1", "docs-platform#2"):
+            data["prs"][pid]["state"] = "MERGED"
+        data["stories"]["S1"]["state"] = "ENV_TESTING"
+        data["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": H}, "integration_review": {"report": "r", "head": H, "clean": True}}
+        data["awaiting_human"] = [{"id": "ah-7", "owner": "lead", "type": "story_done", "story": "S1", "created_at": "x", "payload": None,
+                                   "approved_at": "2026-10-13T10:00Z", "approved_via": "lead-terminal"}]
+        self.write(data)
+        (self.d / "reports" / "ENV.md").write_text("ok"); (self.d / "reports" / "S.md").write_text("clean")
+        done = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0)
+        rc = pass_cmd.run(self.d, "story", "S1", "IN_PROGRESS", opts(reason="bug b4 found by the lead"), self.io)
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.data()["awaiting_human"][0]["voided_at"])
+        self.assertIn("voided ah-7 (story_done for S1: story left ENV_TESTING)", (self.d / "ledger.md").read_text())
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(build="2", head=H), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "ENV_TESTING", opts(report="reports/S.md", head=H), self.io), 0)
+        ids = [(a["id"], a["type"], a.get("voided_at") is not None) for a in self.data()["awaiting_human"]]
+        self.assertEqual(ids, [("ah-7", "story_done", True), ("ah-8", "story_done", False)])
+        rc, out = run_capture(self.d, "story", "S1", "DONE", done, self.io)
+        self.assertEqual(rc, 2); self.assertIn("ah-8", out); self.assertNotIn("ah-7", out)  # the voided one is never picked
+        with env(TURNSTILE_LEAD="1"):
+            pass_cmd.approve(self.d, "ah-8", self.io)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "DONE", done, self.io), 0)
+        self.assertTrue(self.data()["awaiting_human"][1]["consumed_at"])
+        # second cycle: the consumed ah-8 is not reused, the newest open entry is
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "IN_PROGRESS", opts(reason="regression"), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(build="3", head=H), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "ENV_TESTING", opts(report="reports/S.md", head=H), self.io), 0)
+        rc, out = run_capture(self.d, "story", "S1", "DONE", done, self.io)
+        self.assertEqual(rc, 2); self.assertIn("ah-9", out)
+        with env(TURNSTILE_LEAD="1"):
+            pass_cmd.approve(self.d, "ah-9", self.io)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "DONE", done, self.io), 0)
+        self.assertEqual([a["id"] for a in self.data()["awaiting_human"] if a.get("consumed_at")], ["ah-8", "ah-9"])
+        # backwards to INTEGRATION_REVIEW also voids
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "IN_PROGRESS", opts(reason="again"), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(build="4", head=H), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "ENV_TESTING", opts(report="reports/S.md", head=H), self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(reason="review again"), self.io), 0)
+        self.assertTrue(self.data()["awaiting_human"][-1]["voided_at"])
+
+    def test_dev_clears_the_rework_marker_so_deep_review_is_required_again(self):
+        # R2-7
+        self.to_human()
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="human thread r1"), self.io), 0)
+        self.assertIn("rework_since", self.data()["prs"]["jsfiller#1"])
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "DEV", opts(reason="re-implementation after the review"), self.io), 0)
+        self.assertNotIn("rework_since", self.data()["prs"]["jsfiller#1"])
+        self.io.heads["jsfiller#1"] = H2
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "AI_REVIEW", opts(head=H2, ci="success"), self.io), 0)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(head=H2, ci="success", gate="pdf-review:pass"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING evidence.deep_review for current head %s" % H2, out)
+
     def test_start_story_entries_are_opened_for_startable_stories(self):
         data = self.data()
         data["stories"]["S2"] = dict(data["stories"]["S1"], state="PLANNED", after=[], title="Next")

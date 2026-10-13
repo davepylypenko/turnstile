@@ -275,6 +275,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if target == "REWORK":
                     pr["rework_since"] = {"head": pr.get("head"), "at": _now(), "reason": o.reason}
                     _open_entry(data, "reply", pr=ident, head=pr.get("head"))
+                if target == "DEV":
+                    pr.pop("rework_since", None)  # a re-implementation: deep review is required again (R2-7)
                 if target == "APPROVED":
                     _open_entry(data, "merge", pr=ident, head=pr.get("head"))
                 if target == "MERGED":
@@ -303,13 +305,17 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if o.reason:
                     story["last_reason"] = o.reason
                 jira_line = None
+                if src == "ENV_TESTING" and target != "DONE":  # the story_done word was for that test run (R2-6)
+                    for a in awaiting:
+                        if a.get("type") == "story_done" and a.get("story") == ident and not a.get("consumed_at") and not a.get("voided_at"):
+                            a["voided_at"] = _now()
+                            extra.append("voided %s (story_done for %s: story left ENV_TESTING)" % (a["id"], ident))
                 if target == "ENV_TESTING" and not _has_open_entry(data, "story_done", "story", ident):
                     _open_entry(data, "story_done", story=ident)
-                if target in ("IN_PROGRESS", "DONE") and src in ("PLANNED", "ENV_TESTING"):
-                    etype = "start_story" if target == "IN_PROGRESS" else "story_done"
-                    e = rules.find_entry(awaiting, o.approved) or next((a for a in awaiting if a.get("type") == etype and a.get("story") == ident
-                                                                         and a.get("approved_at") and not a.get("consumed_at")), None)
-                    if e:
+                etype = "start_story" if (target == "IN_PROGRESS" and src == "PLANNED") else "story_done" if target == "DONE" else None
+                if etype:
+                    e = rules.find_entry(awaiting, o.approved) or rules.latest_entry(awaiting, etype, "story", ident)
+                    if e and e.get("approved_at") and not e.get("consumed_at") and not e.get("voided_at"):
                         e["consumed_at"] = _now()
                 summary = "pass story %s %s → %s%s" % (ident, src, target, " — " + o.reason if o.reason else "")
             else:

@@ -70,6 +70,13 @@ class Compare(unittest.TestCase):
     def test_human_thread_proposes_rework(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts())
         self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)
+    def test_approved_pr_with_new_thread_or_changes_requested_proposes_rework(self):
+        # R2-8
+        props = reconcile.compare(self.data("APPROVED", human=HUMAN), self.facts(human_threads_open=1))
+        self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)
+        props = reconcile.compare(self.data("APPROVED", human=HUMAN), self.facts(human_threads_open=0, approvals=[], changes_requested=["isachivka"]))
+        self.assertEqual(self.kinds(props), ["changes_requested"]); self.assertIn("REWORK", props[0].suggested_cmd)
+
     def test_changes_requested_proposes_rework(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts(human_threads_open=0, approvals=[], changes_requested=["isachivka"]))
         self.assertEqual(self.kinds(props), ["changes_requested"]); self.assertIn('REWORK --reason "changes requested by isachivka"', props[0].suggested_cmd)
