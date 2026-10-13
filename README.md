@@ -28,7 +28,7 @@ echo delivery > .turnstile                      # workspace root → delivery di
 turnstile status                                # reconcile with GitHub + where we are (exit 1 when gh facts are missing)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
-TURNSTILE_LEAD=1 turnstile approve ah-3         # the lead types this after saying "send"; agents never do
+! TURNSTILE_LEAD=1 turnstile approve ah-3       # the lead types this in the Claude Code prompt; agents never do
 turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka --approved ah-3
 turnstile jira-synced jsfiller#13222 "On Review"
 turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"      # opens a 'reply' entry for the lead
@@ -54,11 +54,27 @@ stored head) is not the real one, and when `gh` fails. `--offline` skips the che
 ### The lead's word (`awaiting_human`)
 
 `pass` opens entries for the lead: `send` on READY, `reply` on REWORK, `merge` on APPROVED, `story_done` when a story
-enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories are DONE. Only the lead approves them,
-by typing `TURNSTILE_LEAD=1 turnstile approve <ah-id>`; the Bash hook blocks the command without that literal, and the
-CLI refuses it without the variable. `pass … --approved <ah-id>` then requires an entry of the right type for that
+enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories are DONE. Only the lead approves them
+(see "How the lead approves"). `pass … --approved <ah-id>` then requires an entry of the right type for that
 PR/story that is approved, not consumed and not voided; the pass consumes it. A `send` is voided when the PR drops
 back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message.
+
+### How the lead approves
+
+The lead approves an `awaiting_human` entry **only by typing the command themself in the Claude Code prompt with the
+`!` prefix**:
+
+```
+! TURNSTILE_LEAD=1 turnstile approve ah-3
+```
+
+The `!` prefix runs the line in the user's shell, outside the model's tool calls, so no hook sees it and no agent can
+issue it. `approve` records `approved_via: "lead-terminal"` on the entry and the ledger line says so. The Bash hook
+blocks **any** model-issued command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION`, in
+any quoting, `env`, `export`, `bash -c` or heredoc form (the check runs on the command with quotes and backslashes
+stripped and whitespace collapsed), and the CLI keeps refusing `approve` without `TURNSTILE_LEAD=1` in its environment.
+The orchestrator's job is to report what awaits the lead (`turnstile status`) and ask the lead to run that line; it
+never runs it.
 
 ### Commands
 
@@ -83,9 +99,9 @@ exist.
   `mergePullRequest|markPullRequestReadyForReview|requestReviews`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
   `git rebase`, `--no-gpg-sign`, `-c commit.gpgsign=false`, an empty Prometey `service_github_tag=`, a
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
-  `gh api` call, writes to `state.json` through redirection, `sed -i`, `tee`, `python -c`, `cp`/`mv`/`rm` (unless
-  the command carries `TURNSTILE_MIGRATION=1`), and `turnstile approve` without `TURNSTILE_LEAD=1` in the same
-  command. Global options before the subcommand (`git -C dir`, `git -c k=v`, `gh -R owner/repo`) are covered.
+  `gh api` call, writes to `state.json` through redirection, `sed -i`, `tee`, `python -c`, `cp`/`mv`/`rm`, and every
+  command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the lead's markers; see "How
+  the lead approves"). Global options before the subcommand (`git -C dir`, `git -c k=v`, `gh -R owner/repo`) are covered.
 - `guard_slack.py` blocks every Slack send/draft/schedule unless each PR it mentions has an approved, unused
   `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). It records `used_at` on the entry (one send per approval) and a ledger line;

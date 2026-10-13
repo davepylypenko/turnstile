@@ -199,8 +199,10 @@ class PassCmd(unittest.TestCase):
         with env(TURNSTILE_LEAD="1"):
             self.assertEqual(pass_cmd.approve(self.d, ah["id"], self.io), 0)
             self.assertEqual(pass_cmd.approve(self.d, "ah-999", self.io), 2)
-        self.assertTrue(self.data()["awaiting_human"][0]["approved_at"])
-        self.assertIn("approved " + ah["id"], (self.d / "ledger.md").read_text())
+        entry = self.data()["awaiting_human"][0]
+        self.assertTrue(entry["approved_at"]); self.assertEqual(entry["approved_via"], "lead-terminal")
+        line = next(l for l in (self.d / "ledger.md").read_text().splitlines() if "approved " + ah["id"] in l)
+        self.assertIn("approved_via: lead-terminal", line)
         self.assertEqual(len(self.io.commits), 2)
 
     def test_on_human_review_requires_a_lead_approved_entry_and_consumes_it(self):

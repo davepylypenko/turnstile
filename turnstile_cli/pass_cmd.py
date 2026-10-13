@@ -7,6 +7,7 @@ from .errors import TurnstileError, StaleStateError
 GITATTRIBUTES = "ledger.md merge=union\n"
 GITIGNORE = ".*.tmp\n"
 HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
+APPROVED_VIA = "lead-terminal"  # the lead types the approve command in the Claude Code prompt with the `!` prefix
 
 @dataclass
 class Options:
@@ -325,7 +326,9 @@ def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
             if entry.get("approved_at"):
                 print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
             entry["approved_at"] = _now()
-            summary = "approved %s (%s %s by %s)" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"), entry.get("owner"))
+            entry["approved_via"] = APPROVED_VIA
+            summary = "approved %s (%s %s by %s) approved_via: %s" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"),
+                                                                     entry.get("owner"), APPROVED_VIA)
             _side_effects(delivery, st, [summary], io, False)
         print("OK " + summary)
         return 0

@@ -74,15 +74,20 @@ class BashGuard(unittest.TestCase):
                             "sed --in-place s/a/b/ delivery/state.json", "jq '.x=1' state.json | tee delivery/state.json",
                             "python3 -c \"import json; json.dump({}, open('delivery/state.json','w'))\"", "cp other.json delivery/state.json",
                             "mv tmp.json delivery/state.json", "rm delivery/state.json", "python -c 'open(\"state.json\",\"w\")'"], "state-json-write")
-        self.assertAllowed(["TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "TURNSTILE_MIGRATION=1 cp new.json delivery/state.json",
-                            "echo delivery > .turnstile", "python3 -c 'print(1)' > out.txt", "sed -i '' s/a/b/ README.md"])
+        self.assertAllowed(["echo delivery > .turnstile", "python3 -c 'print(1)' > out.txt", "sed -i '' s/a/b/ README.md"])
 
-    def test_approve_needs_the_lead_marker(self):
+    def test_approve_and_lead_markers_are_blocked_in_every_form(self):
+        # R2-1: the lead approves only from the Claude Code prompt with the `!` prefix, outside the model's tool calls.
+        # Any model-issued command that carries the approve command or the lead/migration markers is refused.
         self.assertBlocked(["turnstile approve ah-3", "scripts/turnstile approve ah-3", "turnstile --delivery d approve ah-3",
                             "python3 -m turnstile_cli approve ah-3", "python3 -c 'from turnstile_cli import pass_cmd; pass_cmd.approve(\"d\", \"ah-3\")'",
-                            "export TURNSTILE_LEAD=1; turnstile approve ah-3"], "lead-approve")
-        self.assertAllowed(["TURNSTILE_LEAD=1 turnstile approve ah-3", "TURNSTILE_LEAD=1 scripts/turnstile approve ah-3",
-                            "git commit -m 'feat(turnstile): approve flow'"])
+                            "export TURNSTILE_LEAD=1; turnstile approve ah-3", "TURNSTILE_LEAD=1 turnstile approve ah-3",
+                            "TURNSTILE_LEAD=1 scripts/turnstile approve ah-3", "env TURNSTILE_LEAD=1 turnstile approve ah-3",
+                            'bash -c "TURNSTILE_LEAD=1 turnstile approve ah-3"', "T\\URNSTILE_LEAD=1 turnstile approve ah-3",
+                            "\"turnstile\" 'approve' ah-3", "turnstile   approve ah-3", "bash <<EOF\nTURNSTILE_LEAD=1 turnstile approve ah-1\nEOF",
+                            "echo $TURNSTILE_LEAD", "export TURNSTILE_LEAD=1", "TURNSTILE_MIGRATION=1 cp new.json delivery/state.json",
+                            "TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "env | grep TURNSTILE_MIGRATION"], "lead-")
+        self.assertAllowed(["git commit -m 'feat(turnstile): approve flow'", "turnstile status", "turnstile pass pr jsfiller#1 READY --head a"])
 
     def test_malformed_payload_blocks(self):
         for payload in ("{}", "[]", "not json", json.dumps({"tool_input": {"command": 5}}), json.dumps({"tool_input": "x"})):
