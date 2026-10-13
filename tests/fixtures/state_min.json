@@ -1,0 +1,30 @@
+{
+  "epic": {
+    "key": "MYD-1",
+    "workitem": "demo",
+    "github_org": "pdffiller",
+    "roles": { "lead": "lead@example.com" },
+    "repos": {
+      "jsfiller": { "base": "develop", "epic_branch": "epic_myd-1", "slack": "C1", "gate": "pdf-review", "copilot": false },
+      "docs-platform": { "base": "main", "epic_branch": "epic_myd-1", "slack": "C2", "gate": "pdf-review", "copilot": true }
+    },
+    "board": { "artifact_url": "https://claude.ai/artifact/x" },
+    "environment": { "variant": "v1", "desk": "desk05" }
+  },
+  "stories": {
+    "S1": { "title": "Header", "tickets": ["MYD-10", "MYD-11"], "repos": ["jsfiller"], "after": [], "parallel_with": [],
+            "state": "IN_PROGRESS", "test_cases": ["TP-1"], "figma": [], "env_slot": { "variant": "v1" },
+            "human_review_units": [], "evidence": {} }
+  },
+  "prs": {
+    "jsfiller#1": { "ticket": "MYD-10", "story": "S1", "branch": "feature/MYD-10", "base": "epic_myd-1",
+                    "state": "AI_REVIEW", "head": "aaaaaaaa11111111", "blocked_by": null,
+                    "evidence": { "ci": { "head": "aaaaaaaa11111111", "status": "success" } },
+                    "jira": { "status": "In progress", "synced": true }, "next_action": "" },
+    "docs-platform#2": { "ticket": "MYD-11", "story": "S1", "branch": "feature/MYD-11", "base": "epic_myd-1",
+                    "state": "DEV", "head": "bbbbbbbb22222222", "blocked_by": "jsfiller#1",
+                    "evidence": {}, "jira": { "status": "To Do", "synced": false }, "next_action": "" }
+  },
+  "bugs": [],
+  "awaiting_human": []
+}
