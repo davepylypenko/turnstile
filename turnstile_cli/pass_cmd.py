@@ -291,6 +291,9 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     _open_entry(data, "reply", pr=ident, head=pr.get("head"))
                 if target == "DEV":
                     pr.pop("rework_since", None)  # a re-implementation: deep review is required again (R2-7)
+                    for a in awaiting:  # the reply word was for that rework, not a later one (R3-7)
+                        if a.get("type") == "reply" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
+                            a["voided_at"] = _now(); extra.append("voided %s (reply for %s: PR went back to DEV)" % (a["id"], ident))
                 if target == "APPROVED":
                     _open_entry(data, "merge", pr=ident, head=pr.get("head"))
                 if target == "MERGED":

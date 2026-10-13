@@ -395,6 +395,8 @@ class PassCmd(unittest.TestCase):
         self.assertIn("rework_since", self.data()["prs"]["jsfiller#1"])
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "DEV", opts(reason="re-implementation after the review"), self.io), 0)
         self.assertNotIn("rework_since", self.data()["prs"]["jsfiller#1"])
+        replies = [a for a in self.data()["awaiting_human"] if a["type"] == "reply"]
+        self.assertTrue(replies and all(a.get("voided_at") for a in replies))  # R3-7: not reusable in a later REWORK
         self.io.heads["jsfiller#1"] = H2
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "AI_REVIEW", opts(head=H2, ci="success"), self.io), 0)
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(head=H2, ci="success", gate="pdf-review:pass"), self.io)
