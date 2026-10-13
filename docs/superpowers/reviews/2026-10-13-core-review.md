@@ -240,3 +240,123 @@ Every blocker, major, minor and nit was addressed; nothing was deferred. Suite: 
 | 24 | Board badges, merged colour, `cases` crash, tabs a11y | colours for story and bug states, `--merged` readable, `cases` guarded, `role=tablist/tab` + `aria-selected` | `fa2e596` |
 | 25 | Malformed payload passes; `python3` missing fails open | non-object payloads and missing `tool_input.command` block; every hook command ends with `\|\| exit 2` | `7c7bd36` |
 | 26 | `jira-synced` accepts any status | validated against `JIRA_FOR_PR_STATE[pr.state]` | `04a0537` |
+
+## Round 2 (2026-10-13)
+
+Scope: `f2612e0..b640fdf` against the Resolution table above, spec §3/§4.2/§6. Every bypass below was probed with a
+script (pass runs through `FakeIO`, hooks through the real `guard_*.py` with a JSON payload). Suite: 119 → 122 tests,
+green on Python 3.9.6.
+
+### Resolutions verified
+
+Closed as claimed: 1 (unknown / unapproved / consumed / wrong-type ids refused; reuse after consume refused), 4, 5, 6
+(single use per approval, channel check), 8, 9, 10, 11, 13 (Edit/Write path), 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26.
+Not closed or regressed: **2** (R2-1), **3** (stale head through the send approval, offline APPROVED/MERGED: fixed below),
+**7** (REWORK proposal refused: fixed below), **12/13** (Bash write paths: R2-2, R2-11), **14** (flock: fixed below).
+
+### Fixes applied in this round (signed, pushed to `main`)
+
+| Commit | Fix |
+|---|---|
+| `9ed1411` | **state:** `locked()` flocked `state.json` itself, but `write_atomic` swaps its inode with `os.replace`, so after the first save a new process locked the new inode while the holder still ran. Probe: three processes A/B/C were inside the critical section at the same time. The lock now sits on a stable file in the temp dir keyed by the delivery path; the probe serialises. |
+| `57a8599` | **pass:** a `send` approval is bound to the head it was opened for. Before, the lead approved head A, the agent pushed B and passed `READY → ON_HUMAN_REVIEW --head B --ci … --deep-review … --gate …` with the old approval (probe passed). `APPROVED` and `MERGED` now require `head_verified` (before, `--offline --approvals nobody` reached APPROVED and `--offline --merged-sha x` reached MERGED and moved Jira to On Hold). A failed `git commit` now runs `git reset -q -- .`, so the refused transition no longer stays staged in the index. |
+| `98d10b0` | **reconcile:** the push-after-send proposal `pass … REWORK --reason …` carried no `--head`, so the online head check in `pass` refused it (probe: exit 2). It now carries `--head <new>` and the dry run applies it. |
+| `0208d55` | **hooks:** blocked now: `git -C "/my dir" push --force`, `"git" push --force`, `g\it …`, `gh --repo=o/r pr merge`, `gh pr --repo o/r merge`, `gh "pr" merge`, `gh pr 'merge'`, `gh api --method=PUT …/merge`, `-XPUT`, `git pull --rebase` / `-r`, `turnstile --delivery=x approve`. Rules run on the command as typed and on a copy with quotes and backslashes stripped. |
+
+### Findings
+
+**Blockers**
+
+1. **R2-1 The lead gate can be typed by any agent.** `TURNSTILE_LEAD=1 turnstile approve ah-N` and
+   `env TURNSTILE_LEAD=1 …` pass `guard_bash.py:49` and the CLI check `pass_cmd.py:311` (probe). Any literal the lead
+   can type, the model can type; resolution 2 does not gate on a human. **Fix:** for every `APPROVE` match,
+   `guard_bash` prints `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"lead approval of <ah-id>"}}`
+   and exits 0 (never allow by literal). Before relying on it, verify on a throwaway session that `ask` still prompts in
+   bypassPermissions mode and that a background subagent gets a denial, not a silent allow (the hooks docs do not state
+   either). If `ask` does not hold in bypass mode, approvals must come from outside the agent: the lead runs
+   `turnstile approve` in their own terminal and the guard blocks it from Bash outright.
+2. **R2-2 The Slack guard trusts a file the agents can still write.** These all pass `guard_bash` (probe):
+   `perl -pi -e … delivery/state.json`, `node -e "fs.writeFileSync('delivery/state.json',…)"`, `ruby -e`,
+   `python3 - <<EOF` with the path built from pieces, `git checkout HEAD~3 -- delivery/state.json`, `sed -i … state.*`,
+   and any write prefixed `TURNSTILE_MIGRATION=1` (`guard_bash.py:48`). Writing `approved_at` unlocks
+   `guard_slack.py:44`, so the Slack hard rule falls with it. A regex blocklist cannot close this. **Fix:**
+   `guard_slack` returns `permissionDecision: "ask"` after the state checks pass, so a human confirms every send in the
+   UI. The state check stays as the "is it allowed at all" filter. Same `ask` for a Bash command that carries
+   `TURNSTILE_MIGRATION=1`. Keep `STATE_WRITE` as best effort; add `perl|node|ruby` and `git (checkout|restore) … state.json`.
+3. **R2-3 Sending to humans is not gated on the story (§1.4, §4.2).** `rules.check_pr` ON_HUMAN_REVIEW
+   (`rules.py:123-135`) never looks at the story. Probe: jsfiller#1 went READY → ON_HUMAN_REVIEW while S1 was
+   IN_PROGRESS. `human_review_units` is never read. **Fix:** pass `stories` into `check_pr`; from READY require
+   `stories[pr.story].state == "DONE"`. Open the `send` entry when the story reaches DONE (one per unit), not at PR READY.
+   For the migration, mark the stories whose PRs are already on human review as DONE with a lead `--reason`.
+
+**Major**
+
+4. **R2-4 A denied or failed Slack send burns the approval and deadlocks the PR.** `guard_slack.py:51-53` writes
+   `used_at` in PreToolUse, before the send happens. If the user denies the call or the MCP fails, the entry is spent.
+   `approve` then answers "already approved" (`pass_cmd.py:320`), and READY never opens a second `send`. The only way
+   out is READY → AI_REVIEW → READY. **Fix:** when `approve` is called on a used, not-consumed entry, it opens a fresh
+   entry with the same type, PR and head and approves it (the lead's word again). Better: set `used_at` in a PostToolUse
+   hook, on success only.
+5. **R2-5 Gate, CI and approval evidence is still self-reported.** `pass` checks the head against GitHub
+   (`pass_cmd.py:87-101`) but takes `--gate pdf-review:pass`, `--ci success` and `--approvals x` on faith. Only
+   `reconcile`, which is advisory, compares them. **Fix:** `IO.github_head` → `IO.github_facts`; for READY and
+   ON_HUMAN_REVIEW require `facts.checks[gate] == "success"` and `facts.ci == "success"`; for APPROVED require
+   `approvals ⊆ facts.approvals` and `facts.human_threads_open == 0`; for MERGED require `facts.merged`.
+6. **R2-6 Story approvals take the first matching entry and are not bound to the evidence.** `rules.py:223` and `:254`,
+   and `pass_cmd.py:265`, use `next(...)`. After a reopen (ENV_TESTING → IN_PROGRESS → … → ENV_TESTING):
+   - an approved, unconsumed `story_done` from the earlier test run is reused for the new results;
+   - or a consumed earlier entry makes DONE fail unless `--approved` is passed.
+
+   **Fix:** void the open `story_done` when a story leaves ENV_TESTING backwards; choose the newest entry that is not
+   voided.
+7. **R2-7 `rework_since` is never cleared** (`pass_cmd.py:231`). After REWORK → DEV (a real re-implementation), deep
+   review is skipped for the life of the PR (`rules.py:55`). **Fix:** `pr.pop("rework_since", None)` when the target is
+   DEV.
+8. **R2-8 Reconcile ignores threads and changes requested on APPROVED PRs.** `reconcile.py:71-78` checks only
+   ON_HUMAN_REVIEW, although `PR_FROM["REWORK"]` allows APPROVED. **Fix:** `st in ("ON_HUMAN_REVIEW", "APPROVED")` for
+   the human_thread and changes_requested branches.
+
+**Minor**
+
+9. **R2-9 The lock now depends on `TMPDIR`.** If the hook process and the CLI see different `TMPDIR` values (sandboxed
+   sessions set one per session), they do not exclude each other. The digest check in `save` is then the only backstop,
+   and it fails as "re-run", not as a lost write. **Fix:** lock `$(git rev-parse --git-common-dir)/turnstile-<hash>.lock`,
+   or commit an empty `delivery/.state.lock` at `init` and lock that.
+10. **R2-10 `write_atomic` changes the files.** `mkstemp` creates files with mode 0600, so `state.json` and `board.html`
+    lose group and other read after the first pass. If `state.json` is a symlink, `os.replace` replaces the link with a
+    plain file. **Fix:** `os.chmod(tmp, 0o666 & ~umask)` before the replace, and resolve the path first.
+11. **R2-11 The guard still passes content and rules that live in files** (probe):
+    - `gh api graphql -F query=@m.graphql` (a mutation in a file);
+    - `git commit -F msg.txt` and `gh pr create --body-file b.md` (a trailer or footer in a file);
+    - `git config pull.rebase true`;
+    - `--service_github_tag ""` (the space form).
+
+    **Fix:**
+    - block `query=@` and `--input` with `graphql`;
+    - for `-F`, `--file` and `--body-file`, read the file in the hook and apply `CONTENT_RULES`;
+    - add `pull\.rebase\s+true`;
+    - add `--service_github_tag\s+(?:''|"")`.
+12. **R2-12 A Slack message that also links a PR missing from the state is refused with a misleading error.** A paired
+    locales PR on a `Locales:` line, if it is not in `state.prs`, or a repo that is missing from `epic.repos`, makes
+    `repos[...]` at `guard_slack.py:39` raise `KeyError`. The guard then blocks with "cannot read the delivery state".
+    **Fix:** name the unknown id in the refusal, and allow ids that a `send` entry declares in a `companions` list.
+13. **R2-13 ON_HUMAN_REVIEW does not check that the message was actually sent.** It takes any `--slack` string, and the
+    entry's `used_at` (set when the guard let a send through) is never required. **Fix:** require `entry.used_at` and a
+    permalink that matches `^https://[\w-]+\.slack\.com/archives/`.
+14. **R2-14 The Slack guard's writes are not committed.** It writes `state.json` and `ledger.md` without a commit or a
+    board render (`guard_slack.py:53-55`), and the next unrelated `pass` commits them. **Fix:** commit from the guard,
+    or have `status` report uncommitted changes in `delivery/`.
+
+**Spec rules still not enforced**
+
+- §3 DEV DoD: reconcile checks the signature of the head commit only (not every commit), and `pass` never checks it.
+- §3 REWORK "replies posted": nothing evidences it.
+- §4.2 IN_PROGRESS "stacked or merged into the story branch": not checked.
+- §4.2 ENV_TESTING "every fail became a bug": `cases.fail` is not compared with the story's bugs.
+
+### Verdict
+
+Not ready for a real epic yet. R2-1 and R2-2 mean any agent can still unlock a Slack send without the lead, which is
+the hard rule the plugin exists to enforce. R2-3 lets PRs reach humans before the story gates. With `ask` decisions in
+the two hooks (verified in bypass mode) and the story-DONE check, plan 3 can start. R2-4 to R2-8 should land before
+the first REWORK cycle.
