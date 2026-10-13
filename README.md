@@ -124,7 +124,7 @@ exist.
   `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
   of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's
   `used_at` and a permalink of the form `https://<workspace>.slack.com/archives/…`.
-- `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` unless the environment has
+- `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` and `ledger.md` unless the environment has
   `TURNSTILE_MIGRATION=1`.
 
 ### Threat model

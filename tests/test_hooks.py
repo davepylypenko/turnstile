@@ -304,5 +304,6 @@ class StateEditGuard(unittest.TestCase):
         for tool in ("Edit", "Write", "MultiEdit"):
             r = self.edit(p, tool); self.assertEqual(r.returncode, 2, tool); self.assertIn("turnstile pass", r.stderr)
         self.assertEqual(self.edit(p, env={"TURNSTILE_MIGRATION": "1"}).returncode, 0)
-        self.assertEqual(self.edit(str(self.ws / "delivery" / "ledger.md")).returncode, 0)
+        self.assertEqual(self.edit(str(self.ws / "delivery" / "ledger.md")).returncode, 2)  # R3-8: a forged approve line would hide from reconcile
+        self.assertEqual(self.edit(str(self.ws / "delivery" / "reports" / "R.md")).returncode, 0)
         self.assertEqual(self.edit(str(self.ws / "delivery" / "reports" / "state.json.md")).returncode, 0)
