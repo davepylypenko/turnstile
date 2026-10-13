@@ -35,10 +35,10 @@ LEAD_HINT = ("The lead approves by typing `! TURNSTILE_LEAD=1 turnstile approve 
 # R2-2: the delivery dir is written only by the CLI. A command that mentions state.json or the delivery dir and is
 # not read-only is refused whatever interpreter it uses (perl/node/ruby/python heredocs, git restores, redirects).
 READ_ONLY = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "jq", "ls", "find", "wc", "diff", "stat", "file", "cd",
-             "pwd", "echo", "printf", "test", "[", "true", "sort", "uniq", "cut", "awk", "tr", "column", "md5", "md5sum", "shasum", "sha256sum",
-             "turnstile", "sed", "python3", "python", "xargs", "env", "which", "type"}
+             "pwd", "echo", "printf", "test", "[", "true", "sort", "uniq", "cut", "tr", "column", "md5", "md5sum", "shasum", "sha256sum",
+             "turnstile", "sed", "python3", "python", "xargs", "which", "type"}
 GIT_READ_ONLY = {"diff", "log", "show", "status", "blame", "ls-files", "rev-parse", "cat-file", "grep", "branch", "remote", "describe",
-                 "push", "fetch", "shortlog", "name-rev", "worktree", "config"}
+                 "push", "fetch", "shortlog", "name-rev"}
 GIT_RESTORE = re.compile(GIT + r"(?:checkout|restore|stash|reset)\b", re.I)
 HARMLESS_REDIRECTS = re.compile(r"\d?>\s*&\d|\d?>\s*/dev/null|&>\s*/dev/null|<<-?\s*\S+")
 REDIRECT_TARGET = re.compile(r"\d?>{1,2}\s*(\S+)")
@@ -74,7 +74,11 @@ def _read_only_segment(seg: str, mention, in_delivery: bool) -> bool:
         return len(words) > 2 and words[1] == "-m" and words[2] == "turnstile_cli"
     if head == "sed":
         return not re.search(r"\s(?:-[a-zA-Z]*i|--in-place)\b", seg)
-    if head == "xargs":
+    if head == "find" and re.search(r"\s-(?:exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)\b", seg):
+        return False
+    if head == "sort" and re.search(r"\s(?:-[a-zA-Z]*o|--output)\b", seg):
+        return False
+    if head in ("xargs", "env"):
         return len(words) > 1 and _read_only_segment(" ".join(words[1:]), mention, in_delivery)
     return head in READ_ONLY
 
@@ -135,7 +139,34 @@ def check(cmd: str, cwd: str = ".") -> None:
                   "git diff/log/show/status, turnstile …). The delivery dir is written only by 'turnstile pass'; reports go through the Write tool."
                   % (mention, bad[0][:60]))
 
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "-h", "--help", "--version"}
+
+def _turnstile_sub_ok(flat: str) -> bool:
+    """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""
+    for seg in _segments(flat):
+        words = seg.split()
+        while words and re.match(r"^\w+=", words[0]):
+            words.pop(0)
+        if words and words[0] == "env":
+            words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
+        for i, w in enumerate(words[:-1]):  # anywhere in the segment: a computed word after turnstile is a computed subcommand
+            if w.rsplit("/", 1)[-1] in ("turnstile", "turnstile_cli") and re.search(r"[$`]", words[i + 1]):
+                return False
+        if words and words[0].rsplit("/", 1)[-1] in ("python", "python3") and words[1:3] == ["-m", "turnstile_cli"]:
+            words = words[2:]
+        if not words or words[0].rsplit("/", 1)[-1] not in ("turnstile", "turnstile_cli"):
+            continue
+        rest = words[1:]
+        while rest and rest[0].startswith("--delivery"):
+            rest = rest[1:] if "=" in rest[0] else rest[2:]
+        if rest and rest[0] not in TURNSTILE_SUBS:
+            return False
+    return True
+
 def _check(flat: str) -> None:
+    if not _turnstile_sub_ok(flat):
+        block("blocked by rule lead-approve. turnstile subcommands are named literally (%s); 'approve' is the lead's. %s"
+              % (", ".join(sorted(TURNSTILE_SUBS)), LEAD_HINT))
     for name, needle in LEAD_ONLY:
         if needle in flat:
             block("blocked by rule %s. `%s` is the lead's marker. %s" % (name, needle, LEAD_HINT))

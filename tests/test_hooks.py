@@ -126,6 +126,19 @@ class BashGuard(unittest.TestCase):
                             "TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "env | grep TURNSTILE_MIGRATION"], "lead-")
         self.assertAllowed(["git commit -m 'feat(turnstile): approve flow'", "turnstile status", "turnstile pass pr jsfiller#1 READY --head a"])
 
+    def test_round3_computed_subcommands_and_writers(self):
+        # R3-1: a computed subcommand forged `approve` with the lead's ledger line; R3-2: env/awk/find/sort/git config wrote state.json
+        self.assertBlocked(["turnstile $(echo approve) ah-3", "turnstile appr$(echo ove) ah-3", "X=approve; turnstile $X ah-3",
+                            "env \"$(printf 'TURNSTILE\\137LEAD=1')\" turnstile $(printf 'appr%s' ove) ah-3",
+                            "scripts/turnstile `echo approve` ah-3", "turnstile --delivery d $(echo approve) ah-1"], "lead-approve")
+        self.assertBlocked(["env perl -pi -e 's/a/b/' delivery/state.json", "awk 'BEGIN{system(\"cp /tmp/s delivery/state.json\")}'",
+                            "find delivery -name state.json -delete", "find delivery -name state.json -exec cp /tmp/s {} \\;",
+                            "sort -o delivery/state.json /tmp/s", "git -C delivery config --file state.json a.b c",
+                            "git -C delivery worktree add ../x"], "delivery-write")
+        self.assertAllowed(["turnstile status", "turnstile --delivery d pass pr jsfiller#1 READY", "git -C turnstile log --oneline",
+                            "cd /x/turnstile && python3 -m unittest", "find delivery -name '*.md'", "sort delivery/ledger.md",
+                            "env | sort", "python3 -m turnstile_cli reconcile --json"])
+
     def test_malformed_payload_blocks(self):
         for payload in ("{}", "[]", "not json", json.dumps({"tool_input": {"command": 5}}), json.dumps({"tool_input": "x"})):
             self.assertEqual(hook("guard_bash.py", payload, self.ws).returncode, 2, payload)

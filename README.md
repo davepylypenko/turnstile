@@ -109,9 +109,9 @@ exist.
   `service_github_tag ''` form, every command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the
   lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
   the delivery dir and is not read-only** — read-only means every pipeline segment starts with `cat`, `less`, `head`,
-  `tail`, `grep`, `jq`, `ls`, `find`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
+  `tail`, `grep`, `jq`, `ls`, `find` without `-exec|-delete`, `sort` without `-o`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
   `turnstile …` / `python3 -m turnstile_cli …`, and no redirect writes into the delivery dir. `perl -pi`, `node -e`,
-  `ruby -e`, `python3 - <<EOF`, `tee`, `cp`, `mv`, `rm`, `mkdir`, `git add|commit` on the delivery dir are therefore
+  `ruby -e`, `env perl …`, `awk`, `python3 - <<EOF`, `tee`, `cp`, `mv`, `rm`, `mkdir`, `git add|commit|config|worktree` on the delivery dir are therefore
   refused, as are `git checkout|restore|stash|reset` that touch it. Reports and briefs go through the Write tool and
   are committed by the next `turnstile pass`. Global options before the subcommand (`git -C dir`, `git -c k=v`,
   `gh -R owner/repo`) are covered.
