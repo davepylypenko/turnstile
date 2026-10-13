@@ -248,6 +248,14 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("unblocked for sending by jsfiller#1: docs-platform#2", (self.d / "ledger.md").read_text())
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "On Hold")
+        self.assertNotIn("re-evaluate the story DoD", (self.d / "ledger.md").read_text())  # docs-platform#2 is still DEV
+
+    def test_merged_last_pr_of_a_story_notes_the_story_dod(self):
+        data = self.data(); data["prs"]["docs-platform#2"]["state"] = "MERGED"; self.write(data)
+        self.to_human()
+        pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io), 0)
+        self.assertIn("story S1: every PR merged (docs-platform#2, jsfiller#1); re-evaluate the story DoD", (self.d / "ledger.md").read_text())
 
     def test_story_transition_records_deploy_and_opens_story_done_entry(self):
         data = self.data()

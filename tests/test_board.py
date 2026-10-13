@@ -28,3 +28,11 @@ class Board(unittest.TestCase):
         tpl = board.TEMPLATE.read_text()
         self.assertIn("esc(prUrl(id))", tpl); self.assertIn("esc(prUrl(b.pr))", tpl)
         self.assertIn("/^https:\\/\\//.test(h.slack_permalink", tpl)
+    def test_legend_note_colours_and_tabs(self):
+        tpl = board.TEMPLATE.read_text()
+        for s in ("Jira mapping", "reviewer not notified", "role=\"tablist\"", "aria-selected", "PLANNED:'var(--planned)'", "todo:'var(--todo)'",
+                  "(e.env_test.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563"):
+            self.assertIn(s, tpl, s)
+        d = pathlib.Path(tempfile.mkdtemp())
+        data = json.loads(json.dumps(FIX)); data["stories"]["S1"]["evidence"] = {"env_test": {"report": "r"}}
+        self.assertIn('"env_test"', board.render(data, d).read_text())

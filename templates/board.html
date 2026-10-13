@@ -7,7 +7,7 @@
 <meta name="description" content="Epic delivery state: PRs, stories, bugs and what waits for humans.">
 <style>
 :root { --bg:#f6f7f9; --card:#fff; --ink:#1c1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb;
-  --dev:#9ca3af; --ai:#f59e0b; --ready:#10b981; --human:#3b82f6; --rework:#ef4444; --approved:#8b5cf6; --merged:#111827; }
+  --dev:#9ca3af; --ai:#f59e0b; --ready:#10b981; --human:#3b82f6; --rework:#ef4444; --approved:#8b5cf6; --merged:#4b5563; --planned:#9ca3af; --progress:#f59e0b; --integ:#3b82f6; --env:#8b5cf6; --done:#10b981; --todo:#ef4444; --bugai:#f59e0b; --testing:#3b82f6; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; } }
 :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; }
 * { box-sizing:border-box } body { margin:0; padding:16px; background:var(--bg); color:var(--ink); font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif }
@@ -19,19 +19,29 @@ th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); 
 .badge { display:inline-block; padding:1px 8px; border-radius:999px; color:#fff; font-size:11px; font-weight:600 }
 .k { font-family: ui-monospace, Menlo, monospace; font-size:12px } .muted { color:var(--muted) } a { color:var(--accent) }
 .tabs button { background:none; border:1px solid var(--line); border-radius:6px; padding:4px 10px; margin-right:6px; color:var(--ink); cursor:pointer } .tabs button.on { border-color:var(--accent); color:var(--accent) }
-.hidden { display:none }
+.hidden { display:none } .legend { color:var(--muted); font-size:12px; margin-top:16px } .legend b { color:var(--ink) }
 </style>
 </head>
 <body>
 <h1 id="title">Turnstile</h1>
 <div class="updated">updated __TURNSTILE_UPDATED__</div>
 <div class="tiles" id="tiles"></div>
-<div class="tabs"><button data-tab="prs" class="on">PRs</button><button data-tab="stories">Stories</button><button data-tab="bugs">Bugs</button><button data-tab="awaiting">Awaiting humans</button></div>
-<div id="prs"></div><div id="stories" class="hidden"></div><div id="bugs" class="hidden"></div><div id="awaiting" class="hidden"></div>
+<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="prs" class="on">PRs</button><button role="tab" aria-selected="false" data-tab="stories">Stories</button><button role="tab" aria-selected="false" data-tab="bugs">Bugs</button><button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button></div>
+<div id="prs" role="tabpanel"></div><div id="stories" class="hidden" role="tabpanel"></div><div id="bugs" class="hidden" role="tabpanel"></div><div id="awaiting" class="hidden" role="tabpanel"></div>
+<div class="legend" id="legend"></div>
 <script>
 const STATE = /*__TURNSTILE_STATE__*/null;
 const COLORS = { DEV:'var(--dev)', AI_REVIEW:'var(--ai)', READY:'var(--ready)', ON_HUMAN_REVIEW:'var(--human)', REWORK:'var(--rework)', APPROVED:'var(--approved)', MERGED:'var(--merged)' };
 const PR_STATES = Object.keys(COLORS);
+Object.assign(COLORS, { PLANNED:'var(--planned)', IN_PROGRESS:'var(--progress)', INTEGRATION_REVIEW:'var(--integ)', ENV_TESTING:'var(--env)', DONE:'var(--done)', todo:'var(--todo)', ai:'var(--bugai)', testing:'var(--testing)', done:'var(--done)' });
+const JIRA = { DEV:'In progress', AI_REVIEW:'In progress', READY:'In progress', ON_HUMAN_REVIEW:'On Review', REWORK:'On Review', APPROVED:'On Review', MERGED:'On Hold' };
+function note(p) {
+  const h = (p.evidence || {}).human || {}, out = [];
+  if (p.state === 'REWORK') out.push('reviewer not notified' + (h.sent_head && p.head && !(p.head.startsWith(h.sent_head) || h.sent_head.startsWith(p.head)) ? ' (new head)' : ''));
+  if (p.state === 'READY' && p.blocked_by) out.push('waits for ' + p.blocked_by);
+  if (p.last_reason) out.push(p.last_reason);
+  return out.join(' · ');
+}
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = s => '<span class="badge" style="background:' + (COLORS[s] || 'var(--muted)') + '">' + esc(s) + '</span>';
 const prUrl = id => { const [repo, n] = id.split('#'); return 'https://github.com/' + (((STATE || {}).epic || {}).github_org || 'pdffiller') + '/' + repo + '/pull/' + n; };
@@ -53,13 +63,13 @@ function prs() {
   const byRepo = {};
   Object.entries(STATE.prs || {}).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
   document.getElementById('prs').innerHTML = Object.entries(byRepo).map(([repo, rows]) =>
-    '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th></tr></thead><tbody>' +
+    '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th><th>Note</th></tr></thead><tbody>' +
     rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
       const h = (p.evidence || {}).human || {};
       return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
         '<td>' + (/^https:\/\//.test(h.slack_permalink || '') ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
-        '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + '</td><td>' + esc(p.next_action) + '</td></tr>';
+        '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
     }).join('') + '</tbody></table></div>').join('');
 }
 function stories() {
@@ -68,7 +78,7 @@ function stories() {
       const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
       const e = s.evidence || {};
       const ev = ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—'),
-                  'env ' + (e.env_test ? (e.env_test.cases.fail === 0 && e.env_test.figma_parity === 'pass' ? '✓' : '✗ ' + e.env_test.cases.fail + ' fail') : '—')].join(' · ');
+                  'env ' + (e.env_test ? (((e.env_test.cases || {}).fail === 0 && e.env_test.figma_parity === 'pass') ? '✓' : '✗ ' + ((e.env_test.cases || {}).fail == null ? '?' : e.env_test.cases.fail) + ' fail') : '—')].join(' · ');
       return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
@@ -79,13 +89,17 @@ function bugs() {
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
-    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tabs button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
   ['prs', 'stories', 'bugs', 'awaiting'].forEach(id => document.getElementById(id).classList.toggle('hidden', id !== b.dataset.tab));
 }));
-if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); }
+function legend() {
+  document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
+    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted.';
+}
+if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend(); }
 </script>
 </body>
 </html>

@@ -236,6 +236,11 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     unblocked = [p for p, v in data["prs"].items() if v.get("blocked_by") == ident]
                     if unblocked:
                         extra.append("unblocked for sending by %s: %s" % (ident, ", ".join(unblocked)))
+                    sid = pr.get("story")
+                    mine = [p for p, v in data["prs"].items() if v.get("story") == sid]
+                    if sid and mine and all(data["prs"][p].get("state") == "MERGED" for p in mine):
+                        extra.append("story %s: every PR merged (%s); re-evaluate the story DoD (state %s)"
+                                     % (sid, ", ".join(mine), (data["stories"].get(sid) or {}).get("state")))
                 summary = "pass pr %s %s → %s (head %s)%s%s" % (ident, src, target, pr.get("head"), " — " + o.reason if o.reason else "",
                                                              " [offline, head not verified]" if o.offline else "")
             elif kind == "story":
