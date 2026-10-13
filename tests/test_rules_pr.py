@@ -19,6 +19,7 @@ FULL = dict(
 )
 SEND = {"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"}
 REPLY = {"id": "ah-2", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"}
+DONE_STORIES = {"S1": dict(FIX["stories"]["S1"], state="DONE")}
 
 class Heads(unittest.TestCase):
     def test_same_head_prefix(self):
@@ -105,7 +106,7 @@ class ToHuman(unittest.TestCase):
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])
         self.assertTrue(any("ah-NOPE" in m for m in out), out)
         p["evidence"]["human"] = self.human("ah-1")
-        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND]), [])
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=DONE_STORIES), [])
         unapproved = dict(SEND, approved_at=None)
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[unapproved])
         self.assertTrue(any("approved_at" in m for m in out), out)
@@ -121,6 +122,21 @@ class ToHuman(unittest.TestCase):
         voided = dict(SEND, voided_at="x")
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[voided])
         self.assertTrue(any("voided" in m for m in out), out)
+    def test_story_must_be_done_before_human_review_unless_per_pr(self):
+        # R2-3: human review receives only stories that passed the story gates (spec §1.4, §4.2)
+        p = self.ready(); p["evidence"]["human"] = self.human()
+        in_progress = {"S1": dict(FIX["stories"]["S1"], state="IN_PROGRESS")}
+        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=in_progress)
+        self.assertEqual([m for m in out if "story S1" in m], ["MISSING story S1 to be DONE (is IN_PROGRESS): human review receives only stories "
+                                                               "that passed integration review and env testing (lead-set human_review: per_pr in plan.md exempts a legacy story)"])
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=DONE_STORIES), [])
+        per_pr = {"S1": dict(FIX["stories"]["S1"], state="IN_PROGRESS", human_review="per_pr")}
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=per_pr), [])
+        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])  # no stories passed: fail closed
+        self.assertTrue(any("story S1" in m for m in out), out)
+        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories={})
+        self.assertTrue(any("story S1" in m for m in out), out)
+
     def test_blocked_by_unmerged(self):
         p = self.ready(); p["blocked_by"] = "docs-platform#2"; p["evidence"]["human"] = self.human()
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])

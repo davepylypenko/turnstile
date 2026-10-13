@@ -26,7 +26,7 @@ def _dry_run(data: dict, pid: str, target: str, cmd: str, **flags) -> Optional[s
         return str(e)
     pr.setdefault("evidence", {})["head_verified"] = {"head": pr.get("head"), "verified": True}
     repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-    missing = rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"))
+    missing = rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"), stories=data.get("stories"))
     return "; ".join(missing) if missing else None
 
 def _propose(out: List[Proposal], data: dict, pid: str, kind: str, message: str, target: str, cmd: str, **flags) -> None:

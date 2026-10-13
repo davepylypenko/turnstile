@@ -99,8 +99,21 @@ def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ide
                    % (ah_id, expected_type, ident, ah_id))
     return e
 
+def _story_gates_passed(pr: dict, stories: Optional[Dict[str, dict]], out: List[str]) -> None:
+    """Human review receives only stories that passed integration review and env testing (spec §1.4, §4.2). A lead-set
+    `human_review: "per_pr"` on the story (recorded in plan.md) exempts a migrated/legacy story."""
+    sid = pr.get("story")
+    if not sid:
+        return
+    s = (stories or {}).get(sid)
+    if s is None:
+        out.append("MISSING story %s in state (the PR's story is unknown, so its gates cannot be verified)" % sid)
+    elif s.get("state") != "DONE" and s.get("human_review") != "per_pr":
+        out.append("MISSING story %s to be DONE (is %s): human review receives only stories that passed integration review and env testing "
+                   "(lead-set human_review: per_pr in plan.md exempts a legacy story)" % (sid, s.get("state")))
+
 def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason: Optional[str] = None,
-             awaiting: Optional[List[dict]] = None) -> List[str]:
+             awaiting: Optional[List[dict]] = None, stories: Optional[Dict[str, dict]] = None) -> List[str]:
     out: List[str] = []
     if target not in PR_STATES:
         return ["MISSING valid target state (one of %s)" % ", ".join(PR_STATES)]
@@ -128,6 +141,8 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
             out.append("MISSING evidence.human.slack_permalink")
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
+        if src == "READY":
+            _story_gates_passed(pr, stories, out)
         e = check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
         if e and e.get("type") == "send" and e.get("head") and not same_head(e.get("head"), pr.get("head")):
             out.append("MISSING awaiting_human %s approved for head %s, not the current head %s (re-run AI_REVIEW → READY)" % (e.get("id"), e.get("head"), pr.get("head")))

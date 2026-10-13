@@ -210,7 +210,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 trial = copy.deepcopy(pr); trial["_id"] = ident
                 _apply_pr_evidence(trial, o)
                 _verify_head(trial, ident, org, o, io, notes)
-                missing = rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting)
+                missing = rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = pr["state"]

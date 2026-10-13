@@ -51,8 +51,12 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.run(self.d, "pr", pid, "READY", opts(**READY_OPTS), self.io)
         self.assertEqual(rc, 0)
 
+    def story(self, **fields):
+        data = self.data(); data["stories"]["S1"].update(fields); self.write(data)
+
     def to_human(self):
         self.to_ready()
+        self.story(state="DONE")
         ah = self.data()["awaiting_human"][0]["id"]
         with env(TURNSTILE_LEAD="1"):
             self.assertEqual(pass_cmd.approve(self.d, ah, self.io), 0)
@@ -206,7 +210,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(len(self.io.commits), 2)
 
     def test_on_human_review_requires_a_lead_approved_entry_and_consumes_it(self):
-        self.to_ready()
+        self.to_ready(); self.story(state="DONE")
         ah = self.data()["awaiting_human"][0]["id"]
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack="https://s/1", approved="ah-NOPE"), self.io)
         self.assertEqual(rc, 2); self.assertIn("ah-NOPE", out)
@@ -221,6 +225,19 @@ class PassCmd(unittest.TestCase):
         self.assertTrue(data["awaiting_human"][0]["consumed_at"])
         self.assertEqual(data["prs"]["jsfiller#1"]["evidence"]["human"]["sent_head"], H)
         self.assertEqual(data["prs"]["jsfiller#1"]["jira"], {"status": "On Review", "synced": False})
+
+    def test_on_human_review_requires_the_story_done_or_per_pr(self):
+        self.to_ready()
+        ah = self.data()["awaiting_human"][0]["id"]
+        with env(TURNSTILE_LEAD="1"):
+            pass_cmd.approve(self.d, ah, self.io)
+        send = opts(head=H, slack="https://s/1", reviewers="isachivka", approved=ah)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", send, self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING story S1 to be DONE (is IN_PROGRESS)", out)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "READY")
+        self.story(human_review="per_pr")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", send, self.io)
+        self.assertEqual(rc, 0, out)
 
     def test_rework_marks_pr_voids_nothing_and_opens_reply_entry(self):
         self.to_human()
