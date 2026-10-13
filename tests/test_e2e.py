@@ -28,9 +28,11 @@ class E2E(unittest.TestCase):
         self.assertEqual(r.returncode, 2); self.assertIn("MISSING evidence.human.slack_permalink", r.stdout)
 
     def test_status_without_network(self):
-        # PATH with python3 only: `gh` is absent, so fetch raises and cli prints WARN lines instead of calling GitHub
+        # PATH without `gh` (only the interpreter and the shim's bash/dirname): fetch raises, cli prints WARN, no network
         bin_dir = self.ws / "bin"; bin_dir.mkdir(); (bin_dir / "python3").symlink_to(sys.executable)
-        r = sh(["status"], cwd=self.ws, env=dict(self.env, PATH=str(bin_dir)))
+        env = dict(self.env, PATH=os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]))
+        self.assertIsNone(shutil.which("gh", path=env["PATH"]), "gh must be absent from the test PATH")
+        r = sh(["status"], cwd=self.ws, env=env)
         self.assertIn("WARN jsfiller#1", r.stdout)
         self.assertEqual(r.returncode, 0)
         self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout)
