@@ -12,7 +12,7 @@ class E2E(unittest.TestCase):
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
-        (d / "reports").mkdir(); (d / "reports" / "R.md").write_text("clean")
+        (d / "reports").mkdir(); (d / "reports" / "R.md").write_text("clean"); (d / ".state.lock").touch()  # as init leaves it
         subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=self.ws, check=True)

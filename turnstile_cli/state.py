@@ -63,9 +63,9 @@ def locked(delivery: pathlib.Path, wait: bool = True):
     path = pathlib.Path(delivery) / "state.json"
     if not path.exists():
         raise TurnstileError("state file not found: %s" % path)
-    # lock a stable sidecar in the delivery dir (git-ignored), never state.json itself: os.replace gives state.json a
-    # new inode, and a lock on the old inode would no longer exclude a process that opens the new one. Not under
-    # TMPDIR: the hook process and the CLI may see different values and would not exclude each other (R2-9).
+    # lock a stable sidecar in the delivery dir (an empty, tracked file created at init), never state.json itself:
+    # os.replace gives state.json a new inode, and a lock on the old inode would no longer exclude a process that
+    # opens the new one. Not under TMPDIR: the hook process and the CLI may see different values (R2-9).
     lock = pathlib.Path(delivery) / LOCK_NAME
     with open(str(lock), "a") as f:
         try:
