@@ -5,7 +5,8 @@ from . import state as st_mod, rules, ledger
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
-HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW")
+GITIGNORE = ".*.tmp\n"
+HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
 
 @dataclass
 class Options:
@@ -37,6 +38,7 @@ class IO:
         subprocess.run(["git", "add", "-A", "."], cwd=str(delivery), check=True, capture_output=True, text=True)
         r = subprocess.run(["git", "commit", "-q", "-m", message], cwd=str(delivery), capture_output=True, text=True)
         if r.returncode != 0:
+            subprocess.run(["git", "reset", "-q", "--", "."], cwd=str(delivery), capture_output=True)
             raise TurnstileError((r.stderr or r.stdout).strip()[:300] or "git commit exited %d" % r.returncode)
     def render_board(self, data: dict) -> Optional[str]:
         try:
@@ -89,7 +91,7 @@ def _verify_head(pr: dict, ident: str, org: str, o: Options, io: IO, notes: List
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
     if o.offline:
-        notes.append("WARN --offline: head %s of %s NOT verified against GitHub; READY/ON_HUMAN_REVIEW stay refused until an online pass" % (h, ident))
+        notes.append("WARN --offline: head %s of %s NOT verified against GitHub; READY/ON_HUMAN_REVIEW/APPROVED/MERGED stay refused until an online pass" % (h, ident))
         ev["head_verified"] = {"head": h, "verified": False}
         return
     try:
@@ -148,6 +150,9 @@ def _ensure_repo_files(delivery: pathlib.Path) -> None:
     ga = pathlib.Path(delivery) / ".gitattributes"
     if not ga.exists() or "ledger.md merge=union" not in ga.read_text():
         ga.write_text((ga.read_text() if ga.exists() else "") + GITATTRIBUTES)
+    gi = pathlib.Path(delivery) / ".gitignore"
+    if not gi.exists() or GITIGNORE not in gi.read_text():
+        gi.write_text((gi.read_text() if gi.exists() else "") + GITIGNORE)
 
 class _Snapshot:
     NAMES = ("state.json", "ledger.md", "board.html")

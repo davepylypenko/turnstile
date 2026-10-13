@@ -316,6 +316,21 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(self.data()["awaiting_human"][0]["consumed_at"])
 
+    def test_send_approval_is_bound_to_the_head_it_was_given_for(self):
+        self.to_ready()
+        ah = self.data()["awaiting_human"][0]["id"]
+        with env(TURNSTILE_LEAD="1"):
+            pass_cmd.approve(self.d, ah, self.io)
+        self.io.heads["jsfiller#1"] = H2
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", deep_review="reports/R.md",
+                              gate="pdf-review:pass", slack="https://s/1", approved=ah), self.io)
+        self.assertEqual(rc, 2); self.assertIn("approved for head %s" % H, out)
+
+    def test_offline_cannot_approve_or_merge(self):
+        self.to_human()
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(offline=True, approvals="x", open_threads=0), self.io)
+        self.assertEqual(rc, 2); self.assertIn("head_verified", out)
+
     def test_next_ah_id_tolerates_odd_ids(self):
         self.assertEqual(pass_cmd._next_ah_id({"awaiting_human": [{"id": "ah-x"}, {"id": "ah-4"}, {"id": "zz"}]}), "ah-5")
         self.assertEqual(pass_cmd._next_ah_id({"awaiting_human": []}), "ah-1")

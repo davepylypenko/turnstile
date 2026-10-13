@@ -128,12 +128,15 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
             out.append("MISSING evidence.human.slack_permalink")
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
-        check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
+        e = check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
+        if e and e.get("type") == "send" and e.get("head") and not same_head(e.get("head"), pr.get("head")):
+            out.append("MISSING awaiting_human %s approved for head %s, not the current head %s (re-run AI_REVIEW → READY)" % (e.get("id"), e.get("head"), pr.get("head")))
         b = pr.get("blocked_by")
         if b and (prs.get(b) or {}).get("state") != "MERGED":
             out.append("MISSING blocked_by %s to be MERGED before sending (is %s)" % (b, (prs.get(b) or {}).get("state")))
         return out
     if target == "APPROVED":
+        _head_verified(pr, out)
         h = _ev(pr, "human") or {}
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head (push after send → REWORK)")
@@ -143,6 +146,7 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
             out.append("MISSING evidence.human.open_threads == 0 (has %s)" % h.get("open_threads"))
         return out
     if target == "MERGED":
+        _head_verified(pr, out)
         if not pr.get("merged_sha"):
             out.append("MISSING merged_sha")
         return out
