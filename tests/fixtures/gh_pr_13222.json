@@ -1,0 +1,95 @@
+{
+  "isDraft": false,
+  "merged": false,
+  "mergeCommit": null,
+  "headRefOid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812",
+  "reviewDecision": "APPROVED",
+  "latestReviews": {
+    "nodes": [
+      {
+        "author": {
+          "login": "isachivka"
+        },
+        "state": "APPROVED"
+      },
+      {
+        "author": {
+          "login": "Snyk-Agent"
+        },
+        "state": "COMMENTED"
+      }
+    ]
+  },
+  "reviewThreads": {
+    "nodes": [
+      {
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "lMakDen"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "isResolved": true,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "login": "copilot-pull-request-reviewer"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "commits": {
+    "nodes": [
+      {
+        "commit": {
+          "statusCheckRollup": {
+            "state": "SUCCESS",
+            "contexts": {
+              "nodes": [
+                {
+                  "name": "gate / gate",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                },
+                {
+                  "name": "ci_cd",
+                  "conclusion": "SKIPPED",
+                  "status": "COMPLETED"
+                },
+                {
+                  "name": "ci_job / tests_job / jest's tests",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                },
+                {
+                  "name": "SonarQube Code Analysis",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                },
+                {
+                  "context": "code/snyk (pdfFiller)",
+                  "state": "SUCCESS"
+                },
+                {
+                  "name": "pdf-review",
+                  "conclusion": "SUCCESS",
+                  "status": "COMPLETED"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}
