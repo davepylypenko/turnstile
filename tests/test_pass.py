@@ -48,6 +48,14 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "READY", opts(head="eeeeeeee55555555"), self.io)
         self.assertEqual(rc, 2)  # deep_review and gate are for the old head
 
+    def test_head_is_stored_lowercase(self):
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "READY",
+                          opts(head=H.upper(), ci="success", deep_review="reports/R.md", gate="pdf-review:pass"), self.io)
+        self.assertEqual(rc, 0)
+        data = json.loads((self.d / "state.json").read_text())
+        self.assertEqual(data["prs"]["jsfiller#1"]["head"], H)
+        self.assertEqual(data["prs"]["jsfiller#1"]["evidence"]["gate"]["head"], H)
+
     def test_jira_instruction_printed_and_synced_flag(self):
         import io, contextlib
         buf = io.StringIO()

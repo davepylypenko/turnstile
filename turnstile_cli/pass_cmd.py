@@ -43,7 +43,7 @@ def _now() -> str:
 
 def _apply_pr_evidence(pr: dict, o: Options, awaiting: List[dict]) -> None:
     if o.head:
-        pr["head"] = o.head
+        pr["head"] = o.head.lower()
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
     if o.ci:
