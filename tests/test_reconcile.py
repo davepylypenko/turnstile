@@ -54,7 +54,7 @@ class Compare(unittest.TestCase):
 
     def test_push_after_send_proposes_rework(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts(head="ffffffff66666666"))
-        self.assertEqual(props[0].kind, "head_changed"); self.assertIn("REWORK", props[0].suggested_cmd)
+        self.assertEqual(props[0].kind, "head_changed"); self.assertIn("REWORK --head ffffffff66666666", props[0].suggested_cmd)
     def test_head_changed_in_ready_proposes_ai_review_reentry_only_when_pass_accepts(self):
         props = reconcile.compare(self.data("READY"), self.facts(head="ffffffff66666666", ci="success"))
         self.assertEqual(props[0].kind, "head_changed")

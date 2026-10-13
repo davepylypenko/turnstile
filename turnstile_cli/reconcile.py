@@ -58,7 +58,7 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             msg = "head is %s, state has %s" % (f.head[:8], (pr.get("head") or "")[:8])
             if st in ("ON_HUMAN_REVIEW", "APPROVED"):
                 reason = "push after send (%s)" % f.head[:8]
-                _propose(out, data, pid, "head_changed", msg, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), reason=reason)
+                _propose(out, data, pid, "head_changed", msg, "REWORK", 'turnstile pass pr %s REWORK --head %s --reason "%s"' % (pid, f.head, reason), reason=reason, head=f.head)
             elif st in ("AI_REVIEW", "READY"):
                 ci = f.ci if f.ci in ("success", "failure") else None
                 cmd = "turnstile pass pr %s AI_REVIEW --head %s" % (pid, f.head) + (" --ci %s" % ci if ci else "")
