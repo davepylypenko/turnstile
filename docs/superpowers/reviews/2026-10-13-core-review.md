@@ -386,3 +386,120 @@ decisions for the blockers were taken by the lead and are not reopened here.
 Still open (not in this round's scope, unchanged from "Spec rules still not enforced"): signature check of every
 commit (reconcile checks the head only), evidence that REWORK replies were posted, "stacked or merged into the story
 branch" at IN_PROGRESS, and `cases.fail` against the story's bugs.
+
+## Round 3 (2026-10-13)
+
+Scope: `c34bf6d..ce7112b` against the "Round 2 resolution" table, spec §3/§4.2/§6 and README "Threat model" / "How the lead
+approves". Bypasses were probed with the real hooks (JSON payloads), the real CLI in a throwaway git workspace, and
+`github.fetch` against live PRs (jsfiller#13359, #13384, front-link2fill-app#1205). Suite: 140 → 147 tests, green on
+Python 3.9.6. Fixes below are signed and pushed to `main`.
+
+### Round 2 resolutions verified
+
+| # | Verdict | Evidence |
+|---|---|---|
+| R2-1 | **Not closed** (R3-1) | Literal spellings are blocked, but `env "$(printf 'TURNSTILE\137LEAD=1')" turnstile $(printf 'appr%s' ove) ah-1` passed `guard_bash`, ran `approve`, wrote `approved_via: lead-terminal` and the matching ledger line, so `reconcile` reported nothing; `guard_slack` then exited 0 silently. |
+| R2-2 | Partly | perl/node/ruby/heredoc/`git checkout|restore` writes are blocked. `env perl -pi …`, `awk 'BEGIN{system(…)}'`, `find … -delete|-exec`, `sort -o`, `git -C delivery config --file state.json` passed (R3-2). Globs (`cd deliv* && cp x st*.json`) and script files (`python3 /tmp/x.py`) still pass: accepted residual risk. |
+| R2-3 | Closed in `pass`, open at the send (R3-3) | `pass … ON_HUMAN_REVIEW` refuses an IN_PROGRESS story without `per_pr` (tested). The Slack guard did not check the story, so an approved send went out before the story gates. |
+| R2-4 | Closed | A denied call never reaches PostToolUse (docs: PostToolUse runs after a call *succeeds*); an error result has no `message_ts`. The real Slack MCP result (`{"message_link":…,"message_context":{"message_ts":"…"}}`, read from session transcripts) matches `post_slack.py:9`. |
+| R2-5 | Closed, with two regressions (R3-4, R3-5) | Self-reported `--ci`/`--gate`/`--copilot`/`--approvals`/MERGED are compared with GitHub. |
+| R2-6, R2-7, R2-8 | Closed | Two-cycle story test, REWORK → DEV test, APPROVED threads in reconcile. A reply approval survived REWORK → DEV (R3-7). |
+| R2-9, R2-10 | Closed | The tracked empty `delivery/.state.lock` is never written, merges cleanly, and is shared by `pass` and `post_slack`; the PostToolUse hook waits on it while a pass is mid-flight. That wait is bounded by one `gh api` call, well under the hook timeout. |
+| R2-11, R2-12, R2-13, R2-14 | Closed | Commit and PR body files are read. Companions and unknown ids are named. `used_at` and the permalink format are required. The hook commits its writes, but swept unrelated staged files into its commit (R3-6). |
+| Reuse of a consumed approval | Refused | `usable` (`hooks/_slack.py:23`) and `check_approved_entry` (`rules.py:86`). |
+| `--offline` escalation | Refused | READY, ON_HUMAN_REVIEW, APPROVED and MERGED need `head_verified: true` for the current head. An online pass after an offline pass re-verifies the head. |
+
+### Findings
+
+**Blockers**
+
+1. **R3-1 Forged lead approval, invisible to reconcile, silent Slack send.**
+   - The guard matched substrings, so any computed subcommand passed. A model can also run a script file the guard never
+     sees, or forge the ledger line with the Write tool.
+   - The README claimed "the lead confirms every send in the UI", but no code did that.
+   - **Fixed** (`280e2ef`, `ef593eb`):
+     - `guard_slack.py:28` returns `permissionDecision: "ask"` for every send the state allows.
+     - `guard_bash.py:142` refuses a computed word after `turnstile`/`turnstile_cli` and requires a literal subcommand
+       from `TURNSTILE_SUBS` in command position.
+     - The README threat model now says plainly that the Slack ask is the only control an agent cannot forge. Approvals
+       of `start_story`/`story_done` stay forgeable through a script file: a residual risk.
+   - **Live check before plan 3:**
+     - The docs say PreToolUse fires in every permission mode. Confirm once that `ask` prompts under
+       `bypassPermissions`.
+     - Confirm that `ask` in a background subagent is denied, not allowed.
+     - Confirm that the `!` prompt line skips PreToolUse. If it does not skip it, the lead's own
+       `! TURNSTILE_LEAD=1 turnstile approve` is blocked, and the lead must approve from a separate terminal.
+2. **R3-4 CI entering AI_REVIEW included the gate (regression of R2-5).**
+   - The `pdf-review` and `gate / gate` contexts are part of the rollup, so the rollup is FAILURE until the gate passes.
+     The gate passes only during AI_REVIEW. For example, `jsfiller#13384`'s rollup is FAILURE solely because of
+     `gate / gate` and `pdf-review`.
+   - So DEV → AI_REVIEW `--ci success` was refused for every jsfiller/docs-platform PR. The only way through was
+     `--offline`.
+   - **Fixed** (`f605831`): `PrFacts.ci_without()`. Entering AI_REVIEW, CI is the contexts minus
+     `epic.repos.<repo>.ci_ignore` (default: the gate's context; jsfiller/docs-platform need
+     `["pdf-review", "gate / gate"]`). READY onward still needs the whole rollup (`pass_cmd.py:104`).
+3. **R3-5 Skill gates could never reach READY (regression of R2-5).**
+   - `--gate pr-review:pass` was checked against a GitHub context named `pr-review`, which does not exist on
+     front-link2fill-app (probe: `is absent`). The same holds for the monolith's `run-lint`/`run-unit-tests`, and
+     `--offline` refuses READY.
+   - **Fixed** (`f605831`): `epic.repos.<repo>.gate_check` (default: the gate name; `null` skips the GitHub check, and
+     the report stays the evidence).
+
+**Major**
+
+4. **R3-3 The Slack guard ignored the story gate.** An approved `send` for a READY PR went out while its story was
+   IN_PROGRESS. `pass` then refused ON_HUMAN_REVIEW, but the message was already out. **Fixed** (`280e2ef`):
+   `_slack.story_ready` (`hooks/_slack.py:17`) applies to `send` (DONE or `human_review: per_pr`), not to `reply`, and the
+   refusal names the story.
+5. **R3-2 Writers the read-only list treated as readers.** The read-only list let through `env <cmd>`, `awk`,
+   `find -exec|-delete`, `sort -o`, `git config|worktree`. **Fixed** (`ef593eb`):
+   - `env` is unwrapped like `xargs`;
+   - `awk` is removed from the list;
+   - `find` with an action and `sort -o` count as writes;
+   - `config` and `worktree` are removed from `GIT_READ_ONLY`.
+6. **R3-9 Scheduled sends were unlimited per approval.** A `slack_schedule_message` result carries no `message_ts`.
+   Each one passed PreToolUse and was never recorded, and the PR could never reach ON_HUMAN_REVIEW. **Fixed**
+   (`280e2ef`): scheduled sends are refused (`guard_slack.py:12`). Drafts are still guarded and never recorded, so a send
+   the lead makes from a draft cannot satisfy `used_at`. Use the real send.
+
+**Minor**
+
+7. **R3-6 `git commit` took the whole index.** The commit of a pass or of the PostToolUse hook swept the lead's unrelated
+   staged files in the knowledge worktree into `turnstile: …`. **Fixed** (`87b55ce`): `git commit … -- .`
+   (`pass_cmd.py:41`), with a real-git test.
+8. **R3-7 A reply approval outlived its REWORK.** REWORK → DEV left the open `reply` entry usable for a later REWORK
+   cycle. **Fixed** (`db6f65e`): it is voided, with a ledger line.
+9. **R3-8 `approval_unlogged` could be defeated with the Write tool.** `guard_state_edit` covered only `state.json`, so a
+   forged `approved ah-N (…) approved_via: lead-terminal` line in `ledger.md` hid a forged approval. **Fixed**
+   (`ee88520`): `ledger.md` is guarded too.
+10. **R3-10 Trailer evasion by escape.** `git commit -m "$(printf 'x\n\nCo-Authored\x2dBy: X')"` passes. **Plan 2:** a
+    `commit-msg` git hook installed by `init` (or a check of the trailer on the GitHub commit messages in
+    `github_facts`).
+
+### Spec rules still not enforced: decisions
+
+| Rule (spec text) | Decision |
+|---|---|
+| §3 DEV DoD "commits signed" | **Enforced now** (`f605831`): `allCommits: commits(last:100){… signature{isValid}}`; AI_REVIEW, READY and ON_HUMAN_REVIEW refuse while any commit is unsigned. Tested. |
+| §4.2 IN_PROGRESS "every ticket PR of the story … stacked or merged into the story branch" | **Partly enforced now** (`f605831`): the PR base on GitHub must equal the recorded `pr.base`. **Plan 2:** stories have no `branch` field, so "into the story branch" cannot be checked. Add `stories.<S>.branch` and require at INTEGRATION_REVIEW that every PR of the story has `base ∈ {story.branch} ∪ {bases of the story's other PRs}` (a stack) or is MERGED. |
+| §3 REWORK DoD "draft replies written; lead approved replies; replies posted" | **Plan 2** (more than 30 lines: needs thread-level GraphQL). Rule: REWORK → ON_HUMAN_REVIEW requires that every human review thread open at `rework_since.at` has a reply comment by the lead's login created after `rework_since.at`. |
+| §4.2 ENV_TESTING DoD "every fail became a bug → fixed → re-run (failed cases only, then one full final run)" | **Plan 2** (needs a test-run recording command). Rule: `turnstile pass story S ENV_TESTING --report R --cases-fail N` records a run while staying in ENV_TESTING; with N > 0 it requires at least N bugs of the story created after the previous run; DONE requires that the last recorded run is full (`--full`) with `fail == 0`. |
+
+### Verdict
+
+**Ready for plan 3 migration: yes, with two conditions.** Every round-2 blocker and every regression found in this
+round now holds in code and tests. The Slack hard rule no longer rests on `state.json` alone: a human confirms each send.
+
+The conditions:
+
+1. Run the three live checks under R3-1 on a throwaway session before the cut-over:
+   - `ask` prompts in `bypassPermissions`;
+   - a background subagent's send is denied;
+   - `!` lines skip the hooks.
+
+   If `ask` does not prompt in bypass mode, the verdict flips to **no**: then the only unforgeable control is gone.
+2. The migration's `state.json` sets `gate_check: null` for skill-gated repos (front-link2fill-app, pdffiller,
+   front-signature-flow, locales) and `ci_ignore: ["pdf-review", "gate / gate"]` for jsfiller and docs-platform. It
+   records each PR's real `base`; jsfiller#13359 targets `feature/MYD-18076-…`, not the epic branch.
+
+The four plan-2 items above do not block migration.
