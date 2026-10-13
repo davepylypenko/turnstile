@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_bash.py\"" } ] },
-      { "matcher": "mcp__.*slack_send_message.*", "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_slack.py\"" } ] }
+      { "matcher": "mcp__.*slack_(send|schedule)_message.*", "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_slack.py\"" } ] }
     ],
     "PostToolUse": [
       { "matcher": "Edit|Write|MultiEdit", "hooks": [ { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_state_edit.py\"" } ] }

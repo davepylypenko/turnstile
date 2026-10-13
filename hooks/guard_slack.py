@@ -33,4 +33,9 @@ def main():
     sys.exit(0)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:  # fail closed
+        block("guard crashed (%s); failing closed." % e)

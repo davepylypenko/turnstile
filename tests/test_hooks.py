@@ -19,12 +19,14 @@ class Hooks(unittest.TestCase):
         for cmd in ["gh pr merge 1", "gh pr ready 1", "gh pr edit 1 --add-reviewer x", "git push --force origin x", "git push -f",
                     "git rebase develop", "git commit --no-gpg-sign -m x", "git commit -m 'x\n\nCo-Authored-By: a'",
                     "gh api -X POST repos/o/r/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
-                    "gh workflow run x -f service_github_tag= -f y=1"]:
+                    "gh workflow run x -f service_github_tag= -f y=1", "git push -fu origin x", "git push origin x \"--force\"",
+                    "gh workflow run x -f \"service_github_tag=\"", "gh workflow run x -f service_github_tag=''"]:
             r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr)
 
     def test_bash_allows(self):
         for cmd in ["git push origin feature/x", "gh pr view 1", "gh api -X POST repos/o/r/pulls/1/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'",
-                    "git commit -S -m 'feat: x'", "gh workflow run x -f service_github_tag=l2f-funnel-abc"]:
+                    "git commit -S -m 'feat: x'", "gh workflow run x -f service_github_tag=l2f-funnel-abc",
+                    "gh workflow run x -f service_github_tag='v1.2'", "git push origin x && rm -f tmp", "git push origin x; echo +1", "git push --follow-tags origin x"]:
             self.assertEqual(self.bash(cmd).returncode, 0, cmd)
 
     def slack(self, text):
@@ -46,6 +48,16 @@ class Hooks(unittest.TestCase):
         r = self.slack("PR: <https://github.com/pdffiller/jsfiller/pull/1>"); self.assertEqual(r.returncode, 2)
         shutil.rmtree(self.ws / "delivery")
         r = self.slack("PR: <https://github.com/pdffiller/jsfiller/pull/1>"); self.assertEqual(r.returncode, 2)
+
+    def test_slack_fails_closed_on_unexpected_shape(self):
+        (self.ws / "delivery" / "state.json").write_text(json.dumps({"prs": [], "awaiting_human": [{"pr": "jsfiller#1", "type": "send", "approved_at": "x"}]}))
+        r = self.slack("PR: <https://github.com/pdffiller/jsfiller/pull/1>"); self.assertEqual(r.returncode, 2)
+
+    def test_slack_matcher_covers_schedule(self):
+        import re
+        m = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"][1]["matcher"]
+        for tool in ("mcp__plugin_slack_slack__slack_send_message", "mcp__plugin_slack_slack__slack_send_message_draft", "mcp__plugin_slack_slack__slack_schedule_message"):
+            self.assertTrue(re.fullmatch(m, tool), tool)
 
     def test_state_edit_warns(self):
         r = hook("guard_state_edit.py", {"tool_name": "Edit", "tool_input": {"file_path": str(self.ws / "delivery" / "state.json")}, "cwd": str(self.ws)}, self.ws)
