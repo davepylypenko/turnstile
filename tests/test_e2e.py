@@ -63,3 +63,7 @@ class E2E(unittest.TestCase):
         self.assertIn("WARN jsfiller#1", r.stdout)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # facts missing for an open PR
         self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout)
+        self.assertNotIn("uncommitted", r.stdout)
+        (self.ws / "delivery" / "ledger.md").write_text("- stray\n")
+        r = sh(["status"], cwd=self.ws, env=self.gh_env)
+        self.assertIn("uncommitted changes in delivery (1 file(s)): ledger.md", r.stdout)

@@ -19,6 +19,7 @@ PR_FROM = {
 }
 HEAD_RX = re.compile(r"^[0-9a-f]{8,40}$")
 LEAD_RX = re.compile(r"\blead\b", re.I)
+SLACK_PERMALINK_RX = re.compile(r"^https://[\w-]+\.slack\.com/archives/")
 
 def valid_head(h: Optional[str]) -> bool:
     return bool(h) and bool(HEAD_RX.match(h.lower()))
@@ -139,11 +140,15 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
         h = _ev(pr, "human") or {}
         if not h.get("slack_permalink"):
             out.append("MISSING evidence.human.slack_permalink")
+        elif not SLACK_PERMALINK_RX.match(h["slack_permalink"]):
+            out.append("MISSING evidence.human.slack_permalink of the form https://<workspace>.slack.com/archives/… (has %s)" % h["slack_permalink"])
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
         if src == "READY":
             _story_gates_passed(pr, stories, out)
         e = check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
+        if e and not e.get("used_at"):
+            out.append("MISSING awaiting_human %s used_at (no Slack message went through the guarded tool for it)" % e.get("id"))
         if e and e.get("type") == "send" and e.get("head") and not same_head(e.get("head"), pr.get("head")):
             out.append("MISSING awaiting_human %s approved for head %s, not the current head %s (re-run AI_REVIEW → READY)" % (e.get("id"), e.get("head"), pr.get("head")))
         b = pr.get("blocked_by")

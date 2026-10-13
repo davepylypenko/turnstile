@@ -120,14 +120,28 @@ class BashGuard(unittest.TestCase):
         self.assertTrue(cmds)
         for c in cmds:
             self.assertTrue(c.endswith("|| exit 2"), c)
-        self.assertNotIn("PostToolUse", h)
         matchers = [m["matcher"] for m in h["PreToolUse"]]
         self.assertIn("Edit|Write|MultiEdit", matchers)
+        post = h["PostToolUse"]
+        self.assertEqual(len(post), 1); self.assertIn("slack", post[0]["matcher"]); self.assertIn("post_slack.py", post[0]["hooks"][0]["command"])
+        self.assertEqual(post[0]["matcher"], next(m["matcher"] for m in h["PreToolUse"] if "slack" in m["matcher"]))
 
 class SlackGuard(unittest.TestCase):
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
+        self.git = dict(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
+        subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=self.ws, check=True)
+        subprocess.run(["git", "add", "."], cwd=self.ws, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=self.ws, check=True, env=dict(os.environ, **self.git))
+
+    def post(self, text, response, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
+        return hook("post_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "tool_response": response,
+                                      "cwd": str(self.ws)}, self.ws, env=self.git)
+
+    def porcelain(self):
+        return subprocess.run(["git", "status", "--porcelain"], cwd=self.ws, capture_output=True, text=True).stdout
 
     def state(self):
         return json.loads((self.ws / "delivery" / "state.json").read_text())
@@ -151,13 +165,33 @@ class SlackGuard(unittest.TestCase):
         self.ready_with(approved_at=None)
         self.assertEqual(self.slack(self.MSG).returncode, 2)
 
-    def test_allows_approved_send_of_ready_pr_once_and_records_use(self):
-        self.ready_with()
+    def test_pre_only_checks_post_records_use_on_message_ts_and_commits(self):
+        # R2-4: a denied or failed send must not consume the approval; R2-14: the hook's writes are committed
+        self.ready_with(); subprocess.run(["git", "commit", "-qam", "ready"], cwd=self.ws, check=True, env=dict(os.environ, **self.git))
         r = self.slack(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("used_at", self.state()["awaiting_human"][0]); self.assertFalse((self.ws / "delivery" / "ledger.md").exists())
+        r = self.post(self.MSG, {"content": [{"type": "text", "text": "Error: channel_not_found"}]}); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("used_at", self.state()["awaiting_human"][0])
+        self.assertEqual(self.slack(self.MSG).returncode, 0)  # still sendable: nothing was sent
+        ok = {"content": [{"type": "text", "text": json.dumps({"ok": True, "channel": "C1", "message_ts": "1760000000.123456"})}]}
+        r = self.post(self.MSG, ok); self.assertEqual(r.returncode, 0, r.stderr)
         e = self.state()["awaiting_human"][0]
-        self.assertTrue(e["used_at"]); self.assertEqual(e["used_channel"], "C1")
-        self.assertIn("slack send", (self.ws / "delivery" / "ledger.md").read_text())
+        self.assertTrue(e["used_at"]); self.assertEqual(e["used_channel"], "C1"); self.assertEqual(e["message_ts"], "1760000000.123456")
+        self.assertIn("slack send for jsfiller#1 via ah-1 (send) to C1 ts 1760000000.123456", (self.ws / "delivery" / "ledger.md").read_text())
+        self.assertTrue((self.ws / "delivery" / "board.html").exists())
+        self.assertEqual(self.porcelain(), "")  # committed
+        log = subprocess.run(["git", "log", "--oneline"], cwd=self.ws, capture_output=True, text=True).stdout
+        self.assertIn("turnstile: slack send for jsfiller#1", log)
         r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("already used", r.stderr)
+        r = self.post(self.MSG, ok); self.assertEqual(r.returncode, 2); self.assertIn("no usable", r.stderr)  # a second send slipped past: loud
+
+    def test_post_accepts_string_responses_and_ignores_unrelated_tools(self):
+        self.ready_with()
+        r = self.post(self.MSG, '{"ok":true,"message_ts":"1760000000.1"}'); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.1")
+        self.ready_with()
+        r = self.post(self.MSG, "sent, ts=1760000000.2 message_ts missing"); self.assertEqual(r.returncode, 0)
+        self.assertNotIn("used_at", self.state()["awaiting_human"][0])
 
     def test_send_needs_ready_reply_needs_rework(self):
         self.ready_with(state="AI_REVIEW"); self.assertEqual(self.slack(self.MSG).returncode, 2)

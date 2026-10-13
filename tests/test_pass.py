@@ -5,6 +5,7 @@ from turnstile_cli.errors import TurnstileError
 FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 H = "aaaaaaaa11111111"
 H2 = "eeeeeeee55555555"
+LINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
 
 class FakeIO:
     def __init__(self, heads=None):
@@ -54,13 +55,20 @@ class PassCmd(unittest.TestCase):
     def story(self, **fields):
         data = self.data(); data["stories"]["S1"].update(fields); self.write(data)
 
+    def sent(self, ah):
+        """What the Slack PostToolUse hook records after a real send."""
+        data = self.data()
+        e = next(a for a in data["awaiting_human"] if a["id"] == ah); e["used_at"] = "2026-10-13T10:05Z"; e["message_ts"] = "1.2"
+        self.write(data)
+
     def to_human(self):
         self.to_ready()
         self.story(state="DONE")
         ah = self.data()["awaiting_human"][0]["id"]
         with env(TURNSTILE_LEAD="1"):
             self.assertEqual(pass_cmd.approve(self.d, ah, self.io), 0)
-        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack="https://s/1", reviewers="isachivka", approved=ah), self.io)
+        self.sent(ah)
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
         self.assertEqual(rc, 0)
         return ah
 
@@ -212,14 +220,17 @@ class PassCmd(unittest.TestCase):
     def test_on_human_review_requires_a_lead_approved_entry_and_consumes_it(self):
         self.to_ready(); self.story(state="DONE")
         ah = self.data()["awaiting_human"][0]["id"]
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack="https://s/1", approved="ah-NOPE"), self.io)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, approved="ah-NOPE"), self.io)
         self.assertEqual(rc, 2); self.assertIn("ah-NOPE", out)
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack="https://s/1", approved=ah), self.io)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, approved=ah), self.io)
         self.assertEqual(rc, 2); self.assertIn("approved_at", out)
         self.assertIsNone(self.data()["awaiting_human"][0]["approved_at"])  # pass never approves
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, ah, self.io)
-        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack="https://s/1", reviewers="isachivka", approved=ah), self.io)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
+        self.assertEqual(rc, 2); self.assertIn("used_at", out)  # approved but no message went through the guard
+        self.sent(ah)
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
         self.assertEqual(rc, 0)
         data = self.data()
         self.assertTrue(data["awaiting_human"][0]["consumed_at"])
@@ -231,7 +242,8 @@ class PassCmd(unittest.TestCase):
         ah = self.data()["awaiting_human"][0]["id"]
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, ah, self.io)
-        send = opts(head=H, slack="https://s/1", reviewers="isachivka", approved=ah)
+        self.sent(ah)
+        send = opts(head=H, slack=LINK, reviewers="isachivka", approved=ah)
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", send, self.io)
         self.assertEqual(rc, 2); self.assertIn("MISSING story S1 to be DONE (is IN_PROGRESS)", out)
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "READY")
@@ -251,8 +263,9 @@ class PassCmd(unittest.TestCase):
         self.io.heads["jsfiller#1"] = H2
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, reply[0]["id"], self.io)
+        self.sent(reply[0]["id"])
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW",
-                              opts(head=H2, ci="success", gate="pdf-review:pass", slack="https://s/1?thread_ts=2", approved=reply[0]["id"]), self.io)
+                              opts(head=H2, ci="success", gate="pdf-review:pass", slack=LINK + "?thread_ts=2", approved=reply[0]["id"]), self.io)
         self.assertEqual(rc, 0, out)
         pr = self.data()["prs"]["jsfiller#1"]
         self.assertEqual(pr["evidence"]["human"]["sent_head"], H2)
@@ -340,9 +353,10 @@ class PassCmd(unittest.TestCase):
         ah = self.data()["awaiting_human"][0]["id"]
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, ah, self.io)
+        self.sent(ah)
         self.io.heads["jsfiller#1"] = H2
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", deep_review="reports/R.md",
-                              gate="pdf-review:pass", slack="https://s/1", approved=ah), self.io)
+                              gate="pdf-review:pass", slack=LINK, approved=ah), self.io)
         self.assertEqual(rc, 2); self.assertIn("approved for head %s" % H, out)
 
     def test_offline_cannot_approve_or_merge(self):

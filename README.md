@@ -57,7 +57,8 @@ stored head) is not the real one, and when `gh` fails. `--offline` skips the che
 enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories are DONE. Only the lead approves them
 (see "How the lead approves"). `pass … --approved <ah-id>` then requires an entry of the right type for that
 PR/story that is approved, not consumed and not voided; the pass consumes it. A `send` is voided when the PR drops
-back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message.
+back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message, and the message must
+have gone out through the guarded tool (`used_at`) before the PR can be passed to ON_HUMAN_REVIEW.
 
 ### How the lead approves
 
@@ -91,7 +92,7 @@ exist.
 
 ### Hooks
 
-`hooks/hooks.json`, all PreToolUse, apply to subagents too, and fail closed (a crash, a malformed payload or a missing
+`hooks/hooks.json`, PreToolUse plus one PostToolUse, apply to subagents too, and fail closed (a crash, a malformed payload or a missing
 `python3` blocks the call):
 
 - `guard_bash.py` blocks `gh pr merge|ready`, `--add-reviewer`, human `requested_reviewers` requests (only the Copilot
@@ -108,10 +109,13 @@ exist.
   refused, as are `git checkout|restore|stash|reset` that touch it. Reports and briefs go through the Write tool and
   are committed by the next `turnstile pass`. Global options before the subcommand (`git -C dir`, `git -c k=v`,
   `gh -R owner/repo`) are covered.
-- `guard_slack.py` blocks every Slack send/draft/schedule unless each PR it mentions has an approved, unused
-  `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
-  channel (`epic.repos.<repo>.slack`). It records `used_at` on the entry (one send per approval) and a ledger line;
-  missing or broken state fails closed.
+- `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
+  unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
+  channel (`epic.repos.<repo>.slack`). It only checks; missing or broken state fails closed.
+- `post_slack.py` (PostToolUse, same matcher) records the send once the tool result carries a `message_ts`: `used_at`,
+  `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
+  of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's
+  `used_at` and a permalink of the form `https://<workspace>.slack.com/archives/…`.
 - `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` unless the environment has
   `TURNSTILE_MIGRATION=1`.
 

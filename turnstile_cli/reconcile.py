@@ -1,4 +1,4 @@
-import copy, json, pathlib, re
+import copy, json, pathlib, re, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from . import rules, state as st_mod, github
@@ -117,6 +117,16 @@ def compare_ledger(data: dict, ledger_text: str) -> List[Proposal]:
                                 % (a.get("id"), a.get("type"), a.get("pr") or a.get("story"), a.get("approved_at"), a.get("id")), None))
     return out
 
+def uncommitted(delivery: pathlib.Path) -> List[str]:
+    """Paths under delivery/ that differ from the last commit (R2-14); [] when git is unavailable or it is not a repo."""
+    try:
+        r = subprocess.run(["git", "status", "--porcelain", "--", "."], cwd=str(delivery), capture_output=True, text=True)
+    except OSError:
+        return []
+    if r.returncode != 0:
+        return []
+    return [ln[3:].strip().split("/")[-1] for ln in r.stdout.splitlines() if ln.strip()]
+
 def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> int:
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     ledger_path = pathlib.Path(delivery) / "ledger.md"
@@ -144,6 +154,10 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
         print("awaiting humans: %d" % len(pending))
         for a in pending:
             print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story")))
+        dirty = uncommitted(delivery)
+        if dirty:
+            print("uncommitted changes in delivery (%d file(s)): %s — a write outside turnstile; the next pass commits it, reconcile it first"
+                  % (len(dirty), ", ".join(dirty)))
     print("== reconcile: %d discrepancy(ies)" % len(props))
     for p in props:
         print("%s %s: %s" % (p.pr, p.kind, p.message))

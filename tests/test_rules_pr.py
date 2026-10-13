@@ -17,8 +17,9 @@ FULL = dict(
     gate={"name": "pdf-review", "head": H, "result": "pass", "run": "u"},
     head_verified={"head": H, "verified": True},
 )
-SEND = {"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"}
-REPLY = {"id": "ah-2", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"}
+SEND = {"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z", "used_at": "2026-10-13T10:05Z"}
+REPLY = {"id": "ah-2", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z", "used_at": "2026-10-13T10:05Z"}
+PERMALINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
 DONE_STORIES = {"S1": dict(FIX["stories"]["S1"], state="DONE")}
 
 class Heads(unittest.TestCase):
@@ -96,7 +97,7 @@ class ToHuman(unittest.TestCase):
     def ready(self):
         p = pr_with(**FULL); p["state"] = "READY"; return p
     def human(self, approved="ah-1"):
-        return {"head": H, "slack_permalink": "https://x", "sent_head": H, "approved": approved, "open_threads": 0, "approvals": []}
+        return {"head": H, "slack_permalink": PERMALINK, "sent_head": H, "approved": approved, "open_threads": 0, "approvals": []}
     def test_needs_permalink_and_approval(self):
         out = rules.check_pr(self.ready(), "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])
         self.assertTrue(any("slack_permalink" in m for m in out))
@@ -153,7 +154,7 @@ class ToHuman(unittest.TestCase):
         p["rework_since"] = {"head": H, "at": "2026-10-13T10:00Z", "reason": "human thread"}
         p["evidence"].update(ci={"head": H2, "status": "success"}, gate={"name": "pdf-review", "head": H2, "result": "pass"},
                              copilot={"head": H2, "open_threads": 0}, head_verified={"head": H2, "verified": True},
-                             human={"head": H2, "slack_permalink": "https://x", "sent_head": H2, "approved": "ah-2"})
+                             human={"head": H2, "slack_permalink": PERMALINK, "sent_head": H2, "approved": "ah-2"})
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[REPLY])
         self.assertEqual(out, [])  # deep_review is still for H, not required after human review
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[dict(SEND, id="ah-2")])
@@ -164,15 +165,26 @@ class ToHuman(unittest.TestCase):
         p = self.ready(); p["state"] = "REWORK"; p["head"] = H2
         p["evidence"].update(ci={"head": H2, "status": "success"}, gate={"name": "pdf-review", "head": H2, "result": "pass"},
                              head_verified={"head": H2, "verified": True},
-                             human={"head": H2, "slack_permalink": "https://x", "sent_head": H2, "approved": "ah-2"})
+                             human={"head": H2, "slack_permalink": PERMALINK, "sent_head": H2, "approved": "ah-2"})
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[REPLY])
         self.assertTrue(any("deep_review" in m for m in out), out)
+
+    def test_message_must_have_been_sent_through_the_guard(self):
+        # R2-13: the entry's used_at (set by the Slack PostToolUse hook on a real message_ts) and a Slack permalink
+        p = self.ready(); p["evidence"]["human"] = self.human()
+        unused = dict(SEND); del unused["used_at"]
+        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[unused], stories=DONE_STORIES)
+        self.assertEqual(out, ["MISSING awaiting_human ah-1 used_at (no Slack message went through the guarded tool for it)"])
+        for bad in ("https://x", "http://pdffiller.slack.com/archives/C1/p1", "https://evil.com/pdffiller.slack.com/archives/C1/p1", "slack.com/archives/C1/p1"):
+            p["evidence"]["human"]["slack_permalink"] = bad
+            out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=DONE_STORIES)
+            self.assertTrue(any("slack_permalink" in m and "https://<workspace>.slack.com/archives/" in m for m in out), (bad, out))
 
 class ToApprovedAndMerged(unittest.TestCase):
     repo = FIX["epic"]["repos"]["jsfiller"]
     def sent(self):
         p = pr_with(**FULL); p["state"] = "ON_HUMAN_REVIEW"
-        p["evidence"]["human"] = {"head": H, "slack_permalink": "https://x", "sent_head": H, "approved": "ah-1", "open_threads": 0, "approvals": ["isachivka"]}
+        p["evidence"]["human"] = {"head": H, "slack_permalink": PERMALINK, "sent_head": H, "approved": "ah-1", "open_threads": 0, "approvals": ["isachivka"]}
         return p
     def test_approved_ok(self):
         self.assertEqual(rules.check_pr(self.sent(), "APPROVED", self.repo, FIX["prs"]), [])
