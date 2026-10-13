@@ -138,8 +138,9 @@ only blocked for commands that pass through the model's tool calls. What holds t
   so a write that did not come through them is visible as drift: `turnstile reconcile` flags every `approved_at` whose
   ledger line is missing or lacks `approved_via: lead-terminal` (`approval_unlogged`), heads, checks, approvals and
   threads are compared with GitHub, and `status` lists uncommitted changes in `delivery/`;
-- the Slack guard checks the state **and** the lead confirms every send in the UI; a guard bypass still needs the lead
-  to click.
+- the Slack guard checks the state **and** returns `permissionDecision: "ask"`, so the lead confirms every send in the UI;
+  a forged approval still needs the lead to click. This is the one control an agent cannot forge; approvals of
+  `start_story`/`story_done`/`send` entries in `state.json` are forgeable by a script file the guard never sees.
 
 The residual risk (same OS user, an unrecognised write path) is accepted; it is reviewed, not prevented.
 
