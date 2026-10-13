@@ -5,7 +5,7 @@ from . import state as st_mod, rules, ledger
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
-GITIGNORE = ".*.tmp\n"
+GITIGNORE = ".*.tmp\n" + st_mod.LOCK_NAME + "\n"
 HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
 APPROVED_VIA = "lead-terminal"  # the lead types the approve command in the Claude Code prompt with the `!` prefix
 
@@ -191,8 +191,10 @@ def _ensure_repo_files(delivery: pathlib.Path) -> None:
     if not ga.exists() or "ledger.md merge=union" not in ga.read_text():
         ga.write_text((ga.read_text() if ga.exists() else "") + GITATTRIBUTES)
     gi = pathlib.Path(delivery) / ".gitignore"
-    if not gi.exists() or GITIGNORE not in gi.read_text():
-        gi.write_text((gi.read_text() if gi.exists() else "") + GITIGNORE)
+    have = gi.read_text() if gi.exists() else ""
+    missing = [ln for ln in GITIGNORE.splitlines() if ln not in have.splitlines()]
+    if missing:
+        gi.write_text(have + ("" if not have or have.endswith("\n") else "\n") + "\n".join(missing) + "\n")
 
 class _Snapshot:
     NAMES = ("state.json", "ledger.md", "board.html")

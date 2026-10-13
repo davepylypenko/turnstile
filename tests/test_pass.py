@@ -101,6 +101,8 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(self.io.renders, 1)
         self.assertEqual(len(self.io.commits), 1)
         self.assertTrue((self.d / ".gitattributes").read_text().startswith("ledger.md merge=union"))
+        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".state.lock"])
+        self.assertTrue((self.d / ".state.lock").exists())
 
     def test_head_change_voids_old_evidence_and_open_send(self):
         self.to_ready()

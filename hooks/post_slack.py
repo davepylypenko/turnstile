@@ -40,6 +40,7 @@ def main():
             ledger.append(delivery, line)
         io = pass_cmd.IO()
         try:
+            pass_cmd._ensure_repo_files(delivery)
             html = io.render_board(st.data)
             if html is not None:
                 st_mod.write_atomic(delivery / "board.html", html)

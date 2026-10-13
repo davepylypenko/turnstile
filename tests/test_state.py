@@ -1,4 +1,4 @@
-import json, pathlib, shutil, tempfile, unittest
+import json, os, pathlib, shutil, stat, tempfile, unittest
 from turnstile_cli import state, paths
 from turnstile_cli.errors import TurnstileError, StaleStateError
 
@@ -57,6 +57,41 @@ class StateIO(unittest.TestCase):
             with self.assertRaises(TurnstileError):
                 with state.locked(self.delivery, wait=False):
                     pass
+
+    def test_lock_is_a_stable_file_in_the_delivery_dir_not_tmpdir(self):
+        # R2-9: hook and CLI processes may see different TMPDIR values; the lock must not depend on it
+        other = tempfile.mkdtemp()
+        old = os.environ.get("TMPDIR")
+        with state.locked(self.delivery):
+            self.assertTrue((self.delivery / ".state.lock").exists())
+            os.environ["TMPDIR"] = other; tempfile.tempdir = None
+            try:
+                with self.assertRaises(TurnstileError):
+                    with state.locked(self.delivery, wait=False):
+                        pass
+            finally:
+                if old is None:
+                    os.environ.pop("TMPDIR", None)
+                else:
+                    os.environ["TMPDIR"] = old
+                tempfile.tempdir = None
+        self.assertEqual([p.name for p in pathlib.Path(other).iterdir()], [])
+
+    def test_write_atomic_keeps_the_mode_and_follows_a_symlink(self):
+        # R2-10: mkstemp creates 0600 files; the replaced state.json must keep its mode, a symlink must stay a symlink
+        path = self.delivery / "state.json"
+        os.chmod(path, 0o664)
+        st = state.load(path); st.data["prs"]["jsfiller#1"]["state"] = "READY"; state.save(st)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o664)
+        real = self.delivery / "real.json"; path.rename(real); path.symlink_to("real.json")
+        st = state.load(path); st.data["prs"]["jsfiller#1"]["state"] = "DEV"; state.save(st)
+        self.assertTrue(path.is_symlink()); self.assertEqual(json.loads(real.read_text())["prs"]["jsfiller#1"]["state"], "DEV")
+        old = os.umask(0o027)
+        try:
+            fresh = self.delivery / "board.html"; state.write_atomic(fresh, "<html>")
+            self.assertEqual(stat.S_IMODE(os.stat(fresh).st_mode), 0o640)
+        finally:
+            os.umask(old)
 
     def test_empty_marker_is_an_error(self):
         (self.tmp / ".turnstile").write_text("\n")
