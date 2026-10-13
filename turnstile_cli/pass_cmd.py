@@ -1,8 +1,11 @@
-import copy, datetime, pathlib, subprocess
+import copy, datetime, os, pathlib, subprocess
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 from . import state as st_mod, rules, ledger
 from .errors import TurnstileError, StaleStateError
+
+GITATTRIBUTES = "ledger.md merge=union\n"
+HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW")
 
 @dataclass
 class Options:
@@ -25,24 +28,37 @@ class Options:
     cases_pass: Optional[int] = None
     cases_fail: Optional[int] = None
     figma_parity: Optional[str] = None
+    offline: bool = False
     no_commit: bool = False
 
 class IO:
+    """Everything that touches the world; injectable so tests stay offline."""
     def git_commit(self, delivery: pathlib.Path, message: str) -> None:
-        subprocess.run(["git", "add", "-A", "."], cwd=str(delivery), check=True)
-        subprocess.run(["git", "commit", "-q", "-m", message], cwd=str(delivery), check=True)
-    def renderer(self, data: dict, delivery: pathlib.Path) -> None:
+        subprocess.run(["git", "add", "-A", "."], cwd=str(delivery), check=True, capture_output=True, text=True)
+        r = subprocess.run(["git", "commit", "-q", "-m", message], cwd=str(delivery), capture_output=True, text=True)
+        if r.returncode != 0:
+            raise TurnstileError((r.stderr or r.stdout).strip()[:300] or "git commit exited %d" % r.returncode)
+    def render_board(self, data: dict) -> Optional[str]:
         try:
             from . import board
         except ImportError:
-            return
-        board.render(data, delivery)
+            return None
+        return board.render_html(data)
+    def github_head(self, pr_id: str, org: str) -> str:
+        from . import github
+        return github.fetch(pr_id, org).head
 
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
 
-def _apply_pr_evidence(pr: dict, o: Options, awaiting: List[dict]) -> None:
+def _check_report(delivery: pathlib.Path, rel: Optional[str]) -> None:
+    if rel and not (pathlib.Path(delivery) / rel).is_file():
+        raise TurnstileError("report file %s not found under %s" % (rel, delivery))
+
+def _apply_pr_evidence(pr: dict, o: Options) -> None:
     if o.head:
+        if not rules.valid_head(o.head):
+            raise TurnstileError("--head must be 8–40 hex characters (got %r)" % o.head)
         pr["head"] = o.head.lower()
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
@@ -59,9 +75,6 @@ def _apply_pr_evidence(pr: dict, o: Options, awaiting: List[dict]) -> None:
     if o.slack:
         ev["human"] = {"head": h, "slack_permalink": o.slack, "reviewers": o.reviewers.split(",") if o.reviewers else [],
                        "sent_head": h, "approved": o.approved, "open_threads": 0, "approvals": [], "sent_at": _now()}
-        for a in awaiting:
-            if a.get("id") == o.approved:
-                a["approved_at"] = a.get("approved_at") or _now()
     if o.approvals is not None or o.open_threads is not None:
         human = ev.setdefault("human", {"head": h, "sent_head": h, "approvals": [], "open_threads": 0})
         if o.approvals is not None:
@@ -71,15 +84,35 @@ def _apply_pr_evidence(pr: dict, o: Options, awaiting: List[dict]) -> None:
     if o.merged_sha:
         pr["merged_sha"] = o.merged_sha
 
+def _verify_head(pr: dict, ident: str, org: str, o: Options, io: IO, notes: List[str]) -> None:
+    """Bind the evidence to the PR's real head: GitHub decides what the head is, not the caller."""
+    h = pr.get("head")
+    ev = pr.setdefault("evidence", {})
+    if o.offline:
+        notes.append("WARN --offline: head %s of %s NOT verified against GitHub; READY/ON_HUMAN_REVIEW stay refused until an online pass" % (h, ident))
+        ev["head_verified"] = {"head": h, "verified": False}
+        return
+    try:
+        gh_head = io.github_head(ident, org)
+    except Exception as e:
+        raise TurnstileError("GitHub head for %s unavailable (%s); fix gh or use --offline (refuses READY/ON_HUMAN_REVIEW)" % (ident, e))
+    if not rules.same_head(gh_head, h):
+        raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, gh_head, gh_head[:12]))
+    ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
+
 def _apply_story_evidence(story: dict, o: Options) -> None:
     ev = story.setdefault("evidence", {})
     if o.build:
-        ev["deploy"] = {"build": o.build, "at": _now()}
-    if o.report and o.figma_parity is None and o.cases_fail is None:
-        ev["integration_review"] = {"report": o.report, "head": o.head, "rounds": o.rounds or 1, "clean": not o.not_clean}
-    if o.figma_parity is not None or o.cases_fail is not None:
-        ev["env_test"] = {"report": o.report, "cases": {"pass": o.cases_pass or 0, "fail": o.cases_fail or 0},
-                          "figma_parity": o.figma_parity}
+        ev["deploy"] = {"build": o.build, "head": o.head.lower() if o.head else None, "at": _now()}
+    env_flags = (o.figma_parity, o.cases_pass, o.cases_fail)
+    if any(x is not None for x in env_flags):
+        if o.cases_pass is None or o.cases_fail is None:
+            raise TurnstileError("--cases-pass and --cases-fail are both required when recording env_test (explicit counts from the report)")
+        if o.figma_parity is None:
+            raise TurnstileError("--figma-parity is required when recording env_test")
+        ev["env_test"] = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "figma_parity": o.figma_parity}
+    elif o.report:
+        ev["integration_review"] = {"report": o.report, "head": o.head.lower() if o.head else None, "rounds": o.rounds or 1, "clean": not o.not_clean}
 
 def _recompute_next_actions(data: dict) -> None:
     for pid, pr in data["prs"].items():
@@ -89,100 +122,201 @@ def _recompute_next_actions(data: dict) -> None:
         s["next_action"] = rules.next_action_story(s, data["prs"])
 
 def _next_ah_id(data: dict) -> str:
-    n = 1 + max([int(a["id"].split("-")[1]) for a in data.get("awaiting_human", []) if a.get("id", "").startswith("ah-")] or [0])
-    return "ah-%d" % n
+    nums = []
+    for a in data.get("awaiting_human", []):
+        tail = str(a.get("id", "")).split("-", 1)
+        if len(tail) == 2 and tail[0] == "ah" and tail[1].isdigit():
+            nums.append(int(tail[1]))
+    return "ah-%d" % (max(nums or [0]) + 1)
 
-def _side_effects(delivery: pathlib.Path, st: "st_mod.State", summary: str, io: IO, o: Options) -> None:
-    st_mod.save(st)
-    ledger.append(delivery, summary)
-    io.renderer(st.data, delivery)
-    if not o.no_commit:
-        io.git_commit(delivery, "turnstile: " + summary)
+def _open_entry(data: dict, type_: str, **keys) -> dict:
+    e = {"id": _next_ah_id(data), "owner": "lead", "type": type_, "created_at": _now(), "payload": None, "approved_at": None}
+    e.update(keys)
+    data.setdefault("awaiting_human", []).append(e)
+    return e
+
+def _has_open_entry(data: dict, type_: str, key: str, ident: str) -> bool:
+    return any(a.get("type") == type_ and a.get(key) == ident and not a.get("consumed_at") and not a.get("voided_at")
+               for a in data.get("awaiting_human", []))
+
+def _ensure_start_story_entries(data: dict) -> None:
+    for sid, s in data.get("stories", {}).items():
+        if rules.startable(s, data["stories"]) and not _has_open_entry(data, "start_story", "story", sid):
+            _open_entry(data, "start_story", story=sid)
+
+def _ensure_repo_files(delivery: pathlib.Path) -> None:
+    ga = pathlib.Path(delivery) / ".gitattributes"
+    if not ga.exists() or "ledger.md merge=union" not in ga.read_text():
+        ga.write_text((ga.read_text() if ga.exists() else "") + GITATTRIBUTES)
+
+class _Snapshot:
+    NAMES = ("state.json", "ledger.md", "board.html")
+    def __init__(self, delivery: pathlib.Path):
+        self.delivery = pathlib.Path(delivery)
+        self.before: Dict[str, Optional[str]] = {n: (self.delivery / n).read_text() if (self.delivery / n).exists() else None for n in self.NAMES}
+    def restore(self) -> None:
+        for n, text in self.before.items():
+            p = self.delivery / n
+            if text is None:
+                if p.exists():
+                    p.unlink()
+            else:
+                st_mod.write_atomic(p, text)
+
+def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], io: IO, no_commit: bool) -> None:
+    """validate happened → render board in memory → write state + ledger + board → git commit; on commit
+    failure restore the three files from the in-memory snapshot so the disk equals the last committed state."""
+    delivery = pathlib.Path(delivery)
+    try:
+        html = io.render_board(st.data)
+    except Exception as e:
+        raise TurnstileError("board render failed: %s" % e)
+    snap = _Snapshot(delivery)
+    st_mod.save(st)  # stale check happens here, before any other write
+    try:
+        for line in lines:
+            ledger.append(delivery, line)
+        if html is not None:
+            st_mod.write_atomic(delivery / "board.html", html)
+        _ensure_repo_files(delivery)
+        if not no_commit:
+            io.git_commit(delivery, "turnstile: " + lines[0])
+    except Exception as e:
+        snap.restore()
+        st.loaded_digest = st_mod.digest(snap.before["state.json"] or "")
+        raise TurnstileError("git commit failed: %s" % e)
 
 def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, io: Optional[IO] = None) -> int:
     io = io or IO()
+    delivery = pathlib.Path(delivery)
+    notes: List[str] = []
     try:
-        st = st_mod.load(pathlib.Path(delivery) / "state.json")
-        data = st.data
-        if kind == "pr":
-            pr = st_mod.pr(st, ident)
-            repo = st_mod.repo_cfg(st, ident)
-            trial = copy.deepcopy(pr)
-            _apply_pr_evidence(trial, o, copy.deepcopy(data.get("awaiting_human", [])))
-            missing = rules.check_pr(trial, target, repo, data["prs"], reason=o.reason)
-            if missing:
-                print("\n".join(missing)); return 2
-            src = pr["state"]
-            _apply_pr_evidence(pr, o, data.setdefault("awaiting_human", []))
-            pr["state"] = target
-            if o.reason:
-                pr["last_reason"] = o.reason
-            jira_target = rules.JIRA_FOR_PR_STATE[target]
-            if (pr.get("jira") or {}).get("status") != jira_target:
-                pr["jira"] = {"status": jira_target, "synced": False}
-                print("JIRA: %s → %s" % (pr["ticket"], jira_target))
-            if target == "READY" and not any(a.get("pr") == ident and a.get("type") == "send" and not a.get("approved_at")
-                                             for a in data["awaiting_human"]):
-                data["awaiting_human"].append({"id": _next_ah_id(data), "owner": "lead", "type": "send", "pr": ident,
-                                               "created_at": _now(), "payload": None, "approved_at": None})
-            if target == "APPROVED":
-                data["awaiting_human"].append({"id": _next_ah_id(data), "owner": "lead", "type": "merge", "pr": ident,
-                                               "created_at": _now(), "payload": None, "approved_at": None})
-            if target == "MERGED":
-                unblocked = [p for p, v in data["prs"].items() if v.get("blocked_by") == ident]
-                if unblocked:
-                    ledger.append(delivery, "unblocked for sending by %s: %s" % (ident, ", ".join(unblocked)))
+        with st_mod.locked(delivery):
+            st = st_mod.load(delivery / "state.json")
+            data = st.data
+            org = data["epic"].get("github_org", "pdffiller")
+            awaiting = data.setdefault("awaiting_human", [])
+            _check_report(delivery, o.deep_review); _check_report(delivery, o.report)
+            extra: List[str] = []
+            if kind == "pr":
+                pr = st_mod.pr(st, ident)
+                repo = st_mod.repo_cfg(st, ident)
+                trial = copy.deepcopy(pr); trial["_id"] = ident
+                _apply_pr_evidence(trial, o)
+                _verify_head(trial, ident, org, o, io, notes)
+                missing = rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting)
+                if missing:
+                    print("\n".join(notes + missing)); return 2
+                src = pr["state"]
+                del trial["_id"]
+                data["prs"][ident] = pr = trial
+                pr["state"] = target
+                if o.reason:
+                    pr["last_reason"] = o.reason
+                jira_target = rules.JIRA_FOR_PR_STATE[target]
+                jira_line = None
+                if (pr.get("jira") or {}).get("status") != jira_target:
+                    pr["jira"] = {"status": jira_target, "synced": False}
+                    jira_line = "JIRA: %s → %s" % (pr["ticket"], jira_target)
+                if target == "ON_HUMAN_REVIEW":
+                    rules.find_entry(awaiting, o.approved)["consumed_at"] = _now()
+                if target == "READY" and not _has_open_entry(data, "send", "pr", ident):
+                    _open_entry(data, "send", pr=ident, head=pr.get("head"))
+                if target == "AI_REVIEW" and src == "READY":
+                    for a in awaiting:
+                        if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
+                            a["voided_at"] = _now()
+                            extra.append("voided %s (send for %s: head changed to %s)" % (a["id"], ident, pr.get("head")))
+                if target == "REWORK":
+                    pr["rework_since"] = {"head": pr.get("head"), "at": _now(), "reason": o.reason}
+                    _open_entry(data, "reply", pr=ident, head=pr.get("head"))
+                if target == "APPROVED":
+                    _open_entry(data, "merge", pr=ident, head=pr.get("head"))
+                if target == "MERGED":
+                    unblocked = [p for p, v in data["prs"].items() if v.get("blocked_by") == ident]
+                    if unblocked:
+                        extra.append("unblocked for sending by %s: %s" % (ident, ", ".join(unblocked)))
+                summary = "pass pr %s %s → %s (head %s)%s%s" % (ident, src, target, pr.get("head"), " — " + o.reason if o.reason else "",
+                                                             " [offline, head not verified]" if o.offline else "")
+            elif kind == "story":
+                story = st_mod.story(st, ident)
+                trial = copy.deepcopy(story); trial["_id"] = ident
+                _apply_story_evidence(trial, o)
+                missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason,
+                                            bugs=data.get("bugs"), awaiting=awaiting, approved=o.approved)
+                if missing:
+                    print("\n".join(notes + missing)); return 2
+                src = story["state"]
+                del trial["_id"]
+                data["stories"][ident] = story = trial
+                story["state"] = target
+                if o.reason:
+                    story["last_reason"] = o.reason
+                jira_line = None
+                if target == "ENV_TESTING" and not _has_open_entry(data, "story_done", "story", ident):
+                    _open_entry(data, "story_done", story=ident)
+                if target in ("IN_PROGRESS", "DONE") and src in ("PLANNED", "ENV_TESTING"):
+                    etype = "start_story" if target == "IN_PROGRESS" else "story_done"
+                    e = rules.find_entry(awaiting, o.approved) or next((a for a in awaiting if a.get("type") == etype and a.get("story") == ident
+                                                                         and a.get("approved_at") and not a.get("consumed_at")), None)
+                    if e:
+                        e["consumed_at"] = _now()
+                summary = "pass story %s %s → %s%s" % (ident, src, target, " — " + o.reason if o.reason else "")
+            else:
+                raise TurnstileError("kind must be pr or story")
+            _ensure_start_story_entries(data)
             _recompute_next_actions(data)
-            summary = "pass pr %s %s → %s (head %s)%s" % (ident, src, target, pr.get("head"), " — " + o.reason if o.reason else "")
-        elif kind == "story":
-            story = st_mod.story(st, ident)
-            trial = copy.deepcopy(story); trial["_id"] = ident
-            _apply_story_evidence(trial, o)
-            missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason)
-            if missing:
-                print("\n".join(missing)); return 2
-            src = story["state"]
-            _apply_story_evidence(story, o)
-            story["state"] = target
-            _recompute_next_actions(data)
-            summary = "pass story %s %s → %s%s" % (ident, src, target, " — " + o.reason if o.reason else "")
-        else:
-            raise TurnstileError("kind must be pr or story")
-        _side_effects(delivery, st, summary, io, o)
-        print("BOARD: publish %s" % (pathlib.Path(delivery) / "board.html"))
+            _side_effects(delivery, st, [summary] + extra, io, o.no_commit)
+        for n in notes:
+            print(n)
+        if jira_line:
+            print(jira_line)
+        print("BOARD: publish %s" % (delivery / "board.html"))
         print("OK " + summary)
         return 0
     except StaleStateError as e:
-        print("MISSING fresh state: %s" % e); return 2
+        print("\n".join(notes + ["MISSING fresh state: %s" % e])); return 2
     except TurnstileError as e:
-        print("MISSING %s" % e); return 2
+        print("\n".join(notes + ["MISSING %s" % e])); return 2
 
 def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None) -> int:
     io = io or IO()
-    st = st_mod.load(pathlib.Path(delivery) / "state.json")
-    pr = st_mod.pr(st, ident)
-    pr["jira"] = {"status": status, "synced": True}
-    st_mod.save(st)
-    ledger.append(delivery, "jira %s → %s (synced)" % (pr["ticket"], status))
-    io.git_commit(delivery, "turnstile: jira %s → %s" % (pr["ticket"], status))
-    print("OK jira %s synced" % ident)
-    return 0
+    delivery = pathlib.Path(delivery)
+    try:
+        with st_mod.locked(delivery):
+            st = st_mod.load(delivery / "state.json")
+            pr = st_mod.pr(st, ident)
+            expected = rules.JIRA_FOR_PR_STATE.get(pr.get("state"))
+            if status != expected:
+                raise TurnstileError("Jira status for %s in state %s is %r, not %r" % (ident, pr.get("state"), expected, status))
+            pr["jira"] = {"status": status, "synced": True}
+            summary = "jira %s → %s (synced)" % (pr["ticket"], status)
+            _side_effects(delivery, st, [summary], io, False)
+        print("OK jira %s synced" % ident)
+        return 0
+    except TurnstileError as e:
+        print("MISSING %s" % e); return 2
 
 def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
-    """The lead said the word for an awaiting_human entry: record approved_at so the Slack guard lets it through."""
+    """The lead said the word for an awaiting_human entry. Only the lead runs this, with TURNSTILE_LEAD=1 typed
+    in the same command (the Bash guard refuses the command without it)."""
     io = io or IO()
+    delivery = pathlib.Path(delivery)
     try:
-        st = st_mod.load(pathlib.Path(delivery) / "state.json")
-        entry = next((a for a in st.data.get("awaiting_human", []) if a.get("id") == ah_id), None)
-        if entry is None:
-            raise TurnstileError("unknown awaiting_human id %s" % ah_id)
-        if entry.get("approved_at"):
-            print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
-        entry["approved_at"] = _now()
-        st_mod.save(st)
-        summary = "approved %s (%s %s by %s)" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"), entry.get("owner"))
-        ledger.append(delivery, summary)
-        io.git_commit(delivery, "turnstile: " + summary)
+        if os.environ.get("TURNSTILE_LEAD") != "1":
+            raise TurnstileError("approve is the lead's action: the lead types `TURNSTILE_LEAD=1 turnstile approve %s` themself" % ah_id)
+        with st_mod.locked(delivery):
+            st = st_mod.load(delivery / "state.json")
+            entry = rules.find_entry(st.data.get("awaiting_human", []), ah_id)
+            if entry is None:
+                raise TurnstileError("unknown awaiting_human id %s" % ah_id)
+            if entry.get("voided_at"):
+                raise TurnstileError("%s was voided at %s (head changed); a new entry is opened on the next READY" % (ah_id, entry["voided_at"]))
+            if entry.get("approved_at"):
+                print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
+            entry["approved_at"] = _now()
+            summary = "approved %s (%s %s by %s)" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"), entry.get("owner"))
+            _side_effects(delivery, st, [summary], io, False)
         print("OK " + summary)
         return 0
     except TurnstileError as e:

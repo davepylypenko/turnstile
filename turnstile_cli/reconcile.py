@@ -62,16 +62,18 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     org = st.data["epic"].get("github_org", "pdffiller")
     facts = {}
+    unknown = []
     for pid, pr in st.data["prs"].items():
         if pr.get("state") == "MERGED":
             continue
         try:
             facts[pid] = github.fetch(pid, org)
         except Exception as e:  # network/gh problems must not hide the rest
-            print("WARN %s: %s" % (pid, e))
+            print("WARN %s: %s" % (pid, e)); unknown.append(pid)
     props = compare(st.data, facts)
+    rc = 1 if unknown else 0
     if as_json:
-        print(json.dumps([p.__dict__ for p in props], indent=2)); return 0
+        print(json.dumps([p.__dict__ for p in props], indent=2)); return rc
     if status:
         print("== %s" % st.data["epic"]["key"])
         for sid, s in st.data["stories"].items():
@@ -87,4 +89,6 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
         print("%s %s: %s" % (p.pr, p.kind, p.message))
         if p.suggested_cmd:
             print("    → " + p.suggested_cmd)
-    return 0
+    if unknown:
+        print("== facts missing for %s (gh failed); exit 1" % ", ".join(unknown))
+    return rc

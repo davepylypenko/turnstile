@@ -18,6 +18,7 @@ def build_parser():
                      ("--figma-parity", {"choices": ["pass", "fail"]})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
+    ps.add_argument("--offline", action="store_true", help="skip the GitHub head check (loud WARN; READY/ON_HUMAN_REVIEW stay refused)")
 
     js = sub.add_parser("jira-synced", help="record that the Jira transition was performed"); js.add_argument("ident"); js.add_argument("status")
     ap = sub.add_parser("approve", help="record the lead's approval of an awaiting_human entry"); ap.add_argument("ah_id")
