@@ -47,9 +47,9 @@ class IO:
         except ImportError:
             return None
         return board.render_html(data)
-    def github_head(self, pr_id: str, org: str) -> str:
+    def github_facts(self, pr_id: str, org: str):
         from . import github
-        return github.fetch(pr_id, org).head
+        return github.fetch(pr_id, org)
 
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
@@ -87,21 +87,60 @@ def _apply_pr_evidence(pr: dict, o: Options) -> None:
     if o.merged_sha:
         pr["merged_sha"] = o.merged_sha
 
-def _verify_head(pr: dict, ident: str, org: str, o: Options, io: IO, notes: List[str]) -> None:
-    """Bind the evidence to the PR's real head: GitHub decides what the head is, not the caller."""
+def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]:
+    """R2-5: self-reported evidence must equal what GitHub says for the PR's head. Pure; shared with the reconcile dry run."""
+    out: List[str] = []
+    h = pr.get("head")
+    ev = pr.get("evidence") or {}
+    def for_head(key):
+        e = ev.get(key)
+        return e if e and rules.same_head(e.get("head"), h) else None
+    if target in ("AI_REVIEW", "READY", "ON_HUMAN_REVIEW"):
+        ci = for_head("ci")
+        if ci and ci.get("status") == "success" and facts.ci != "success":
+            out.append("MISSING CI success on GitHub for head %s (is %s); evidence says success" % (h, facts.ci))
+    if target in ("READY", "ON_HUMAN_REVIEW"):
+        gate_name = repo_cfg.get("gate")
+        g = for_head("gate")
+        if gate_name and g and g.get("result") == "pass":
+            actual = facts.checks.get(gate_name)
+            if actual != "success":
+                out.append("MISSING gate %s == success on GitHub for head %s (is %s); evidence says pass" % (gate_name, h, actual or "absent"))
+        c = for_head("copilot")
+        if repo_cfg.get("copilot") and c and c.get("open_threads") == 0 and facts.copilot_threads_open != 0:
+            out.append("MISSING Copilot threads == 0 on GitHub for head %s (has %d); evidence says 0" % (h, facts.copilot_threads_open))
+    if target == "APPROVED":
+        human = ev.get("human") or {}
+        for login in human.get("approvals") or []:
+            if login not in facts.approvals:
+                out.append("MISSING approval by %s in GitHub latestReviews for head %s (has %s)" % (login, h, ", ".join(facts.approvals) or "none"))
+        if facts.human_threads_open != 0:
+            out.append("MISSING 0 unresolved human threads on GitHub (has %d)" % facts.human_threads_open)
+        if facts.changes_requested:
+            out.append("MISSING no changes requested on GitHub (changes requested by %s)" % ", ".join(facts.changes_requested))
+    if target == "MERGED":
+        if not facts.merged:
+            out.append("MISSING merged on GitHub (the PR is not merged)")
+        elif facts.merged_sha and pr.get("merged_sha") and not rules.same_head(facts.merged_sha, pr.get("merged_sha")):
+            out.append("MISSING merged_sha == GitHub merge commit %s (has %s)" % (facts.merged_sha, pr.get("merged_sha")))
+    return out
+
+def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, org: str, o: Options, io: IO, notes: List[str]) -> List[str]:
+    """Bind the evidence to the PR's real head and to GitHub's facts: GitHub decides, not the caller."""
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
     if o.offline:
         notes.append("WARN --offline: head %s of %s NOT verified against GitHub; READY/ON_HUMAN_REVIEW/APPROVED/MERGED stay refused until an online pass" % (h, ident))
         ev["head_verified"] = {"head": h, "verified": False}
-        return
+        return []
     try:
-        gh_head = io.github_head(ident, org)
+        facts = io.github_facts(ident, org)
     except Exception as e:
         raise TurnstileError("GitHub head for %s unavailable (%s); fix gh or use --offline (refuses READY/ON_HUMAN_REVIEW)" % (ident, e))
-    if not rules.same_head(gh_head, h):
-        raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, gh_head, gh_head[:12]))
+    if not rules.same_head(facts.head, h):
+        raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
+    return _facts_mismatches(pr, target, facts, repo_cfg)
 
 def _apply_story_evidence(story: dict, o: Options) -> None:
     ev = story.setdefault("evidence", {})
@@ -209,8 +248,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 repo = st_mod.repo_cfg(st, ident)
                 trial = copy.deepcopy(pr); trial["_id"] = ident
                 _apply_pr_evidence(trial, o)
-                _verify_head(trial, ident, org, o, io, notes)
-                missing = rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
+                missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes)
+                missing += rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = pr["state"]

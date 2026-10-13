@@ -47,8 +47,12 @@ are written only after the rules pass, and restored if the git commit fails (`MI
 
 ### Heads and GitHub
 
-Every PR pass asks GitHub for the PR's head (`gh api graphql`). The pass is refused when the recorded `--head` (or the
-stored head) is not the real one, and when `gh` fails. `--offline` skips the check with a loud `WARN` line and records
+Every PR pass asks GitHub for the PR's facts (`gh api graphql`): head, status rollup, check contexts, latest reviews,
+unresolved threads, merge state. The pass is refused when the recorded `--head` (or the stored head) is not the real
+one, when `gh` fails, and when the evidence contradicts GitHub for that head: `--ci success` with a rollup that is not
+success, `--gate <name>:pass` while that StatusContext/CheckRun is pending, failed or absent, `--copilot 0` with open
+Copilot threads, `--approvals a,b` with a login missing from `latestReviews` for the head, unresolved human threads or
+changes requested at APPROVED, `MERGED` while GitHub shows the PR open. Self-reported evidence never outranks GitHub. `--offline` skips the check with a loud `WARN` line and records
 `evidence.head_verified: false`; `READY` and `ON_HUMAN_REVIEW` stay refused until a pass runs online for that head.
 
 ### The lead's word (`awaiting_human`)

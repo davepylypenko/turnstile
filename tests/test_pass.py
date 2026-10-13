@@ -1,6 +1,7 @@
 import contextlib, io as _io, json, os, pathlib, shutil, tempfile, unittest
 from turnstile_cli import pass_cmd, state
 from turnstile_cli.errors import TurnstileError
+from turnstile_cli.github import PrFacts
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 H = "aaaaaaaa11111111"
@@ -8,8 +9,9 @@ H2 = "eeeeeeee55555555"
 LINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
 
 class FakeIO:
+    """GitHub facts per PR: `heads` gives the head, `facts` per-PR overrides of the canned green PrFacts."""
     def __init__(self, heads=None):
-        self.commits = []; self.renders = 0; self.heads = heads or {}; self.fail_commit = False; self.fail_render = False
+        self.commits = []; self.renders = 0; self.heads = heads or {}; self.facts = {}; self.fail_commit = False; self.fail_render = False
     def git_commit(self, delivery, message):
         if self.fail_commit:
             raise RuntimeError("gpg: signing failed")
@@ -18,11 +20,15 @@ class FakeIO:
         if self.fail_render:
             raise RuntimeError("template missing")
         self.renders += 1; return "<html>%s</html>" % len(self.commits)
-    def github_head(self, pr_id, org):
+    def github_facts(self, pr_id, org):
         h = self.heads.get(pr_id)
         if h is None:
             raise TurnstileError("gh api failed for %s: offline" % pr_id)
-        return h
+        f = PrFacts(id=pr_id, head=h, merged=False, merged_sha=None, draft=True, ci="success", checks={"pdf-review": "success"},
+                    approvals=["isachivka"], human_threads_open=0)
+        for k, v in self.facts.get(pr_id, {}).items():
+            setattr(f, k, v)
+        return f
 
 def opts(**kw):
     o = pass_cmd.Options(); [setattr(o, k, v) for k, v in kw.items()]; return o
@@ -276,6 +282,7 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
         self.assertEqual(rc, 0)
         self.assertEqual([a["type"] for a in self.data()["awaiting_human"]], ["send", "merge"])
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
         self.assertEqual(rc, 0)
         self.assertIn("unblocked for sending by jsfiller#1: docs-platform#2", (self.d / "ledger.md").read_text())
@@ -286,6 +293,7 @@ class PassCmd(unittest.TestCase):
         data = self.data(); data["prs"]["docs-platform#2"]["state"] = "MERGED"; self.write(data)
         self.to_human()
         pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io), 0)
         self.assertIn("story S1: every PR merged (docs-platform#2, jsfiller#1); re-evaluate the story DoD", (self.d / "ledger.md").read_text())
 
@@ -363,6 +371,48 @@ class PassCmd(unittest.TestCase):
         self.to_human()
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(offline=True, approvals="x", open_threads=0), self.io)
         self.assertEqual(rc, 2); self.assertIn("head_verified", out)
+
+    def test_gate_and_ci_evidence_must_match_github(self):
+        # R2-5: --gate/--ci are checked against the StatusContext/CheckRun and rollup state for that head
+        for gate_state in ("pending", "failure", None):
+            self.io.facts["jsfiller#1"] = {"checks": ({"pdf-review": gate_state} if gate_state else {})}
+            rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+            self.assertEqual(rc, 2, gate_state); self.assertIn("MISSING gate pdf-review == success on GitHub for head %s (is %s)" % (H, gate_state or "absent"), out)
+        self.io.facts["jsfiller#1"] = {"ci": "pending"}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING CI success on GitHub for head %s (is pending)" % H, out)
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0, out)
+        self.io.facts["docs-platform#2"] = {"ci": "failure"}
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING CI success on GitHub", out)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "AI_REVIEW")
+        self.io.facts = {}
+        self.to_ready()
+
+    def test_copilot_evidence_must_match_github(self):
+        data = self.data(); data["epic"]["repos"]["jsfiller"]["copilot"] = True; self.write(data)
+        self.io.facts["jsfiller#1"] = {"copilot_threads_open": 2}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(copilot=0, **READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING Copilot threads == 0 on GitHub for head %s (has 2)" % H, out)
+
+    def test_approvals_and_merge_must_match_github(self):
+        self.to_human()
+        self.io.facts["jsfiller#1"] = {"approvals": []}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING approval by isachivka in GitHub latestReviews for head %s" % H, out)
+        self.io.facts["jsfiller#1"] = {"human_threads_open": 1}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING 0 unresolved human threads on GitHub (has 1)", out)
+        self.io.facts["jsfiller#1"] = {"changes_requested": ["isachivka"]}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.assertEqual(rc, 2); self.assertIn("changes requested by isachivka", out)
+        self.io.facts = {}
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING merged on GitHub", out)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca0000"}
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io), 0)
 
     def test_next_ah_id_tolerates_odd_ids(self):
         self.assertEqual(pass_cmd._next_ah_id({"awaiting_human": [{"id": "ah-x"}, {"id": "ah-4"}, {"id": "zz"}]}), "ah-5")

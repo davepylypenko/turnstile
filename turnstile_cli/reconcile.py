@@ -14,9 +14,9 @@ def _ev_for_head(pr: dict, key: str) -> Optional[dict]:
     ev = (pr.get("evidence") or {}).get(key)
     return ev if ev and rules.same_head(ev.get("head"), pr.get("head")) else None
 
-def _dry_run(data: dict, pid: str, target: str, cmd: str, **flags) -> Optional[str]:
+def _dry_run(data: dict, pid: str, target: str, cmd: str, facts: Optional[github.PrFacts] = None, **flags) -> Optional[str]:
     """Return the refusal text if `turnstile pass pr <pid> <target> <flags>` would be refused; None if it would pass.
-    Runs the real evidence application and rules on a deep copy, so nothing is written."""
+    Runs the real evidence application, the GitHub-facts checks and the rules on a deep copy, so nothing is written."""
     from . import pass_cmd
     pr = copy.deepcopy(data["prs"][pid]); pr["_id"] = pid
     o = pass_cmd.Options(**flags)
@@ -26,11 +26,12 @@ def _dry_run(data: dict, pid: str, target: str, cmd: str, **flags) -> Optional[s
         return str(e)
     pr.setdefault("evidence", {})["head_verified"] = {"head": pr.get("head"), "verified": True}
     repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-    missing = rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"), stories=data.get("stories"))
+    missing = pass_cmd._facts_mismatches(pr, target, facts, repo) if facts is not None else []
+    missing += rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"), stories=data.get("stories"))
     return "; ".join(missing) if missing else None
 
-def _propose(out: List[Proposal], data: dict, pid: str, kind: str, message: str, target: str, cmd: str, **flags) -> None:
-    refusal = _dry_run(data, pid, target, cmd, **flags)
+def _propose(out: List[Proposal], data: dict, pid: str, kind: str, message: str, target: str, cmd: str, facts: Optional[github.PrFacts] = None, **flags) -> None:
+    refusal = _dry_run(data, pid, target, cmd, facts=facts, **flags)
     if refusal:
         out.append(Proposal(pid, kind, "%s — no clean pass available: %s" % (message, refusal), None))
     else:
@@ -48,7 +49,7 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             msg = "merged on GitHub (%s)" % (f.merged_sha or "")[:8]
             if st == "APPROVED":
                 _propose(out, data, pid, "merged", msg, "MERGED", "turnstile pass pr %s MERGED --merged-sha %s" % (pid, f.merged_sha),
-                         merged_sha=f.merged_sha)
+                         facts=f, merged_sha=f.merged_sha)
             else:
                 out.append(Proposal(pid, "merged", msg + " but state is %s: anomaly, merged without APPROVED; the lead decides" % st, None))
             continue
@@ -58,11 +59,11 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             msg = "head is %s, state has %s" % (f.head[:8], (pr.get("head") or "")[:8])
             if st in ("ON_HUMAN_REVIEW", "APPROVED"):
                 reason = "push after send (%s)" % f.head[:8]
-                _propose(out, data, pid, "head_changed", msg, "REWORK", 'turnstile pass pr %s REWORK --head %s --reason "%s"' % (pid, f.head, reason), reason=reason, head=f.head)
+                _propose(out, data, pid, "head_changed", msg, "REWORK", 'turnstile pass pr %s REWORK --head %s --reason "%s"' % (pid, f.head, reason), facts=f, reason=reason, head=f.head)
             elif st in ("AI_REVIEW", "READY"):
                 ci = f.ci if f.ci in ("success", "failure") else None
                 cmd = "turnstile pass pr %s AI_REVIEW --head %s" % (pid, f.head) + (" --ci %s" % ci if ci else "")
-                _propose(out, data, pid, "head_changed", msg + " (CI %s)" % f.ci, "AI_REVIEW", cmd, head=f.head, ci=ci)
+                _propose(out, data, pid, "head_changed", msg + " (CI %s)" % f.ci, "AI_REVIEW", cmd, facts=f, head=f.head, ci=ci)
             elif st == "REWORK":
                 out.append(Proposal(pid, "head_changed", msg + "; record it with the ON_HUMAN_REVIEW pass (--head %s) once gate/copilot are green" % f.head[:12], None))
             else:
@@ -71,14 +72,14 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
         if st == "ON_HUMAN_REVIEW" and f.human_threads_open > 0:
             reason = "%d human thread(s)" % f.human_threads_open
             _propose(out, data, pid, "human_thread", "%d unresolved human thread(s)" % f.human_threads_open, "REWORK",
-                     'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), reason=reason)
+                     'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
         elif st == "ON_HUMAN_REVIEW" and f.changes_requested:
             reason = "changes requested by %s" % ", ".join(f.changes_requested)
-            _propose(out, data, pid, "changes_requested", reason, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), reason=reason)
+            _propose(out, data, pid, "changes_requested", reason, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
         elif st == "ON_HUMAN_REVIEW" and f.approvals and f.human_threads_open == 0:
             _propose(out, data, pid, "approved", "approved by %s" % ", ".join(f.approvals), "APPROVED",
                      "turnstile pass pr %s APPROVED --approvals %s --open-threads 0" % (pid, ",".join(f.approvals)),
-                     approvals=",".join(f.approvals), open_threads=0)
+                     facts=f, approvals=",".join(f.approvals), open_threads=0)
         cp = _ev_for_head(pr, "copilot")
         if cp and cp.get("open_threads") == 0 and f.copilot_threads_open > 0:
             out.append(Proposal(pid, "copilot_thread", "%d open Copilot thread(s) but evidence says 0" % f.copilot_threads_open, None))

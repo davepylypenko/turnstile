@@ -76,6 +76,16 @@ class Compare(unittest.TestCase):
     def test_approved_with_no_threads(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts(human_threads_open=0))
         self.assertEqual(props[0].kind, "approved"); self.assertIn("--approvals isachivka --open-threads 0", props[0].suggested_cmd)
+    def test_dry_run_applies_the_github_facts_checks(self):
+        # the approved proposal carries facts.approvals, so it passes; a merged proposal whose state says a different merged_sha is dropped
+        d = self.data("APPROVED"); d["prs"]["jsfiller#1"]["merged_sha"] = "1111111122222222"
+        props = reconcile.compare(d, self.facts(merged=True, merged_sha="abcabcabcabcabca"))
+        self.assertEqual(props[0].kind, "merged"); self.assertIn("--merged-sha abcabcabcabcabca", props[0].suggested_cmd)  # --merged-sha overrides the stale value
+        d = self.data("READY", gate={"name": "pdf-review", "head": H, "result": "pass"}, ci={"head": H, "status": "success"})
+        f = self.facts(head="ffffffff66666666", ci="failure")
+        props = reconcile.compare(d, f)
+        self.assertEqual(props[0].kind, "head_changed"); self.assertIsNone(props[0].suggested_cmd)
+
     def test_approved_proposal_is_dry_run_against_rules(self):
         stale = dict(HUMAN, sent_head="dddddddd44444444")
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=stale), self.facts(human_threads_open=0))
