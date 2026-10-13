@@ -36,7 +36,7 @@ only when the epic ends. Path: `context/workitems/<workitem>/delivery/` (next to
 
 ```
 delivery/
-  state.yaml      # single source of truth; written only by `turnstile pass` (see §5)
+  state.json      # single source of truth; written only by `turnstile pass` (see §5)
   ledger.md       # append-only event log, written by `turnstile pass`
   plan.md         # kick-off analysis output: stories, PR plan, merge order, test-case map (lead-approved)
   decisions.md    # decisions taken + open questions for humans
@@ -47,9 +47,9 @@ delivery/
 ```
 
 The workspace `CLAUDE.md` shrinks to: role (orchestrator), path to `delivery/`, plugin name, chat language. All
-epic facts live in `state.yaml` and `decisions.md`.
+epic facts live in `state.json` and `decisions.md`.
 
-### 2.2 `state.yaml` schema
+### 2.2 `state.json` schema (shown as YAML for readability; the file is JSON, 2-space indent, sorted keys)
 
 ```yaml
 epic:
@@ -179,8 +179,8 @@ the scarcest resource, so it receives already integrated, tested code.
 
 ## 5. Commands
 
-Shipped as one CLI `turnstile` in the plugin (Python 3, standard library + `gh`), invoked by the skill. The orchestrator never edits
-`state.yaml` by hand.
+Shipped as one CLI `turnstile` in the plugin (Python 3.9+, standard library only + `gh`; state is JSON so no YAML dependency), invoked by the skill. The orchestrator never edits
+`state.json` by hand.
 
 ### `turnstile pass`
 
@@ -192,8 +192,8 @@ turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"
 ```
 
 Always in this order: validate DoD of the current state and DoR of the target, including `head` equality of all
-evidence → on failure print exactly what is missing and exit non-zero → on success write `state.yaml`, append to
-`ledger.md`, render `board.html` from `state.yaml`, commit `delivery/` on the epic branch of the knowledge worktree,
+evidence → on failure print exactly what is missing and exit non-zero → on success write `state.json`, append to
+`ledger.md`, render `board.html` from `state.json`, commit `delivery/` on the epic branch of the knowledge worktree,
 print the artifact publish instruction and the Jira transition to perform. The skill then publishes the artifact and
 performs the Jira transition through the Atlassian MCP (no API token; decision 2026-10-13) and records `jira.synced`.
 The command's last line is a one-line summary for the lead's message.
@@ -201,14 +201,14 @@ The command's last line is a one-line summary for the lead's message.
 ### `turnstile reconcile`
 
 Read-only. For every PR: GitHub head, check-runs (CI, gate), approvals, unresolved threads (human vs Copilot),
-draft/ready, merged state; Jira status. Compares with `state.yaml` and prints a list of discrepancies with the proposed
+draft/ready, merged state; Jira status. Compares with `state.json` and prints a list of discrepancies with the proposed
 `turnstile pass` for each unambiguous case: push after send → REWORK; new human thread → REWORK; approval + 0 threads →
 APPROVED; merged → MERGED; gate red on the current head → evidence void. It changes nothing. Runs at session start and on
 demand (`status`).
 
 ### `turnstile render-board`
 
-`state.yaml` → `board.html` (tiles per state, repo tables with PR / Slack permalink / AI gate heads / blocked-by /
+`state.json` → `board.html` (tiles per state, repo tables with PR / Slack permalink / AI gate heads / blocked-by /
 note, story tiles with gate evidence, bugs tab with the db-backed status dropdowns, legend with the Jira mapping).
 Called by `turnstile pass`; also standalone.
 
@@ -227,7 +227,7 @@ lead approval again).
   humans (Copilot bot allowed), `git push --force*`, `git rebase` on epic/story branches, `--no-gpg-sign`, Prometey
   `ensure` with an empty `service_github_tag`.
 - Commit message: block `Co-Authored-By`. PR body (`gh pr create/edit`): block the "Generated with" footer.
-- PostToolUse Edit/Write on `state.yaml`: warn "state changes only through transition" and run `turnstile reconcile`.
+- PostToolUse Edit/Write on `state.json`: warn "state changes only through transition" and run `turnstile reconcile`.
 
 ## 7. Agents
 
@@ -257,7 +257,7 @@ resume after limits/watchdog, report in `reports/` per template, ≤8 lines back
   numeric DOM check (spacing, sizes, fonts, colours against Figma variables) with the tolerance from the plan (default
   1 px, exact colour); copy compared verbatim against Figma/locale.
 - Output: `reports/ENV-<story>.md`: case → pass / fail / not_testable_here (with reason) → evidence. Every fail becomes a
-  bug in `state.yaml` (story, screen, Figma node). Re-runs cover failed cases only; the final run is full.
+  bug in `state.json` (story, screen, Figma node). Re-runs cover failed cases only; the final run is full.
 
 ## 8. Packaging
 
@@ -270,7 +270,7 @@ skills/turnstile/references/          # DoR/DoD tables, templates (plan, brief, 
 scripts/turnstile (subcommands: pass, reconcile, render-board, status)
 agents/{implementer,reviewer,story-reviewer,stack-step,comments-handler,investigator,tester,deployer}.md
 hooks/hooks.json + hooks/*.sh
-templates/state.yaml  templates/CLAUDE.md.workspace  templates/board.html
+templates/state.json  templates/CLAUDE.md.workspace  templates/board.html
 docs/superpowers/specs/                   # this spec and future ones
 ```
 
@@ -278,14 +278,14 @@ docs/superpowers/specs/                   # this spec and future ones
 - **Team copy:** vendored into `pdffiller/pdffiller-knowledge` (path to agree, e.g. `plugins/turnstile/`) by tag,
   the way skill sources live in the playground today; the team installs from there.
 - Personal items (greeting, channels, reviewer logins, dev recipe) are removed from the plugin: channels and roles live
-  in `state.yaml`, environment recipes in `references/env/`. `prometey-variant` and `front-release` stay separate skills
+  in `state.json`, environment recipes in `references/env/`. `prometey-variant` and `front-release` stay separate skills
   the plugin references.
 
 ## 9. Migration of MYD-16538 (without stopping the current work)
 
 1. Knowledge worktree in the workspace on `epic/myd-16538-l2f-funnel`; `MYD-16538-docs/` moves to
    `context/workitems/pdfd-429-l2f-editor-funnel/delivery/` as is (ledger, briefs, reports, board).
-2. An agent generates `state.yaml` from the board + GitHub (`turnstile reconcile` fills heads, checks, threads); stories of the
+2. An agent generates `state.json` from the board + GitHub (`turnstile reconcile` fills heads, checks, threads); stories of the
    current epic = the dispatch-plan waves; `decisions.md` from the `CLAUDE.md` table.
 3. The workspace `CLAUDE.md` shrinks to the pointer at `delivery/` and the plugin.
 4. From then on every transition goes through `turnstile pass`; the first `turnstile reconcile` shows where the state and reality differ.
@@ -294,7 +294,7 @@ docs/superpowers/specs/                   # this spec and future ones
 
 ## 10. Testing the plugin itself
 
-- `turnstile pass`/`turnstile reconcile`/`turnstile render-board`: unit tests on fixture `state.yaml` files (every DoR/DoD branch, head mismatch,
+- `turnstile pass`/`turnstile reconcile`/`turnstile render-board`: unit tests on fixture `state.json` files (`unittest`, no third-party packages) (every DoR/DoD branch, head mismatch,
   parallel stories, blocked_by resolution, idempotent re-runs); `turnstile reconcile` tested against recorded `gh` JSON.
 - Hooks: shell tests that forbidden commands are blocked and allowed ones pass.
 - Agents: one dry run each on a throwaway branch in a sandbox repo before the first real use.
