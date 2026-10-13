@@ -360,3 +360,29 @@ Not ready for a real epic yet. R2-1 and R2-2 mean any agent can still unlock a S
 the hard rule the plugin exists to enforce. R2-3 lets PRs reach humans before the story gates. With `ask` decisions in
 the two hooks (verified in bypass mode) and the story-DONE check, plan 3 can start. R2-4 to R2-8 should land before
 the first REWORK cycle.
+
+## Round 2 resolution (2026-10-13)
+
+Every blocker, major and minor was addressed test-first; suite 122 → 140 tests, green on Python 3.9.6. Design
+decisions for the blockers were taken by the lead and are not reopened here.
+
+| # | Finding | Resolution | Commit |
+|---|---|---|---|
+| R2-1 | Any agent could type the lead gate | The lead approves only by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt (outside the model's tool calls). `guard_bash` refuses every model-issued command containing `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` after stripping quotes/backslashes and collapsing whitespace (`env`, `export`, `bash -c`, heredoc, `T\URNSTILE_LEAD` forms tested); the CLI keeps requiring `TURNSTILE_LEAD=1`. `approve` records `approved_via: "lead-terminal"`; the ledger line says so. README "How the lead approves", `skills/turnstile/SKILL.md` stub | `c34bf6d` |
+| R2-2 | `state.json` writable through other interpreters; Slack guard trusted that file | Generic rule: a command that mentions `state.json` (also as a glob) or the delivery dir (absolute path, `delivery/`, `cd delivery`) and has any pipeline segment that is not read-only is refused (`delivery-write`); `git checkout/restore/stash/reset` touching it are refused (`delivery-git-restore`); redirects count by target. `turnstile reconcile` adds `approval_unlogged` for an `approved_at` whose ledger line is missing or lacks `approved_via: lead-terminal`. README "Threat model" documents the accepted residual risk (same OS user; hooks + ledger + reconcile are defence in depth) | `c29bf8a` |
+| R2-3 | PRs reached humans before the story gates | `rules.check_pr` takes `stories`; READY → ON_HUMAN_REVIEW requires `stories[pr.story].state == "DONE"` unless the story carries `human_review: "per_pr"` (lead-set, recorded in `plan.md`); missing story data fails closed; `pass` and the reconcile dry run pass the stories. Tests cover both branches | `21dcb27` |
+| R2-4 | A denied or failed send burned the approval | `guard_slack.py` (PreToolUse) only checks. New `post_slack.py` (PostToolUse, same matcher) sets `used_at`/`used_channel`/`message_ts` only when the tool result carries a `message_ts`, writes the ledger line, renders the board and commits `delivery/` | `09c0485` |
+| R2-5 | Gate/CI/approval evidence self-reported | `IO.github_facts` replaces `github_head`; `pass` refuses `--ci success` with a non-success rollup, `--gate x:pass` while the context is pending/failed/absent, `--copilot 0` with open Copilot threads, `--approvals` missing from `latestReviews` for the head, unresolved human threads or changes requested at APPROVED, MERGED while GitHub shows the PR open. The reconcile dry run applies the same checks with the fetched facts. Tests on canned facts | `1a0a5a4` |
+| R2-6 | Story approvals reused or stuck after a reopen | Leaving ENV_TESTING backwards voids the open `story_done` (ledger line); `start_story`/`story_done` are consumed on use; rules and pass pick the newest entry that is neither voided nor consumed (`rules.latest_entry`). Two-cycle test | `bd9fa72` |
+| R2-7 | `rework_since` never cleared | REWORK → DEV drops it; a new head then requires a deep review again (test) | `bd9fa72` |
+| R2-8 | Reconcile ignored threads on APPROVED PRs | `human_thread` and `changes_requested` proposals for `ON_HUMAN_REVIEW` and `APPROVED` | `bd9fa72` |
+| R2-9 | Lock depended on `TMPDIR` | Lock is `delivery/.state.lock`, an empty tracked file created at init and repaired by `pass`; test switches `TMPDIR` between two lockers | `18d3ceb`, `73f5327` |
+| R2-10 | `write_atomic` changed mode and replaced symlinks | Target resolved first; the temp file gets the existing mode (or `0666 & ~umask`) before `os.replace`; tests for mode, symlink and umask | `18d3ceb` |
+| R2-11 | File-borne content and rules passed the guard | `-F`/`--file`/`--body-file`/`--input` files are read on `git commit` / `gh pr create|edit` / `gh api` and the trailer/footer rules applied; `gh api graphql` with `query=@` or `--input` refused; `pull.rebase true` and `service_github_tag ''` (spaced) covered | `72e77e8` |
+| R2-12 | Misleading refusal for paired PRs | The Slack guard names the id it refuses (repo not in `epic.repos` / no usable entry); a PR in a chosen send entry's `companions` (`pass … READY --companions locales#5`) needs no entry | `72e77e8` |
+| R2-13 | ON_HUMAN_REVIEW did not check the send happened | Requires the entry's `used_at` (set by the PostToolUse hook) and a permalink matching `^https://[\w-]+\.slack\.com/archives/` | `09c0485` |
+| R2-14 | Guard writes not committed | The PostToolUse hook commits `delivery/` (board rendered, `.gitattributes`/`.gitignore` ensured); `turnstile status` lists uncommitted changes in `delivery/` | `09c0485` |
+
+Still open (not in this round's scope, unchanged from "Spec rules still not enforced"): signature check of every
+commit (reconcile checks the head only), evidence that REWORK replies were posted, "stacked or merged into the story
+branch" at IN_PROGRESS, and `cases.fail` against the story's bugs.
