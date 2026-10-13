@@ -1,0 +1,44 @@
+import json, pathlib, shutil, tempfile, unittest
+from turnstile_cli import state, paths
+from turnstile_cli.errors import TurnstileError, StaleStateError
+
+FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
+
+class StateIO(unittest.TestCase):
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.delivery = self.tmp / "delivery"; self.delivery.mkdir()
+        shutil.copy(FIX, self.delivery / "state.json")
+        (self.tmp / ".turnstile").write_text("delivery\n")
+
+    def test_find_delivery_walks_up(self):
+        nested = self.tmp / "a" / "b"; nested.mkdir(parents=True)
+        self.assertEqual(paths.find_delivery(nested, None), self.delivery.resolve())
+
+    def test_find_delivery_override_and_missing(self):
+        self.assertEqual(paths.find_delivery(self.tmp, str(self.delivery)), self.delivery.resolve())
+        with self.assertRaises(TurnstileError):
+            paths.find_delivery(pathlib.Path(tempfile.mkdtemp()), None)
+
+    def test_round_trip_sorted_keys(self):
+        st = state.load(self.delivery / "state.json")
+        st.data["prs"]["jsfiller#1"]["state"] = "READY"
+        state.save(st)
+        text = (self.delivery / "state.json").read_text()
+        self.assertTrue(text.endswith("\n"))
+        self.assertEqual(json.loads(text)["prs"]["jsfiller#1"]["state"], "READY")
+        self.assertLess(text.index('"awaiting_human"'), text.index('"epic"'))  # sorted keys
+
+    def test_save_refuses_stale_file(self):
+        st = state.load(self.delivery / "state.json")
+        (self.delivery / "state.json").write_text("{}\n")
+        with self.assertRaises(StaleStateError):
+            state.save(st)
+
+    def test_lookups(self):
+        st = state.load(self.delivery / "state.json")
+        self.assertEqual(state.pr(st, "jsfiller#1")["ticket"], "MYD-10")
+        self.assertEqual(state.story(st, "S1")["title"], "Header")
+        self.assertFalse(state.repo_cfg(st, "jsfiller#1")["copilot"])
+        with self.assertRaises(TurnstileError):
+            state.pr(st, "jsfiller#999")
