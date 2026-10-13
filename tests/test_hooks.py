@@ -73,8 +73,29 @@ class BashGuard(unittest.TestCase):
         self.assertBlocked(["echo '{}' > delivery/state.json", "cat x >> /ws/delivery/state.json", "sed -i '' 's/DEV/READY/' delivery/state.json",
                             "sed --in-place s/a/b/ delivery/state.json", "jq '.x=1' state.json | tee delivery/state.json",
                             "python3 -c \"import json; json.dump({}, open('delivery/state.json','w'))\"", "cp other.json delivery/state.json",
-                            "mv tmp.json delivery/state.json", "rm delivery/state.json", "python -c 'open(\"state.json\",\"w\")'"], "state-json-write")
+                            "mv tmp.json delivery/state.json", "rm delivery/state.json", "python -c 'open(\"state.json\",\"w\")'"], "delivery-write")
         self.assertAllowed(["echo delivery > .turnstile", "python3 -c 'print(1)' > out.txt", "sed -i '' s/a/b/ README.md"])
+
+    def test_delivery_dir_writes_blocked_through_any_interpreter(self):
+        # R2-2: a command that mentions state.json or the delivery dir and is not read-only is refused, whatever the tool
+        d = str(self.ws / "delivery")
+        self.assertBlocked(["perl -pi -e 's/DEV/READY/' delivery/state.json", "node -e \"require('fs').writeFileSync('delivery/state.json','{}')\"",
+                            "ruby -e 'File.write(\"delivery/state.json\", \"{}\")'", "python3 - <<EOF\nimport json\nopen('delivery/' + 'state.json','w')\nEOF",
+                            "sed -i '' s/a/b/ state.*", "rm -rf %s/reports" % d, "echo x > %s/ledger.md" % d, "cd delivery && rm ledger.md",
+                            "cat > delivery/reports/X.md <<EOF\nhi\nEOF", "mkdir delivery/x", "cat delivery/state.json | python3",
+                            "cat other.json | tee delivery/state.json", "cp -r delivery /tmp/d", "jq '.x=1' delivery/state.json > tmp && mv tmp delivery/state.json",
+                            "perl -e 'print 1' > delivery/state.json", "git add delivery/state.json && git commit -m x"], "delivery-write")
+        self.assertBlocked(["git checkout HEAD~3 -- delivery/state.json", "git restore delivery/state.json", "git stash push -- delivery",
+                            "git reset --hard HEAD~1 -- delivery/", "git -C delivery checkout .", "git checkout -- %s/state.json" % d,
+                            "git restore --source=HEAD~1 state.json"], "delivery-git-restore")
+        self.assertAllowed(["cat delivery/state.json", "jq .prs delivery/state.json", "grep READY delivery/state.json | head -3", "git diff -- delivery/",
+                            "git log --oneline -- delivery/state.json", "git show HEAD:delivery/state.json", "less delivery/ledger.md",
+                            "cd delivery && turnstile status", "ls -la delivery", "python3 -m turnstile_cli status --delivery delivery",
+                            "scripts/turnstile reconcile --delivery %s" % d, "git -C delivery status", "head -50 delivery/ledger.md",
+                            "tail -n 5 delivery/ledger.md 2>/dev/null", "diff delivery/state.json other.json", "wc -l delivery/ledger.md",
+                            "find delivery -name '*.md'", "git -C delivery push origin epic/x", "turnstile --delivery %s pass pr jsfiller#1 READY" % d,
+                            "sed -n 1,5p delivery/ledger.md", "cat delivery/state.json | jq .prs | grep READY", "git checkout feature/x",
+                            "git stash", "git reset --hard origin/develop", "echo hi > out.txt"])
 
     def test_approve_and_lead_markers_are_blocked_in_every_form(self):
         # R2-1: the lead approves only from the Claude Code prompt with the `!` prefix, outside the model's tool calls.

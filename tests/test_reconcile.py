@@ -106,6 +106,21 @@ class Compare(unittest.TestCase):
     def test_jira_unsynced(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False
         self.assertIn("jira_unsynced", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0))))
+    def test_approval_unlogged_when_ledger_lacks_the_lead_terminal_line(self):
+        d = self.data("READY")
+        d["awaiting_human"] = [{"id": "ah-1", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"},
+                               {"id": "ah-2", "type": "merge", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"},
+                               {"id": "ah-3", "type": "merge", "pr": "jsfiller#1", "approved_at": None}]
+        ledger = ("# Ledger\n\n- 2026-10-13 10:00 UTC approved ah-1 (send jsfiller#1 by lead) approved_via: lead-terminal\n"
+                  "- 2026-10-13 10:01 UTC approved ah-2 (merge jsfiller#1 by lead)\n")
+        props = reconcile.compare_ledger(d, ledger)
+        self.assertEqual([(p.kind, p.pr) for p in props], [("approval_unlogged", "ah-2")])
+        self.assertIn("lead-terminal", props[0].message)
+        props = reconcile.compare_ledger(d, "")
+        self.assertEqual([p.pr for p in props], ["ah-1", "ah-2"])
+        d["awaiting_human"][0]["approved_via"] = "lead-terminal"
+        self.assertEqual([p.pr for p in reconcile.compare_ledger(d, "")], ["ah-1", "ah-2"])  # the field alone proves nothing
+
     def test_compare_never_mutates_state(self):
         d = self.data("READY"); before = json.dumps(d, sort_keys=True)
         reconcile.compare(d, self.facts(head="ffffffff66666666", ci="success"))

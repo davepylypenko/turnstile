@@ -1,4 +1,4 @@
-import copy, json, pathlib
+import copy, json, pathlib, re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from . import rules, state as st_mod, github
@@ -102,8 +102,24 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             out.append(Proposal(pid, "draft_mismatch", "PR is still a draft on GitHub", None))
     return out
 
+APPROVED_LINE = re.compile(r"\bapproved (ah-\d+) \(.*approved_via: lead-terminal")
+
+def compare_ledger(data: dict, ledger_text: str) -> List[Proposal]:
+    """Every approved awaiting_human entry must have a ledger line written by `turnstile approve` from the lead's
+    terminal. An approved_at without that line was written some other way: defence in depth, not proof."""
+    logged = set(APPROVED_LINE.findall(ledger_text or ""))
+    out: List[Proposal] = []
+    for a in data.get("awaiting_human", []):
+        if a.get("approved_at") and a.get("id") not in logged:
+            out.append(Proposal(a.get("id"), "approval_unlogged",
+                                "%s (%s %s) has approved_at %s but no ledger line 'approved %s (…) approved_via: lead-terminal'; "
+                                "the approval did not come through the lead's terminal — the lead decides"
+                                % (a.get("id"), a.get("type"), a.get("pr") or a.get("story"), a.get("approved_at"), a.get("id")), None))
+    return out
+
 def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> int:
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
+    ledger_path = pathlib.Path(delivery) / "ledger.md"
     org = st.data["epic"].get("github_org", "pdffiller")
     facts = {}
     unknown = []
@@ -114,7 +130,7 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
             facts[pid] = github.fetch(pid, org)
         except Exception as e:  # network/gh problems must not hide the rest
             print("WARN %s: %s" % (pid, e)); unknown.append(pid)
-    props = compare(st.data, facts)
+    props = compare(st.data, facts) + compare_ledger(st.data, ledger_path.read_text() if ledger_path.exists() else "")
     rc = 1 if unknown else 0
     if as_json:
         print(json.dumps([p.__dict__ for p in props], indent=2)); return rc

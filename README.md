@@ -99,15 +99,37 @@ exist.
   `mergePullRequest|markPullRequestReadyForReview|requestReviews`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
   `git rebase`, `--no-gpg-sign`, `-c commit.gpgsign=false`, an empty Prometey `service_github_tag=`, a
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
-  `gh api` call, writes to `state.json` through redirection, `sed -i`, `tee`, `python -c`, `cp`/`mv`/`rm`, and every
-  command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the lead's markers; see "How
-  the lead approves"). Global options before the subcommand (`git -C dir`, `git -c k=v`, `gh -R owner/repo`) are covered.
+  `gh api` call, every command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the
+  lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
+  the delivery dir and is not read-only** — read-only means every pipeline segment starts with `cat`, `less`, `head`,
+  `tail`, `grep`, `jq`, `ls`, `find`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
+  `turnstile …` / `python3 -m turnstile_cli …`, and no redirect writes into the delivery dir. `perl -pi`, `node -e`,
+  `ruby -e`, `python3 - <<EOF`, `tee`, `cp`, `mv`, `rm`, `mkdir`, `git add|commit` on the delivery dir are therefore
+  refused, as are `git checkout|restore|stash|reset` that touch it. Reports and briefs go through the Write tool and
+  are committed by the next `turnstile pass`. Global options before the subcommand (`git -C dir`, `git -c k=v`,
+  `gh -R owner/repo`) are covered.
 - `guard_slack.py` blocks every Slack send/draft/schedule unless each PR it mentions has an approved, unused
   `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). It records `used_at` on the entry (one send per approval) and a ledger line;
   missing or broken state fails closed.
 - `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` unless the environment has
   `TURNSTILE_MIGRATION=1`.
+
+### Threat model
+
+The hooks, the ledger and `turnstile reconcile` are **defence in depth, not proof**. Everything runs as one OS user:
+an agent that finds a write path the Bash guard does not recognise can edit `state.json`, and the lead's markers are
+only blocked for commands that pass through the model's tool calls. What holds the line:
+
+- the lead's approval never passes through the model (`!`-prefixed prompt line), so no agent can produce one;
+- every writer the plugin knows (`pass`, `approve`, the Slack PostToolUse hook) leaves a ledger line and a git commit,
+  so a write that did not come through them is visible as drift: `turnstile reconcile` flags every `approved_at` whose
+  ledger line is missing or lacks `approved_via: lead-terminal` (`approval_unlogged`), heads, checks, approvals and
+  threads are compared with GitHub, and `status` lists uncommitted changes in `delivery/`;
+- the Slack guard checks the state **and** the lead confirms every send in the UI; a guard bypass still needs the lead
+  to click.
+
+The residual risk (same OS user, an unrecognised write path) is accepted; it is reviewed, not prevented.
 
 Tests: `python3 -m unittest discover -s tests -v` (stdlib only, no network; a canned `gh` on `PATH` serves the
 end-to-end test).
