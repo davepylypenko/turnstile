@@ -496,3 +496,22 @@ def env(**kw):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+class RealGitCommit(unittest.TestCase):
+    def test_commit_takes_only_the_delivery_dir(self):
+        # R3-6: a pass (or the Slack PostToolUse hook) must not sweep the lead's staged work outside delivery/ into its commit
+        import subprocess
+        ws = pathlib.Path(tempfile.mkdtemp()); d = ws / "delivery"; d.mkdir()
+        g = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        run = lambda *a: subprocess.run(list(a), cwd=str(ws), check=True, capture_output=True, text=True, env=g)
+        run("git", "init", "-q"); run("git", "config", "commit.gpgsign", "false")
+        (ws / "other.md").write_text("x"); (d / "state.json").write_text("{}"); run("git", "add", "."); run("git", "commit", "-qm", "init")
+        (ws / "other.md").write_text("staged by the lead"); run("git", "add", "other.md"); (d / "state.json").write_text('{"a":1}')
+        old = dict(os.environ); os.environ.update(g)
+        try:
+            pass_cmd.IO().git_commit(d, "turnstile: x")
+        finally:
+            os.environ.clear(); os.environ.update(old)
+        files = run("git", "show", "--name-only", "--format=", "HEAD").stdout.split()
+        self.assertEqual(files, ["delivery/state.json"])
+        self.assertIn("M  other.md", run("git", "status", "--porcelain").stdout)

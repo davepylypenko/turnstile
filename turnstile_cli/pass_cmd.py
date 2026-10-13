@@ -38,7 +38,7 @@ class IO:
     """Everything that touches the world; injectable so tests stay offline."""
     def git_commit(self, delivery: pathlib.Path, message: str) -> None:
         subprocess.run(["git", "add", "-A", "."], cwd=str(delivery), check=True, capture_output=True, text=True)
-        r = subprocess.run(["git", "commit", "-q", "-m", message], cwd=str(delivery), capture_output=True, text=True)
+        r = subprocess.run(["git", "commit", "-q", "-m", message, "--", "."], cwd=str(delivery), capture_output=True, text=True)
         if r.returncode != 0:
             subprocess.run(["git", "reset", "-q", "--", "."], cwd=str(delivery), capture_output=True)
             raise TurnstileError((r.stderr or r.stdout).strip()[:300] or "git commit exited %d" % r.returncode)
