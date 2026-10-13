@@ -69,7 +69,7 @@ turnstile/
 **Interfaces:**
 - Produces: `python3 -m turnstile_cli --version` prints `turnstile 0.1.0`; `scripts/turnstile` forwards args; fixture `state_min.json` used by every later test.
 
-- [ ] **Step 1: Write the failing smoke test**
+- [x] **Step 1: Write the failing smoke test**
 
 ```python
 # tests/test_cli_smoke.py
@@ -90,12 +90,12 @@ class CliSmoke(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "turnstile 0.1.0")
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `python3 -m unittest tests.test_cli_smoke -v`
 Expected: FAIL (`No module named turnstile_cli`).
 
-- [ ] **Step 3: Create the package, main, shim, manifest**
+- [x] **Step 3: Create the package, main, shim, manifest**
 
 ```python
 # turnstile_cli/__init__.py
@@ -189,12 +189,12 @@ Fixture (used by every later task; keep exactly these ids):
 }
 ```
 
-- [ ] **Step 4: Run the smoke test**
+- [x] **Step 4: Run the smoke test**
 
 Run: `python3 -m unittest tests.test_cli_smoke -v`
 Expected: 2 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A && git commit -m "feat(cli): package scaffold, shim, plugin manifest, test fixture"
@@ -214,7 +214,7 @@ git add -A && git commit -m "feat(cli): package scaffold, shim, plugin manifest,
   - `state.load(path) -> State`, `state.save(st: State) -> None` (refuses when the on-disk digest differs from `loaded_digest`; raises `StaleStateError`), `state.pr(st, pr_id) -> dict`, `state.story(st, sid) -> dict`, `state.repo_cfg(st, pr_id) -> dict` (repo part before `#`), `state.digest(text) -> str` (sha256 hex).
   - `errors.TurnstileError`, `errors.StaleStateError` in `turnstile_cli/errors.py`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_state.py
@@ -264,11 +264,11 @@ class StateIO(unittest.TestCase):
             state.pr(st, "jsfiller#999")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m unittest tests.test_state -v` — Expected: FAIL (import errors).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # turnstile_cli/errors.py
@@ -360,9 +360,9 @@ def repo_cfg(st: State, pr_id: str) -> dict:
         raise TurnstileError("repo %s is not configured in epic.repos" % repo)
 ```
 
-- [ ] **Step 4: Run tests** — `python3 -m unittest tests.test_state -v` — Expected: 5 PASS.
+- [x] **Step 4: Run tests** — `python3 -m unittest tests.test_state -v` — Expected: 5 PASS.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(state): delivery discovery, JSON state I/O with stale-file guard"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(state): delivery discovery, JSON state I/O with stale-file guard"`
 
 ---
 
@@ -390,7 +390,7 @@ Rules encoded (from spec §3), checked in this order; every evidence head must `
 | APPROVED | from ON_HUMAN_REVIEW; `human.approvals` non-empty; `human.open_threads==0`; `sent_head==head` |
 | MERGED | from APPROVED (or ON_HUMAN_REVIEW when reconcile reports merged) ; `merged_sha` given |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_rules_pr.py
@@ -467,9 +467,9 @@ class NextAction(unittest.TestCase):
         p = pr_with(**FULL); p["state"] = "READY"; self.assertIn("lead", rules.next_action_pr(p, repo))
 ```
 
-- [ ] **Step 2: Run to verify failure** — `python3 -m unittest tests.test_rules_pr -v` — Expected: FAIL (no module `rules`).
+- [x] **Step 2: Run to verify failure** — `python3 -m unittest tests.test_rules_pr -v` — Expected: FAIL (no module `rules`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # turnstile_cli/rules.py
@@ -600,9 +600,9 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
     return "done"
 ```
 
-- [ ] **Step 4: Run tests** — `python3 -m unittest tests.test_rules_pr -v` — Expected: all PASS.
+- [x] **Step 4: Run tests** — `python3 -m unittest tests.test_rules_pr -v` — Expected: all PASS.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(rules): PR transition DoR/DoD checks with head-bound evidence"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(rules): PR transition DoR/DoD checks with head-bound evidence"`
 
 ---
 
@@ -617,7 +617,7 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
 
 Rules (spec §4.2): `PLANNED→IN_PROGRESS` needs `after` stories DONE (unless `reason` = lead override, recorded); `IN_PROGRESS→INTEGRATION_REVIEW` needs every PR with `story==id` in state ≥ READY (READY, ON_HUMAN_REVIEW, REWORK, APPROVED, MERGED) and `evidence.deploy.build` present; `INTEGRATION_REVIEW→ENV_TESTING` needs `evidence.integration_review.clean` and its `head`; `ENV_TESTING→DONE` needs `evidence.env_test` with `cases.fail == 0` and `figma_parity == "pass"`; `DONE` is terminal; any state → `IN_PROGRESS` with `reason` (reopen).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_rules_story.py
@@ -658,9 +658,9 @@ class StoryRules(unittest.TestCase):
         self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, stories, reason="lead: run in parallel"), [])
 ```
 
-- [ ] **Step 2: Run to verify failure** — Expected: AttributeError `check_story`.
+- [x] **Step 2: Run to verify failure** — Expected: AttributeError `check_story`.
 
-- [ ] **Step 3: Implement (append to rules.py)**
+- [x] **Step 3: Implement (append to rules.py)**
 
 ```python
 STORY_FROM = {
@@ -726,9 +726,9 @@ def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
 
 Note for the implementer: `check_story` matches PRs by `p["story"] == story["_id"]`; `pass_cmd` (Task 6) injects `story["_id"] = sid` before calling and strips it before saving. Remove the dead `for pid, p in prs.items(): … pass` loop above — it is not needed; keep only the `mine` computation.
 
-- [ ] **Step 4: Run** — `python3 -m unittest tests.test_rules_story -v` — Expected: PASS. (In the tests, set `s["_id"] = "S1"` inside the `story()` helper so the PR match works: add `s["_id"] = "S1"` after the deepcopy.)
+- [x] **Step 4: Run** — `python3 -m unittest tests.test_rules_story -v` — Expected: PASS. (In the tests, set `s["_id"] = "S1"` inside the `story()` helper so the PR match works: add `s["_id"] = "S1"` after the deepcopy.)
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(rules): story transition checks"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(rules): story transition checks"`
 
 ---
 
@@ -740,7 +740,7 @@ Note for the implementer: `check_story` matches PRs by `p["story"] == story["_id
 **Interfaces:**
 - Produces: `ledger.append(delivery: Path, line: str, when: Optional[datetime]=None) -> None` writes `- <YYYY-MM-DD HH:MM UTC> <line>\n` to `delivery/ledger.md`, creating the file with a `# Ledger` header when absent.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_ledger.py
@@ -759,9 +759,9 @@ class Ledger(unittest.TestCase):
         self.assertTrue(text.endswith("- 2026-10-13 12:00 UTC second\n"))
 ```
 
-- [ ] **Step 2: Run, expect failure.**
+- [x] **Step 2: Run, expect failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # turnstile_cli/ledger.py
@@ -777,7 +777,7 @@ def append(delivery: pathlib.Path, line: str, when: Optional[datetime.datetime] 
         f.write("- %s UTC %s\n" % (when.strftime("%Y-%m-%d %H:%M"), line))
 ```
 
-- [ ] **Step 4: Run, expect PASS.** — [ ] **Step 5: Commit** `git commit -am "feat(ledger): append-only event log"` (after `git add`).
+- [x] **Step 4: Run, expect PASS.** — [ ] **Step 5: Commit** `git commit -am "feat(ledger): append-only event log"` (after `git add`).
 
 ---
 
@@ -810,7 +810,7 @@ Evidence update semantics (`--head` is required for every PR evidence flag; `pr.
 
 After a successful PR transition the command also: recomputes `next_action` for every PR and story; when target is `MERGED`, appends to the ledger which PRs had `blocked_by == ident`; when target is `READY`, appends an `awaiting_human` entry `{id: "ah-<n>", owner: "lead", type: "send", pr: ident, created_at, payload: null, approved_at: null}` if none open for that PR.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 # tests/test_pass.py
@@ -901,9 +901,9 @@ class PassCmd(unittest.TestCase):
         self.assertNotIn("_id", data["stories"]["S1"])
 ```
 
-- [ ] **Step 2: Run, expect failure** (`pass_cmd` missing).
+- [x] **Step 2: Run, expect failure** (`pass_cmd` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # turnstile_cli/pass_cmd.py
@@ -1143,9 +1143,9 @@ if __name__ == "__main__":
 
 (`argparse` stores `--deep-review` as `deep_review`, `--not-clean` as `not_clean`, etc., matching `Options`.)
 
-- [ ] **Step 4: Run** — `python3 -m unittest tests.test_pass tests.test_cli_smoke -v` — Expected: PASS (the `render-board`/`reconcile` branches import modules that do not exist yet; they are only reached when invoked, which these tests do not do).
+- [x] **Step 4: Run** — `python3 -m unittest tests.test_pass tests.test_cli_smoke -v` — Expected: PASS (the `render-board`/`reconcile` branches import modules that do not exist yet; they are only reached when invoked, which these tests do not do).
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(pass): evidence-gated transitions with ledger, board, commit and Jira instruction"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(pass): evidence-gated transitions with ledger, board, commit and Jira instruction"`
 
 ---
 
@@ -1158,7 +1158,7 @@ if __name__ == "__main__":
 - Produces: `board.render(data: dict, delivery: Path) -> Path` — reads `templates/board.html` (next to the package: `pathlib.Path(__file__).resolve().parents[1] / "templates" / "board.html"`), replaces the exact token `/*__TURNSTILE_STATE__*/null` with the JSON of `data` and `__TURNSTILE_UPDATED__` with the UTC timestamp, writes `delivery/board.html`.
 - The template's JS renders: a summary tile row (one tile per PR state with counts, one "Stories" tile, one "Bugs" tile), a "Stories" table (id, title, state, PRs with states, evidence summary, next action), one table per repo (ticket, PR link, Slack link, state badge, AI gate heads, blocked_by, next_action, jira status + synced mark), a "Bugs" tab (id, story, title, source, PR, state, note) and an "Awaiting humans" list (owner, type, pr, created_at, approved?). Bug status dropdowns and the artifact `db` overlay are carried over from the current MYD-16538 board in plan 3 (migration) — here the bugs tab is read-only.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_board.py
@@ -1186,9 +1186,9 @@ class Board(unittest.TestCase):
         self.assertIn("<\\/script>", html)
 ```
 
-- [ ] **Step 2: Run, expect failure.**
+- [x] **Step 2: Run, expect failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # turnstile_cli/board.py
@@ -1304,9 +1304,9 @@ if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (
 
 Note: the GitHub org in `prUrl` is hard-coded to `pdffiller` for now; plan 2 moves it into `epic.github_org` in the state. Add `"github_org": "pdffiller"` to `epic` in the fixture now and read `STATE.epic.github_org || 'pdffiller'` in `prUrl` so the template is already correct.
 
-- [ ] **Step 4: Run** — `python3 -m unittest tests.test_board -v` — Expected: PASS. Open `board.html` from a test run in a browser once and confirm the four tabs render on phone width without horizontal scroll.
+- [x] **Step 4: Run** — `python3 -m unittest tests.test_board -v` — Expected: PASS. Open `board.html` from a test run in a browser once and confirm the four tabs render on phone width without horizontal scroll.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(board): render board.html from state"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(board): render board.html from state"`
 
 ---
 
@@ -1349,9 +1349,9 @@ Comparison rules (in this order per PR, skip MERGED PRs except for `merged` conf
 | `pr.jira.synced == false` | jira_unsynced | `turnstile jira-synced <id> "<status>"` (after the MCP transition) |
 | `facts.draft` and state in (ON_HUMAN_REVIEW, APPROVED) | draft_mismatch | message only |
 
-- [ ] **Step 1: Record the fixture** — run once against a real PR and save the raw `data.repository.pullRequest` object to `tests/fixtures/gh_pr_13222.json` (any real PR works; then edit values so that: `headRefOid` starts with `aaaaaaaa1111`, `merged:false`, one unresolved thread by `lMakDen`, one resolved by `copilot-pull-request-reviewer`, `latestReviews` contains `{"author":{"login":"isachivka"},"state":"APPROVED"}`, rollup `SUCCESS`, a CheckRun `{"name":"pdf-review","conclusion":"SUCCESS"}`).
+- [x] **Step 1: Record the fixture** — run once against a real PR and save the raw `data.repository.pullRequest` object to `tests/fixtures/gh_pr_13222.json` (any real PR works; then edit values so that: `headRefOid` starts with `aaaaaaaa1111`, `merged:false`, one unresolved thread by `lMakDen`, one resolved by `copilot-pull-request-reviewer`, `latestReviews` contains `{"author":{"login":"isachivka"},"state":"APPROVED"}`, rollup `SUCCESS`, a CheckRun `{"name":"pdf-review","conclusion":"SUCCESS"}`).
 
-- [ ] **Step 2: Failing tests**
+- [x] **Step 2: Failing tests**
 
 ```python
 # tests/test_reconcile.py
@@ -1401,9 +1401,9 @@ class Compare(unittest.TestCase):
         self.assertIn("jira_unsynced", [p.kind for p in reconcile.compare(d, self.facts(human_threads_open=0))])
 ```
 
-- [ ] **Step 3: Run, expect failure.**
+- [x] **Step 3: Run, expect failure.**
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```python
 # turnstile_cli/github.py
@@ -1568,9 +1568,9 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
     return 0
 ```
 
-- [ ] **Step 5: Run** — `python3 -m unittest tests.test_reconcile -v` — Expected: PASS.
+- [x] **Step 5: Run** — `python3 -m unittest tests.test_reconcile -v` — Expected: PASS.
 
-- [ ] **Step 6: Commit** — `git add -A && git commit -m "feat(reconcile): GitHub facts adapter and drift proposals"`
+- [x] **Step 6: Commit** — `git add -A && git commit -m "feat(reconcile): GitHub facts adapter and drift proposals"`
 
 ---
 
@@ -1579,7 +1579,7 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
 **Files:**
 - Create: `tests/test_e2e.py`
 
-- [ ] **Step 1: Write the test** (uses the shim, a temp workspace with `.turnstile`, a git repo so the commit side effect runs for real, and `--no-commit` where git is not wanted)
+- [x] **Step 1: Write the test** (uses the shim, a temp workspace with `.turnstile`, a git repo so the commit side effect runs for real, and `--no-commit` where git is not wanted)
 
 ```python
 # tests/test_e2e.py
@@ -1620,9 +1620,9 @@ class E2E(unittest.TestCase):
 
 `status` calls `github.fetch`, which needs network: in the test environment `gh` fails and `cli` prints `WARN` lines and continues, so the assertion still holds. If `gh` is absent entirely, `subprocess` raises `FileNotFoundError`, which the `except Exception` in `cli` also catches.
 
-- [ ] **Step 2: Run** — `python3 -m unittest discover -s tests -v` — Expected: all PASS.
+- [x] **Step 2: Run** — `python3 -m unittest discover -s tests -v` — Expected: all PASS.
 
-- [ ] **Step 3: Commit** — `git add -A && git commit -m "test: end-to-end CLI path"`
+- [x] **Step 3: Commit** — `git add -A && git commit -m "test: end-to-end CLI path"`
 
 ---
 
@@ -1656,7 +1656,7 @@ class E2E(unittest.TestCase):
 
 `guard_state_edit.py`: if `tool_input.file_path` ends with `/state.json` under a delivery dir, print on stdout `turnstile: state.json is written only by 'turnstile pass'; run 'turnstile reconcile' to see what you broke` and exit 0 (warning, not block — the file may be edited deliberately during migration).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 # tests/test_hooks.py
@@ -1714,9 +1714,9 @@ class Hooks(unittest.TestCase):
         self.assertEqual(r.returncode, 0); self.assertIn("turnstile pass", r.stdout)
 ```
 
-- [ ] **Step 2: Run, expect failure.**
+- [x] **Step 2: Run, expect failure.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # hooks/_common.py
@@ -1826,9 +1826,9 @@ if __name__ == "__main__":
 
 Note: the approval for `send` is set by `turnstile pass pr <id> ON_HUMAN_REVIEW … --approved <ah-id>`, which happens *after* the Slack message exists (it needs the permalink). Order in the skill (plan 2): the lead says "send" → the orchestrator runs `turnstile approve <ah-id>` (tiny subcommand: sets `approved_at`, commits; add it to `pass_cmd.py` as `approve(delivery, ah_id, io)` and wire `turnstile approve <id>` in `main.py` in this task) → the Slack guard lets the message through → `pass … ON_HUMAN_REVIEW --slack <permalink> --approved <ah-id>`. Add a test to `tests/test_pass.py`: `test_approve_sets_approved_at`.
 
-- [ ] **Step 4: Run** — `python3 -m unittest discover -s tests -v` — Expected: all PASS.
+- [x] **Step 4: Run** — `python3 -m unittest discover -s tests -v` — Expected: all PASS.
 
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "feat(hooks): bash, slack and state-edit guards; turnstile approve"`
+- [x] **Step 5: Commit** — `git add -A && git commit -m "feat(hooks): bash, slack and state-edit guards; turnstile approve"`
 
 ---
 
@@ -1837,7 +1837,7 @@ Note: the approval for `send` is set by `turnstile pass pr <id> ON_HUMAN_REVIEW 
 **Files:**
 - Modify: `README.md` (add "Usage" with the four commands and the hook list), `turnstile_cli/__init__.py` stays `0.1.0`.
 
-- [ ] **Step 1:** Add to README after "What you get":
+- [x] **Step 1:** Add to README after "What you get":
 
 ```markdown
 ## Usage (core)
@@ -1856,7 +1856,7 @@ turnstile render-board
 Exit code 2 and `MISSING …` lines mean the turnstile did not turn: nothing was written.
 ```
 
-- [ ] **Step 2:** `git add -A && git commit -m "docs: core usage" && git tag v0.1.0-core`
+- [x] **Step 2:** `git add -A && git commit -m "docs: core usage" && git tag v0.1.0-core`
 
 ---
 
@@ -1866,3 +1866,14 @@ Exit code 2 and `MISSING …` lines mean the turnstile did not turn: nothing was
 - **Placeholders:** none; the one "note for the implementer" in Task 4 removes a dead loop and is explicit.
 - **Type consistency:** `Options` field names equal argparse dests (`deep_review`, `not_clean`, `open_threads`, `cases_pass`, `cases_fail`, `figma_parity`, `merged_sha`, `no_commit`); `IO.renderer(data, delivery)` signature is the same in Task 6 and the fake in tests; `PrFacts` fields used in `reconcile.compare` exist in `github.PrFacts`; `rules.same_head` used by board JS is re-implemented in JS with the same prefix semantics.
 - **Review Focus:** 1 → Task 3 head tests; 2 → Task 3 `test_copilot_required_only_when_enabled`; 3 → Task 3 `test_push_after_send_voids` + Task 8 `test_push_after_send_proposes_rework`; 4 → Task 2 `test_save_refuses_stale_file` + Task 6 `test_pass_refuses_stale_file`; 5 → Task 10 `test_slack_fails_closed_on_broken_state`.
+
+## Deviations
+
+- Task 6: `--gate name:result:run` keeps `:` inside the run URL (`":".join(parts[2:])`); the plan's `parts[2]` would truncate `https://…`.
+- Task 6: `_apply_pr_evidence` keeps an already-set `approved_at` on the awaiting entry (set earlier by `turnstile approve`) instead of overwriting it.
+- Task 7: no browser check; the four tabs/panes, viewport meta, scroll wrappers and absence of fixed widths were verified with a Python DOM check on the rendered HTML.
+- Task 8: fixture `headRefOid` starts with the full 16-char state head `aaaaaaaa11111111`, not only `aaaaaaaa1111`: a 12-char prefix is not `same_head` with the 16-char state head. Recorded from jsfiller#13222; contexts trimmed to six, the real `pdf-review` StatusContext replaced by the CheckRun the plan asks for.
+- Task 9: `test_status_without_network` runs the shim with a PATH that has no `gh` and asserts the `WARN` line; the plan assumed `gh` fails in the test environment, but on an authenticated machine it queried GitHub for real.
+- Task 9: commit 47c9700 landed with that test still red (grep masked the exit code); fixed forward in 0afc7b7, no force-push.
+- Task 10: `guard_slack` points to `turnstile approve <ah-id>` (the order in the plan's note), not `turnstile pass … --approved`.
+- Task 10: `turnstile approve` is idempotent (already approved → `OK`, exit 0); unknown id → `MISSING`, exit 2.

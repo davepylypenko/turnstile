@@ -20,6 +20,35 @@ command, role-scoped agents and hooks that physically block forbidden actions.
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
   anything reaches human review.
 
+## Usage (core)
+
+```
+echo delivery > .turnstile                      # workspace root → delivery dir
+turnstile status                                # reconcile with GitHub + where we are
+turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
+turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
+turnstile approve ah-3                          # the lead said "send"
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka --approved ah-3
+turnstile jira-synced jsfiller#13222 "On Review"
+turnstile render-board
+```
+
+Exit code 2 and `MISSING …` lines mean the turnstile did not turn: nothing was written.
+
+Commands: `pass` (the only writer of `state.json`), `reconcile` (read-only drift check against GitHub, `--json`),
+`status` (reconcile + next actions + what awaits humans), `render-board`, `approve`, `jira-synced`.
+
+Hooks (`hooks/hooks.json`, apply to subagents too):
+
+- `guard_bash.py` blocks `gh pr merge`, `gh pr ready`, `--add-reviewer`, human `requested_reviewers` requests (Copilot allowed),
+  `git push --force*`/`-f`, `git rebase`, `--no-gpg-sign`, `Co-Authored-By`, the "Generated with" footer and an empty
+  Prometey `service_github_tag=`.
+- `guard_slack.py` blocks every Slack send unless each PR it mentions has an approved `send`/`reply` entry in
+  `awaiting_human` (and, for `send`, the PR is `READY`); missing or broken state fails closed.
+- `guard_state_edit.py` warns after a manual edit of `state.json`.
+
+Tests: `python3 -m unittest discover -s tests -v` (stdlib only, no network).
+
 Design spec: [`docs/superpowers/specs/2026-10-13-turnstile-design.md`](docs/superpowers/specs/2026-10-13-turnstile-design.md).
 
 ## Status
