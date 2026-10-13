@@ -8,15 +8,53 @@
     "nodes": [
       {
         "author": {
+          "__typename": "User",
           "login": "isachivka"
         },
-        "state": "APPROVED"
+        "state": "APPROVED",
+        "commit": {
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812"
+        }
       },
       {
         "author": {
+          "__typename": "User",
           "login": "Snyk-Agent"
         },
-        "state": "COMMENTED"
+        "state": "COMMENTED",
+        "commit": {
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812"
+        }
+      },
+      {
+        "author": {
+          "__typename": "Bot",
+          "login": "github-actions"
+        },
+        "state": "APPROVED",
+        "commit": {
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812"
+        }
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "oldhand"
+        },
+        "state": "APPROVED",
+        "commit": {
+          "oid": "0000000011111111aaa0288e05b49fa4583d8812"
+        }
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "sonarqubecloud"
+        },
+        "state": "APPROVED",
+        "commit": {
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812"
+        }
       }
     ]
   },
@@ -28,6 +66,7 @@
           "nodes": [
             {
               "author": {
+                "__typename": "User",
                 "login": "lMakDen"
               }
             }
@@ -40,7 +79,34 @@
           "nodes": [
             {
               "author": {
+                "__typename": "User",
                 "login": "copilot-pull-request-reviewer"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "isResolved": false,
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "User",
+                "login": "application-pdffiller"
               }
             }
           ]
@@ -85,8 +151,13 @@
                   "conclusion": "SUCCESS",
                   "status": "COMPLETED"
                 }
-              ]
+              ],
+              "totalCount": 6
             }
+          },
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812",
+          "signature": {
+            "isValid": true
           }
         }
       }
