@@ -1877,3 +1877,8 @@ Exit code 2 and `MISSING …` lines mean the turnstile did not turn: nothing was
 - Task 9: commit 47c9700 landed with that test still red (grep masked the exit code); fixed forward in 0afc7b7, no force-push.
 - Task 10: `guard_slack` points to `turnstile approve <ah-id>` (the order in the plan's note), not `turnstile pass … --approved`.
 - Task 10: `turnstile approve` is idempotent (already approved → `OK`, exit 0); unknown id → `MISSING`, exit 2.
+- Post-review (2026-10-13): the whole-branch review in `docs/superpowers/reviews/2026-10-13-core-review.md` changed the
+  Task 3/4/6/8/10 contracts (lead-approved `awaiting_human` entries consumed by `pass`, GitHub head verification with
+  `--offline`, atomic side effects, `rework_since`, story `start_story`/`story_done` entries, dry-run reconcile proposals,
+  PreToolUse state-edit guard, `TURNSTILE_LEAD=1` for `approve`). The review's `## Resolution` table maps each finding to
+  its commit; the README "Usage (core)" section is the current contract.

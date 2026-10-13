@@ -207,3 +207,36 @@ No 3.10+ syntax was found (no `|` unions, no `match`, no runtime `list[...]`/`di
 | Story ENV_TESTING: integration_review clean + head | `rules.py:158-162` | `test_to_env_testing` |
 | Story DONE: report, fail 0, Figma parity | `rules.py:163-172` | `test_to_done_requires_clean_env_test` (bypass: finding 10) |
 | Story DONE: lead "send"; stop rule | missing (finding 10, 11) | none |
+
+## Resolution (2026-10-13)
+
+Every blocker, major, minor and nit was addressed; nothing was deferred. Suite: 52 → 119 tests, green on Python 3.9.6.
+
+| # | Finding | Resolution | Commit |
+|---|---|---|---|
+| 1 | `--approved` not verified, pass approves | `rules.check_approved_entry`: entry must exist, match type (`send` from READY / `reply` from REWORK) and PR, be approved by `turnstile approve`, not consumed, not voided; the pass sets `consumed_at`; `pass` never writes `approved_at` | `04a0537` |
+| 2 | `turnstile approve` not gated on the lead | CLI refuses without `TURNSTILE_LEAD=1` in the environment; Bash guard blocks any `turnstile`/`turnstile_cli … approve` without the literal `TURNSTILE_LEAD=1` in the same command (README documents that the lead types it) | `04a0537`, `7c7bd36` |
+| 3 | Evidence bound to the stored head, not GitHub's | Every PR pass calls `IO.github_head` (injectable, `github.fetch`); mismatch or `gh` failure refuses; `--offline` prints `WARN`, records `evidence.head_verified: false`, and `rules` requires `head_verified` true for the current head at READY/ON_HUMAN_REVIEW | `04a0537` |
+| 4 | Atomicity | validate → render board in memory → `state.save` (stale check) → ledger → board → `git commit`; on failure restore all three files from the snapshot, exit 2 `MISSING git commit failed: …`; JIRA/BOARD/OK print after the commit; MERGED ledger lines are collected, not appended early; `approve` and `jira-synced` share the path | `04a0537` |
+| 5 | REWORK → ON_HUMAN_REVIEW demanded a new deep review | `rework_since` marker set on REWORK; `_ai_review_done` skips `deep_review` when it is set; gate/copilot/ci still required on the new head; an approved `reply` entry is required | `04a0537` |
+| 6 | No `reply` entry; approvals unlimited | REWORK opens `type: reply`; Slack guard allows one message per approval by writing `used_at`/`used_channel` and a ledger line, checks `channel_id` against `epic.repos[repo].slack`, `send` only for READY and `reply` only for REWORK, consumed/voided entries do not unlock | `04a0537`, `7c7bd36` |
+| 7 | Reconcile proposed refused commands | AI_REVIEW re-enters itself for a new head; every proposal is dry-run through `_apply_pr_evidence` + `rules.check_pr` on a copy and dropped (with the refusal text) when it would fail; `--ci` only for success/failure; REWORK/DEV get notes; MERGED proposed only from APPROVED, otherwise an anomaly | `2f0d79e` |
+| 8 | GraphQL bot detection | `author{__typename login}` on reviews and thread comments; `__typename == Bot`, `[bot]`, Copilot, `Snyk-Agent`, `sonarqube*`, `application-pdffiller` ignored | `2f0d79e` |
+| 9 | `changes_requested` unused; stale approvals | `changes_requested` proposal → REWORK; `latestReviews{commit{oid}}`, approvals count only for the current head | `2f0d79e` |
+| 10 | Story DONE bypass | `--cases-pass`/`--cases-fail`/`--figma-parity` all required to record `env_test`; `cases.fail` must be present and 0; ENV_TESTING and DONE re-check PRs ≥ READY; open bugs of the story block; approved `story_done` entry (opened on entering ENV_TESTING) required and consumed | `04a0537` |
+| 11 | Stop rule / plan approval not enforced | PLANNED → IN_PROGRESS needs an approved `start_story` entry (opened automatically when `after` stories are DONE) or a `--reason` naming the lead (`\blead\b`); reopen needs any reason and does not skip `after` | `04a0537` |
+| 12 | Bash guard bypasses | `GIT`/`GH` prefixes with global options; REST `pulls/N/merge` writes, GraphQL `mergePullRequest|markPullRequestReadyForReview|requestReviews`, `ready_for_review`, `commit.gpgsign=false`; `requested_reviewers` writes allow only Copilot values and refuse `--input`; trailer/footer rules scoped to `git commit`, `gh pr create|edit`, `gh api`; GETs pass | `7c7bd36` |
+| 13 | `guard_state_edit` ineffective | Now PreToolUse, exit 2 with stderr for `Edit|Write|MultiEdit` on `state.json` unless `TURNSTILE_MIGRATION=1`; Bash guard blocks `state.json` writes via redirection, `sed -i`, `tee`, `python -c`, `cp|mv|rm|install|truncate|dd` unless the command carries `TURNSTILE_MIGRATION=1` | `7c7bd36` |
+| 14 | Stale guard single-process, truncating write | `state.write_atomic` (temp + `os.replace`), `state.locked()` flock on `state.json` from load to commit (also in the Slack guard), `delivery/.gitattributes` with `ledger.md merge=union`; test with two `State` objects | `f2612e0`, `04a0537` |
+| 15 | MERGED from ON_HUMAN_REVIEW; AI_REVIEW from ON_HUMAN_REVIEW | `PR_FROM`: MERGED only from APPROVED; AI_REVIEW from DEV/AI_REVIEW/REWORK/READY | `04a0537` |
+| 16 | Report files unchecked | `--deep-review`/`--report` must exist under `delivery/` | `04a0537` |
+| 17 | Pending checks counted as red | failure/cancelled/timed_out/action_required/error → red; pending/in_progress/queued → pending; duplicates keep the worst; `contexts(first:100){totalCount}` and `gate_unknown` when truncated | `2f0d79e` |
+| 18 | DoR/DoD gaps | `commits{signature{isValid}}` → `unsigned` proposal; board legend with the Jira mapping and a Note column (`reviewer not notified` on REWORK, `last_reason`); MERGED side effect re-evaluates stories (ledger note); Jira status itself stays outside the CLI (no API token by decision, spec §11) | `2f0d79e`, `fa2e596` |
+| 19 | Integration review head bound to nothing | `deploy.head` recorded at INTEGRATION_REVIEW (`--head` required); ENV_TESTING and DONE require `integration_review.head == deploy.head` | `04a0537` |
+| 20 | Untested transitions | Tests for APPROVED/MERGED/DEV/REWORK-without-reason, ci failure, deep review not clean, gate fail and name mismatch, reopen without reason, uppercase heads, reconcile `ci_red`/`draft_mismatch`/`copilot_thread`/`unsigned`/`gate_unknown`/`changes_requested` | `04a0537`, `2f0d79e` |
+| 21 | `reconcile`/`status` exit 0 on gh failure | exit 1 when facts are missing for any open PR, with a closing line naming them | `04a0537` |
+| 22 | `find_delivery`/`_next_ah_id` crashes | empty marker → `TurnstileError`; ids that are not `ah-<n>` are skipped | `f2612e0`, `04a0537` |
+| 23 | Non-hex heads | `rules.valid_head` (`[0-9a-f]{8,40}`) enforced on `--head` | `04a0537` |
+| 24 | Board badges, merged colour, `cases` crash, tabs a11y | colours for story and bug states, `--merged` readable, `cases` guarded, `role=tablist/tab` + `aria-selected` | `fa2e596` |
+| 25 | Malformed payload passes; `python3` missing fails open | non-object payloads and missing `tool_input.command` block; every hook command ends with `\|\| exit 2` | `7c7bd36` |
+| 26 | `jira-synced` accepts any status | validated against `JIRA_FOR_PR_STATE[pr.state]` | `04a0537` |
