@@ -42,3 +42,23 @@ class StateIO(unittest.TestCase):
         self.assertFalse(state.repo_cfg(st, "jsfiller#1")["copilot"])
         with self.assertRaises(TurnstileError):
             state.pr(st, "jsfiller#999")
+
+    def test_two_loaders_second_save_is_stale(self):
+        a = state.load(self.delivery / "state.json"); b = state.load(self.delivery / "state.json")
+        a.data["prs"]["jsfiller#1"]["state"] = "READY"; state.save(a)
+        b.data["prs"]["jsfiller#1"]["state"] = "DEV"
+        with self.assertRaises(StaleStateError):
+            state.save(b)
+        self.assertEqual(json.loads((self.delivery / "state.json").read_text())["prs"]["jsfiller#1"]["state"], "READY")
+        self.assertEqual([p.name for p in self.delivery.iterdir() if p.name.startswith("state.json")], ["state.json"])  # no temp left
+
+    def test_lock_is_exclusive(self):
+        with state.locked(self.delivery):
+            with self.assertRaises(TurnstileError):
+                with state.locked(self.delivery, wait=False):
+                    pass
+
+    def test_empty_marker_is_an_error(self):
+        (self.tmp / ".turnstile").write_text("\n")
+        with self.assertRaises(TurnstileError):
+            paths.find_delivery(self.tmp, None)
