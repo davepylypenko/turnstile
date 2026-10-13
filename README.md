@@ -89,7 +89,7 @@ against the PR's state).
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
---approved <ah-id>`, `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--offline`, `--no-commit`.
+--approved <ah-id>`, `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
 `--report --cases-pass N --cases-fail N --figma-parity pass|fail`. Report paths are relative to `delivery/` and must
 exist.
@@ -104,7 +104,9 @@ exist.
   `mergePullRequest|markPullRequestReadyForReview|requestReviews`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
   `git rebase`, `--no-gpg-sign`, `-c commit.gpgsign=false`, an empty Prometey `service_github_tag=`, a
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
-  `gh api` call, every command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the
+  `gh api` call — also when they sit in a file given with `-F`/`--file`/`--body-file`/`--input` (the hook reads it) —
+  `gh api graphql` with `query=@file` or `--input` (a mutation in a file), `git config pull.rebase true`, the spaced
+  `service_github_tag ''` form, every command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the
   lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
   the delivery dir and is not read-only** — read-only means every pipeline segment starts with `cat`, `less`, `head`,
   `tail`, `grep`, `jq`, `ls`, `find`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
@@ -115,7 +117,9 @@ exist.
   `gh -R owner/repo`) are covered.
 - `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
   unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
-  channel (`epic.repos.<repo>.slack`). It only checks; missing or broken state fails closed.
+  channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside
+  `epic.repos`) needs no entry of its own when the send entry lists it in `companions` (`pass pr <main> READY
+  --companions locales#5`); every refusal names the id it is about. It only checks; missing or broken state fails closed.
 - `post_slack.py` (PostToolUse, same matcher) records the send once the tool result carries a `message_ts`: `used_at`,
   `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
   of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's

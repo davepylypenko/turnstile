@@ -30,6 +30,7 @@ class Options:
     cases_pass: Optional[int] = None
     cases_fail: Optional[int] = None
     figma_parity: Optional[str] = None
+    companions: Optional[str] = None
     offline: bool = False
     no_commit: bool = False
 
@@ -271,7 +272,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if target == "ON_HUMAN_REVIEW":
                     rules.find_entry(awaiting, o.approved)["consumed_at"] = _now()
                 if target == "READY" and not _has_open_entry(data, "send", "pr", ident):
-                    _open_entry(data, "send", pr=ident, head=pr.get("head"))
+                    extra_keys = {"companions": [x for x in o.companions.split(",") if x]} if o.companions else {}
+                    _open_entry(data, "send", pr=ident, head=pr.get("head"), **extra_keys)
                 if target == "AI_REVIEW" and src == "READY":
                     for a in awaiting:
                         if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):

@@ -1,4 +1,4 @@
-import re, sys
+import pathlib, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, block
 
@@ -15,10 +15,12 @@ RULES = [
     ("add-reviewer", r"--add-reviewer\b"),
     ("graphql-merge-or-ready", r"\b(?:markPullRequestReadyForReview|mergePullRequest|requestReviews|ready_for_review)\b"),
     ("force-push", GIT + r"push\b[^\n;&|]*(\s[\"']?--force(-with-lease)?\b|\s-[a-z]*f[a-z]*\b|\s\+\S)"),
-    ("rebase", GIT + r"rebase\b|" + GIT + r"pull\b[^\n;&|]*\s(?:--rebase\b|-r\b)"),
+    ("rebase", GIT + r"rebase\b|" + GIT + r"pull\b[^\n;&|]*\s(?:--rebase\b|-r\b)|pull\.rebase\s+true\b"),
     ("unsigned", r"--no-gpg-sign\b|commit\.gpgsign\s*=\s*false"),
-    ("empty-variant-tag", r"service_github_tag=(?:''|\"\"|(?=[\"']?(?:\s|&|$)))"),
+    ("empty-variant-tag", r"service_github_tag=(?:''|\"\"|(?=[\"']?(?:\s|&|$)))|service_github_tag\s+(?:''|\"\")"),
+    ("graphql-file", r"\bgraphql\b[^\n;&|]*(?:query=@|--input\b)|(?:query=@|--input\b)[^\n;&|]*\bgraphql\b"),
 ]
+FILE_ARG = re.compile(r"(?:^|\s)(?:-F|--file|--body-file|--input)(?:=|\s+)[\"']?([^\s\"']+)")
 # a PR/commit write: the only places where a trailer or the footer can land
 WRITE_CTX = re.compile(GIT + r"commit\b|" + GH + PR + r"(?:create|edit)\b|" + GH + r"api\b", re.I)
 CONTENT_RULES = [("trailer", r"Co-Authored-By"), ("footer", r"Generated with \[Claude Code\]")]
@@ -95,11 +97,26 @@ def _delivery_matcher(cwd: str):
         return ""
     return mention
 
+def _file_contents(flat: str, cwd: str):
+    """Text of every file a write command points at with -F/--file/--body-file/--input (R2-11); missing files are skipped."""
+    for name in FILE_ARG.findall(flat):
+        p = pathlib.Path(name) if pathlib.Path(name).is_absolute() else pathlib.Path(cwd or ".") / name
+        try:
+            if p.is_file() and p.stat().st_size < 1_000_000:
+                yield name, p.read_text(errors="replace")
+        except OSError:
+            continue
+
 def check(cmd: str, cwd: str = ".") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
     for flat in (joined, stripped, re.sub(r"\s+", " ", stripped)):
         _check(flat)
+    if WRITE_CTX.search(stripped):
+        for name, text in _file_contents(stripped, cwd):
+            for rule, rx in CONTENT_RULES:
+                if re.search(rx, text, re.I):
+                    block("blocked by rule %s. %s carries it: commits carry no trailer and PR bodies no generated-with footer." % (rule, name))
     flat = re.sub(r"[ \t]+", " ", stripped)
     mention_fn = _delivery_matcher(cwd)
     mention = mention_fn(flat)

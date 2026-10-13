@@ -76,6 +76,22 @@ class BashGuard(unittest.TestCase):
                             "mv tmp.json delivery/state.json", "rm delivery/state.json", "python -c 'open(\"state.json\",\"w\")'"], "delivery-write")
         self.assertAllowed(["echo delivery > .turnstile", "python3 -c 'print(1)' > out.txt", "sed -i '' s/a/b/ README.md"])
 
+    def test_content_in_files_and_file_queries(self):
+        # R2-11: a trailer, footer or mutation that lives in a file the command points at
+        (self.ws / "trailer.txt").write_text("fix: x\n\nCo-Authored-By: Claude <n@a>\n")
+        (self.ws / "footer.md").write_text("Scope: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n")
+        (self.ws / "clean.txt").write_text("fix: x\n")
+        (self.ws / "body.json").write_text('{"body": "Generated with [Claude Code]"}')
+        self.assertBlocked(["git commit -F trailer.txt", "git commit --file=trailer.txt", "git commit -S --file trailer.txt"], "trailer")
+        self.assertBlocked(["gh pr create --title x --body-file footer.md", "gh pr edit 1 --body-file=footer.md",
+                            "gh api -X PATCH repos/o/r/pulls/1 --input body.json"], "footer")
+        self.assertBlocked(["gh api graphql -F query=@m.graphql", "gh api graphql --input q.json", "gh api graphql -f query=@m.graphql -F n=1"], "graphql-file")
+        self.assertBlocked(["git config pull.rebase true", "git config --global pull.rebase true"], "rebase")
+        self.assertBlocked(["gh workflow run x -f service_github_tag ''", 'prometey ensure --service_github_tag "" --x 1',
+                            "gh workflow run x --field service_github_tag=\"\" -f y=1"], "empty-variant-tag")
+        self.assertAllowed(["git commit -F clean.txt", "git commit -F missing.txt", "gh pr create --title x --body-file clean.txt",
+                            "gh api graphql -f query='query{viewer{login}}'", "git config pull.rebase false", "gh api -F n=1 repos/o/r/pulls/1"])
+
     def test_delivery_dir_writes_blocked_through_any_interpreter(self):
         # R2-2: a command that mentions state.json or the delivery dir and is not read-only is refused, whatever the tool
         d = str(self.ws / "delivery")
@@ -212,6 +228,19 @@ class SlackGuard(unittest.TestCase):
         self.ready_with()
         two = self.MSG + "\nLocales: <https://github.com/pdffiller/docs-platform/pull/2>"
         self.assertEqual(self.slack(two).returncode, 2)
+
+    def test_unknown_ids_are_named_and_companions_are_allowed(self):
+        # R2-12: a paired locales PR or a repo missing from epic.repos must not surface as "cannot read the delivery state"
+        self.ready_with()
+        paired = self.MSG + "\nLocales: <https://github.com/pdffiller/locales/pull/5>"
+        r = self.slack(paired); self.assertEqual(r.returncode, 2)
+        self.assertIn("locales#5", r.stderr); self.assertIn("not in epic.repos", r.stderr); self.assertNotIn("cannot read", r.stderr)
+        r = self.slack(self.MSG + " and jsfiller#99"); self.assertEqual(r.returncode, 2)
+        self.assertIn("no usable (approved, unused) send/reply for jsfiller#99", r.stderr)
+        self.ready_with(companions=["locales#5"])
+        r = self.slack(paired); self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.post(paired, '{"ok":true,"message_ts":"1760000000.9"}'); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.9")
 
     def test_schedule_and_draft_are_guarded_too(self):
         self.ready_with()

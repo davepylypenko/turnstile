@@ -15,7 +15,8 @@ def build_parser():
                      ("--reviewers", {}), ("--approved", {}), ("--approvals", {}), ("--open-threads", {"type": int}),
                      ("--reason", {}), ("--merged-sha", {}), ("--report", {}), ("--build", {}),
                      ("--cases-pass", {"type": int}), ("--cases-fail", {"type": int}),
-                     ("--figma-parity", {"choices": ["pass", "fail"]})]:
+                     ("--figma-parity", {"choices": ["pass", "fail"]}),
+                     ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
     ps.add_argument("--offline", action="store_true", help="skip the GitHub head check (loud WARN; READY/ON_HUMAN_REVIEW stay refused)")

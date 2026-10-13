@@ -104,6 +104,11 @@ class PassCmd(unittest.TestCase):
         self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
+    def test_ready_can_declare_companion_prs_on_the_send_entry(self):
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "READY", opts(companions="locales#5,locales#6", **READY_OPTS), self.io)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.data()["awaiting_human"][0]["companions"], ["locales#5", "locales#6"])
+
     def test_head_change_voids_old_evidence_and_open_send(self):
         self.to_ready()
         self.io.heads["jsfiller#1"] = H2

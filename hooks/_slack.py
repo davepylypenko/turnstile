@@ -20,21 +20,32 @@ def usable(entry: dict, pid: str, prs: dict) -> bool:
             and prs.get(pid, {}).get("state") == STATE_FOR_TYPE[entry["type"]])
 
 def choose(data: dict, ids, channel: str) -> dict:
-    """pid -> the approved, unused send/reply entry that allows this message; blocks (exit 2) when any PR lacks one."""
+    """pid -> the approved, unused send/reply entry that allows this message; blocks (exit 2) when any PR lacks one.
+    A PR listed in a chosen entry's `companions` (a paired locales PR, a repo outside epic.repos) needs no entry of
+    its own (R2-12); every refusal names the id it is about."""
     prs, repos = data["prs"], data["epic"]["repos"]
     awaiting = data.get("awaiting_human", [])
-    chosen = {}
+    chosen, companions = {}, set()
     for pid in sorted(ids):
-        want = repos[pid.split("#", 1)[0]].get("slack")
-        if not want or channel != want:
-            block("channel %s is not the review channel of %s (%s); nothing sent." % (channel or "?", pid, want or "unset"))
-        used = [a for a in awaiting if a.get("pr") == pid and a.get("type") in STATE_FOR_TYPE and a.get("approved_at") and a.get("used_at")]
         entry = next((a for a in awaiting if usable(a, pid, prs)), None)
-        if entry is None:
-            hint = " (%s already used at %s: one send per approval)" % (used[-1]["id"], used[-1]["used_at"]) if used else ""
-            block("no usable (approved, unused) send/reply for %s in awaiting_human (state %s)%s. %s"
-                  % (pid, prs.get(pid, {}).get("state"), hint, LEAD_HINT))
-        chosen[pid] = entry
+        if entry is not None:
+            chosen[pid] = entry; companions.update(entry.get("companions") or [])
+    for pid in sorted(ids):
+        if pid in chosen:
+            want = repos.get(pid.split("#", 1)[0], {}).get("slack")
+            if not want or channel != want:
+                block("channel %s is not the review channel of %s (%s); nothing sent." % (channel or "?", pid, want or "unset"))
+            continue
+        if pid in companions:
+            continue
+        repo = pid.split("#", 1)[0]
+        if repo not in repos:
+            block("%s: repo %s is not in epic.repos. A paired PR goes into the send entry's companions "
+                  "(turnstile pass pr <main> READY --companions %s); nothing sent." % (pid, repo, pid))
+        used = [a for a in awaiting if a.get("pr") == pid and a.get("type") in STATE_FOR_TYPE and a.get("approved_at") and a.get("used_at")]
+        hint = " (%s already used at %s: one send per approval)" % (used[-1]["id"], used[-1]["used_at"]) if used else ""
+        block("no usable (approved, unused) send/reply for %s in awaiting_human (state %s)%s. %s"
+              % (pid, prs.get(pid, {}).get("state"), hint, LEAD_HINT))
     return chosen
 
 def message_text(ti: dict) -> str:
