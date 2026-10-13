@@ -167,3 +167,23 @@ def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO
     io.git_commit(delivery, "turnstile: jira %s → %s" % (pr["ticket"], status))
     print("OK jira %s synced" % ident)
     return 0
+
+def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
+    """The lead said the word for an awaiting_human entry: record approved_at so the Slack guard lets it through."""
+    io = io or IO()
+    try:
+        st = st_mod.load(pathlib.Path(delivery) / "state.json")
+        entry = next((a for a in st.data.get("awaiting_human", []) if a.get("id") == ah_id), None)
+        if entry is None:
+            raise TurnstileError("unknown awaiting_human id %s" % ah_id)
+        if entry.get("approved_at"):
+            print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
+        entry["approved_at"] = _now()
+        st_mod.save(st)
+        summary = "approved %s (%s %s by %s)" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"), entry.get("owner"))
+        ledger.append(delivery, summary)
+        io.git_commit(delivery, "turnstile: " + summary)
+        print("OK " + summary)
+        return 0
+    except TurnstileError as e:
+        print("MISSING %s" % e); return 2

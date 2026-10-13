@@ -20,6 +20,7 @@ def build_parser():
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
 
     js = sub.add_parser("jira-synced", help="record that the Jira transition was performed"); js.add_argument("ident"); js.add_argument("status")
+    ap = sub.add_parser("approve", help="record the lead's approval of an awaiting_human entry"); ap.add_argument("ah_id")
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
     sub.add_parser("status", help="reconcile + where we are")
@@ -40,6 +41,9 @@ def main(argv=None):
         if a.cmd == "jira-synced":
             from .pass_cmd import jira_synced
             return jira_synced(delivery, a.ident, a.status)
+        if a.cmd == "approve":
+            from .pass_cmd import approve
+            return approve(delivery, a.ah_id)
         if a.cmd == "render-board":
             from . import board, state
             board.render(state.load(delivery / "state.json").data, delivery)

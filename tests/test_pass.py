@@ -83,3 +83,17 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(data["stories"]["S1"]["state"], "INTEGRATION_REVIEW")
         self.assertEqual(data["stories"]["S1"]["evidence"]["deploy"]["build"], "173111")
         self.assertNotIn("_id", data["stories"]["S1"])
+
+    def test_approve_sets_approved_at(self):
+        pass_cmd.run(self.d, "pr", "jsfiller#1", "READY",
+                     opts(head=H, ci="success", deep_review="reports/R.md", rounds=1, gate="pdf-review:pass"), self.io)
+        data = json.loads((self.d / "state.json").read_text())
+        ah = data["awaiting_human"][0]
+        self.assertIsNone(ah["approved_at"])
+        rc = pass_cmd.approve(self.d, ah["id"], self.io)
+        self.assertEqual(rc, 0)
+        data = json.loads((self.d / "state.json").read_text())
+        self.assertTrue(data["awaiting_human"][0]["approved_at"])
+        self.assertIn("approved " + ah["id"], (self.d / "ledger.md").read_text())
+        self.assertEqual(len(self.io.commits), 2)
+        self.assertEqual(pass_cmd.approve(self.d, "ah-999", self.io), 2)
