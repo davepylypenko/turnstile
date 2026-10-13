@@ -14,10 +14,17 @@ def prs_in(text: str):
         out.add("%s#%s" % (repo, n))
     return out
 
-def usable(entry: dict, pid: str, prs: dict) -> bool:
+def story_ready(pid: str, prs: dict, stories: dict) -> bool:
+    """R3-3: a first send goes out only for a DONE story (or a lead-set human_review: per_pr), as pass requires."""
+    sid = prs.get(pid, {}).get("story")
+    s = (stories or {}).get(sid) or {}
+    return not sid or s.get("state") == "DONE" or s.get("human_review") == "per_pr"
+
+def usable(entry: dict, pid: str, prs: dict, stories: dict = None) -> bool:
     return (entry.get("pr") == pid and entry.get("type") in STATE_FOR_TYPE and bool(entry.get("approved_at"))
             and not entry.get("used_at") and not entry.get("consumed_at") and not entry.get("voided_at")
-            and prs.get(pid, {}).get("state") == STATE_FOR_TYPE[entry["type"]])
+            and prs.get(pid, {}).get("state") == STATE_FOR_TYPE[entry["type"]]
+            and (entry["type"] != "send" or story_ready(pid, prs, stories)))
 
 def choose(data: dict, ids, channel: str) -> dict:
     """pid -> the approved, unused send/reply entry that allows this message; blocks (exit 2) when any PR lacks one.
@@ -27,7 +34,7 @@ def choose(data: dict, ids, channel: str) -> dict:
     awaiting = data.get("awaiting_human", [])
     chosen, companions = {}, set()
     for pid in sorted(ids):
-        entry = next((a for a in awaiting if usable(a, pid, prs)), None)
+        entry = next((a for a in awaiting if usable(a, pid, prs, data.get("stories"))), None)
         if entry is not None:
             chosen[pid] = entry; companions.update(entry.get("companions") or [])
     for pid in sorted(ids):
@@ -44,6 +51,8 @@ def choose(data: dict, ids, channel: str) -> dict:
                   "(turnstile pass pr <main> READY --companions %s); nothing sent." % (pid, repo, pid))
         used = [a for a in awaiting if a.get("pr") == pid and a.get("type") in STATE_FOR_TYPE and a.get("approved_at") and a.get("used_at")]
         hint = " (%s already used at %s: one send per approval)" % (used[-1]["id"], used[-1]["used_at"]) if used else ""
+        if not story_ready(pid, prs, data.get("stories")):
+            hint += " (story %s is not DONE: human review receives only stories that passed their gates)" % prs.get(pid, {}).get("story")
         block("no usable (approved, unused) send/reply for %s in awaiting_human (state %s)%s. %s"
               % (pid, prs.get(pid, {}).get("state"), hint, LEAD_HINT))
     return chosen

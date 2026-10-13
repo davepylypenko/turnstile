@@ -165,8 +165,8 @@ class SlackGuard(unittest.TestCase):
     def write(self, d):
         (self.ws / "delivery" / "state.json").write_text(json.dumps(d))
 
-    def ready_with(self, pr="jsfiller#1", state="READY", **entry):
-        d = self.state(); d["prs"][pr]["state"] = state
+    def ready_with(self, pr="jsfiller#1", state="READY", story_state="DONE", **entry):
+        d = self.state(); d["prs"][pr]["state"] = state; d["stories"]["S1"]["state"] = story_state
         e = {"id": "ah-1", "owner": "lead", "type": "send", "pr": pr, "created_at": "x", "payload": None, "approved_at": "2026-10-13T10:00Z"}
         e.update(entry); d["awaiting_human"] = [e]; self.write(d)
 
@@ -242,9 +242,26 @@ class SlackGuard(unittest.TestCase):
         r = self.post(paired, '{"ok":true,"message_ts":"1760000000.9"}'); self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.9")
 
-    def test_schedule_and_draft_are_guarded_too(self):
+    def test_allowed_send_asks_the_lead_in_the_ui(self):
+        # R3-1: the state check is a filter; the lead confirms every send (permissionDecision "ask")
         self.ready_with()
-        self.assertEqual(self.slack(self.MSG, tool="mcp__plugin_slack_slack__slack_schedule_message").returncode, 0)
+        r = self.slack(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "ask"); self.assertIn("jsfiller#1", out["permissionDecisionReason"])
+
+    def test_send_waits_for_the_story_reply_does_not(self):
+        # R3-3: the Slack guard applies the same story gate as pass READY -> ON_HUMAN_REVIEW
+        self.ready_with(story_state="IN_PROGRESS")
+        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("story S1 is not DONE", r.stderr)
+        d = self.state(); d["stories"]["S1"]["human_review"] = "per_pr"; self.write(d)
+        self.assertEqual(self.slack(self.MSG).returncode, 0)
+        self.ready_with(state="REWORK", type="reply", story_state="IN_PROGRESS")
+        self.assertEqual(self.slack(self.MSG).returncode, 0)
+
+    def test_schedule_is_refused_draft_is_guarded(self):
+        self.ready_with()
+        r = self.slack(self.MSG, tool="mcp__plugin_slack_slack__slack_schedule_message"); self.assertEqual(r.returncode, 2)
+        self.assertIn("scheduled", r.stderr)
         import re
         m = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
         m = next(x["matcher"] for x in m if "slack" in x["matcher"])
