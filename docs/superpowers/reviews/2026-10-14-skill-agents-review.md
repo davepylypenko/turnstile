@@ -250,3 +250,38 @@ What the lead must do live, before the cut-over:
    - for each migrated story past IN_PROGRESS, a deploy re-recorded through `INTEGRATION_REVIEW --build --head`, so that
      `deploy.heads` exists.
 7. Until R2-7 lands, run `turnstile reconcile` before every `pass story … DONE` and before every send.
+
+## Round 2 resolution (2026-10-14)
+
+Lead decisions applied: (1) the Figma reference is a file fetched from a URL, never a Write-tool artefact; (2) story gates and
+the Slack guard ask GitHub, state.json is not trusted for heads; (3) the minors land as hook rules where the hook can know the
+caller, as CLI rules otherwise. Suite: 237 → **257 tests, `OK`** on Python 3.9.6. Every commit signed, no trailer, pushed to
+`main`; tag `v0.2.1-skill`.
+
+| # | Finding | Commit | Resolution |
+|---|---|---|---|
+| R2-6 | `figma.png` "saved with the Write tool" impossible | `b8983a3` | The connector's `download_assets` does **not** take an output path: it returns an `export` URL (and `get_screenshot` returns a short-lived URL with curl instructions; both read from the tool schemas). So `references/tools/figma.md` § "The reference image" fixes the order: `__download_assets` (png, scale 2) → `__get_screenshot` → the REST export `GET /v1/images/<file>?ids=<node>&format=png&scale=2` with `X-Figma-Token: $FIGMA_TOKEN` when the variable is in the tester's environment (never in a brief, report or file) — each fetched with `curl -sSf -o /abs/delivery/evidence/<S>/<case>/figma.png "<url>"`; a connector variant that takes a path gets the same evidence path. None works → the affected rows are `not_testable_here: no figma reference`, the run is recorded with `--figma-parity not_testable_here` (new CLI choice; DONE still needs `pass`), the report header names the failed paths. `agents/tester.md` (step 0b), `briefs/tester.md`, `evidence.md` updated. The Bash guard already admits `curl -o` into `evidence/`; test `test_curl_o_writes_the_figma_reference_into_evidence_only` proves it and that `state.json`, `ledger.md`, the root, `..` and `$VAR` paths stay refused. |
+| R2-7 | Story passes never check GitHub | `b0a50ef`, `42f8a33` | `IO.github_head` (injectable; `github.fetch(...).head`). `pass story … INTEGRATION_REVIEW` (a deploy record), `ENV_TESTING` (entry and run record) and `DONE` fetch the head of every PR in `evidence.deploy.heads` and refuse on any difference, naming the PR, both heads and the recovery (`pass pr … AI_REVIEW --head`, redeploy, re-record). On success `deploy.head_verified: {verified: true, at}`; `--offline` records `{verified: false}` with a WARN and is refused outright at DONE; a `gh` failure refuses with the `--offline` hint. `rules._deploy_heads_verified`: DONE needs `deploy.heads` (a pre-round-2 deploy must be re-recorded — migration step 6) and `head_verified: true`. The Slack guard's `story_ready` asks GitHub for the same snapshot (`live=True`; the PostToolUse record passes `live=False` so a transient `gh` failure never leaves a sent message unrecorded); `gh` absent fails closed. Tests: `test_story_github.py` (5), `test_send_asks_github_for_the_deployed_heads` (canned `gh` on PATH), rules test. |
+| R2-8 | Tree-wide git resets name no delivery path | `fa62124` | `guard_bash._tree_wide_reset`: inside the git worktree that holds the delivery dir (by cwd or `-C`; the delivery dir is also resolved from the `-C` dir), `git checkout|switch|restore|stash|reset|clean` with no pathspec, with a ref (`checkout develop`, `-b`, `reset --hard HEAD~1`, `stash pop`), or with a pathspec that covers the delivery dir (`.`, `..`, `:/`, an ancestor, a glob) is refused (`knowledge-worktree-reset`); a pathspec elsewhere in the worktree, `stash list|show`, `clean -n` pass; the same commands in another repo are untouched. 19 blocked / 9 allowed probes in the test. |
+| R2-9 | Minute-precision bug stamps | `fa62124` | `bug.created_at` / `updated_at` (add, set, reopen) carry seconds (`_now_s`); the board's `>` compare is unchanged. |
+| R2-10 | `--full` self-declared; no `not_testable_here` | `fa62124` | `--cases-not-testable N` (recorded as `cases.not_testable_here`, default 0). `rules._full_run_covers_every_case`: a `--full` run's `pass + fail + not_testable_here` must equal `len(stories.<S>.test_cases)` (empty list → refused, the plan must list the cases); checked when the run is recorded and again at DONE. |
+| R2-11 | Agents start before plan approval | `fa62124` | `turnstile brief` refuses every agent but `investigator` while `rules.plan_approval_missing` holds (no plan, edited plan, unapproved entry). |
+| R2-12 | Tester limits are prose under another prefix | `fa62124` | **Hook-enforced where the hook can know the caller.** `agents/tester.md` carries frontmatter `hooks` that run `guard_bash.py` and the new `guard_role.py` with `TURNSTILE_ROLE=tester`; `_common.agent_role` also reads a payload `agent_type: turnstile:<role>` as the fallback. `ROLE_RULES["tester"]`: `git push`, `git commit`, `gh pr|issue comment|review|create|edit|close|reopen|merge|ready`, `gh api` writes → refused. `guard_role.py` (plugin-level matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`, prefix-agnostic) refuses Jira writes for any role but the orchestrator. **Caveat, documented in the README:** the identity reaches the hook only through the agent's frontmatter hooks or a payload field; the live check (item 4 below) must confirm that agent-scoped hooks run for a plugin agent and that `${CLAUDE_PLUGIN_ROOT}` expands there. If not, the rule stays prose for the Bash side (`disallowedTools` still removes the known Slack/Jira tools) and the review says so. |
+| R2-13 | `--report --build --head` on INTEGRATION_REVIEW records a review round | `fa62124` | `--report` on an INTEGRATION_REVIEW pass is refused with the ENV_TESTING form to use instead. |
+
+Fixture updates that came with R2-7 and R2-10: a deploy written directly into state in tests now carries `heads` (and
+`head_verified` in the pure-rules fixtures); stories in the fixtures list as many `test_cases` as the recorded full run counts.
+
+### Spec §4–§7 after this round
+
+R2-7 (GitHub facts at story gates), R2-10 (`--full` equals the plan) and R2-11 (§4.1 "no agent starts") are enforced. The §7
+tester "cannot push" is hook-enforced subject to the live check of agent-scoped hooks. Still self-reported: §7.1 "copy
+verbatim" and "0 open discrepancies" (through `--figma-parity`; accepted).
+
+### Live checks still owed before the cut-over (unchanged list, one addition)
+
+1–3 as in the verdict above (`ask` under `bypassPermissions`, a background subagent's send, `!` lines). 4. One dry run per
+agent; for the **tester** additionally confirm that its frontmatter hooks fire (`git push` from the tester reports
+`blocked by rule tester-push`) and that `${CLAUDE_PLUGIN_ROOT}` expands in an agent-scoped hook command — if either fails,
+record R2-12 as prose-only. 5. The tester dry run must produce a real `figma.png` through one of the three paths in
+`references/tools/figma.md`. 6–7 as above; 7 is now moot (R2-7 landed), `turnstile reconcile` before a send stays good practice.
