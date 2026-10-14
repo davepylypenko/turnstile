@@ -29,7 +29,7 @@ def main():
     from turnstile_cli import state as st_mod, ledger, pass_cmd
     with st_mod.locked(delivery):
         st = st_mod.load(delivery / "state.json")
-        chosen = choose(st.data, ids, channel)  # blocks (exit 2, loud) when a send slipped past without a usable entry
+        chosen = choose(st.data, ids, channel, live=False)  # blocks (exit 2, loud) when a send slipped past without a usable entry
         now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
         lines = []
         for pid, entry in chosen.items():

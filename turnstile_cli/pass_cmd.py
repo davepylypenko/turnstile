@@ -54,6 +54,9 @@ class IO:
     def github_facts(self, pr_id: str, org: str):
         from . import github
         return github.fetch(pr_id, org)
+    def github_head(self, pr_id: str, org: str) -> str:
+        from . import github
+        return github.fetch(pr_id, org).head
 
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
@@ -170,6 +173,33 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
         raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
     return _facts_mismatches(pr, target, facts, repo_cfg, lead_login)
+
+def _verify_story_heads(story: dict, sid: str, data: dict, o: Options, io: IO, notes: List[str]) -> List[str]:
+    """Round 2 R2-7: a story gate trusts evidence.deploy.heads only after GitHub confirms that every PR in the snapshot still
+    has that head. A push without `pass pr` leaves state.json stale, so the state-only check cannot see it. --offline records
+    head_verified: false (DONE refuses it)."""
+    dp = (story.get("evidence") or {}).get("deploy") or {}
+    snap = dp.get("heads")
+    if not isinstance(snap, dict):  # a deploy recorded before round 2: nothing to verify (DONE asks for a re-recorded deploy)
+        return []
+    if o.offline:
+        notes.append("WARN --offline: deploy.heads of %s NOT verified against GitHub; DONE stays refused until an online story pass" % sid)
+        dp["head_verified"] = {"verified": False}
+        return []
+    org = rules.require_org(data)
+    out: List[str] = []
+    for pid, h in sorted(snap.items()):
+        try:
+            live = io.github_head(pid, org)
+        except Exception as e:
+            raise TurnstileError("GitHub head for %s unavailable (%s); fix gh or use --offline (records head_verified: false; DONE refuses it)" % (pid, e))
+        if not rules.same_head(live, h):
+            out.append("MISSING PR %s head on GitHub to be the deployed one (GitHub has %s, deploy.heads has %s): a push without `pass pr`; "
+                       "run turnstile status, pass pr %s AI_REVIEW --head %s, redeploy and record it with pass story %s INTEGRATION_REVIEW --build <n> --head <sha>"
+                       % (pid, (live or "")[:12], (h or "")[:12], pid, (live or "")[:12], sid))
+    if not out:
+        dp["head_verified"] = {"verified": True, "at": _now()}
+    return out
 
 def _recording_run(o: Options) -> bool:
     return any(x is not None for x in (o.figma_parity, o.cases_pass, o.cases_fail, o.failed_cases))
@@ -373,12 +403,17 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     raise TurnstileError("--build and --head to record the redeploy (INTEGRATION_REVIEW re-entry records the new stack top on the slot)")
                 if recording:
                     _reopen_bugs_for_run(data, ident, trial["evidence"]["env_runs"][-1], extra)
+                missing_heads: List[str] = []
+                if target in ("INTEGRATION_REVIEW", "ENV_TESTING", "DONE"):
+                    if target == "DONE" and o.offline:
+                        raise TurnstileError("DONE verifies every deployed PR head against GitHub; --offline is refused here")
+                    missing_heads = _verify_story_heads(trial, ident, data, o, io, notes)
                 plan_missing = None
                 if target == "IN_PROGRESS" and story.get("state") == "PLANNED":
                     plan_path = delivery / "plan.md"
                     plan_missing = rules.plan_approval_missing(data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
-                missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason, bugs=data.get("bugs"), awaiting=awaiting,
-                                            approved=o.approved, plan_missing=plan_missing, recording_run=recording)
+                missing = missing_heads + rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason, bugs=data.get("bugs"),
+                                                            awaiting=awaiting, approved=o.approved, plan_missing=plan_missing, recording_run=recording)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = story["state"]
@@ -400,7 +435,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     e = rules.find_entry(awaiting, o.approved) or rules.latest_entry(awaiting, etype, "story", ident)
                     if e and e.get("approved_at") and not e.get("consumed_at") and not e.get("voided_at"):
                         e["consumed_at"] = _now()
-                summary = "pass story %s %s → %s%s" % (ident, src, target, " — " + o.reason if o.reason else "")
+                summary = "pass story %s %s → %s%s%s" % (ident, src, target, " — " + o.reason if o.reason else "",
+                                                       " [offline, heads not verified]" if o.offline else "")
             else:
                 raise TurnstileError("kind must be pr or story")
             _ensure_start_story_entries(data)

@@ -12,7 +12,7 @@ class EnvRuns(unittest.TestCase):
         data = json.loads((self.d / "state.json").read_text())
         for pid in data["prs"]: data["prs"][pid]["state"] = "MERGED"
         data["stories"]["S1"]["state"] = "ENV_TESTING"
-        data["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": H}, "integration_review": {"report": "r", "head": H, "clean": True}}
+        data["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": H, "heads": {}}, "integration_review": {"report": "r", "head": H, "clean": True}}
         data["awaiting_human"] = [{"id": "ah-7", "owner": "lead", "type": "story_done", "story": "S1", "created_at": "x", "payload": None,
                                    "approved_at": "2026-10-13T10:00Z", "approved_via": "lead-terminal"}]
         (self.d / "state.json").write_text(state.dumps(data))

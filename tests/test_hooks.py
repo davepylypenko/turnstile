@@ -245,8 +245,8 @@ class SlackGuard(unittest.TestCase):
         e = {"id": "ah-1", "owner": "lead", "type": "send", "pr": pr, "created_at": "x", "payload": None, "approved_at": "2026-10-13T10:00Z"}
         e.update(entry); d["awaiting_human"] = [e]; self.write(d)
 
-    def slack(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
-        return hook("guard_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "cwd": str(self.ws)}, self.ws)
+    def slack(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message", env=None):
+        return hook("guard_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "cwd": str(self.ws)}, self.ws, env=env)
 
     MSG = "PR: <https://github.com/pdffiller/jsfiller/pull/1>"
 
@@ -338,9 +338,33 @@ class SlackGuard(unittest.TestCase):
         self.ready_with()
         d = self.state(); d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "aaaaaaaa11111111",
             "heads": {"jsfiller#1": "aaaaaaaa11111111", "docs-platform#2": "bbbbbbbb22222222"}}}; self.write(d)
-        self.assertEqual(self.slack(self.MSG).returncode, 0)
+        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
+        self.assertEqual(self.slack(self.MSG, env=env).returncode, 0)
         d = self.state(); d["prs"]["docs-platform#2"]["head"] = "cccccccc33333333"; self.write(d)
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("head changed after its deploy", r.stderr)
+        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("head changed after its deploy", r.stderr)
+
+    def gh_on_path(self, heads):
+        """A canned `gh` that answers the GraphQL query with the head for the repo named in `-f r=<repo>`."""
+        b = self.ws / "bin"; b.mkdir(exist_ok=True)
+        cases = "".join('*"r=%s"*) h=%s;; ' % (repo, h) for repo, h in heads.items())
+        (b / "gh").write_text('#!/bin/sh\ncase "$*" in %s*) h=none;; esac\n'
+                              'printf \'{"data":{"repository":{"pullRequest":{"headRefOid":"%%s"}}}}\' "$h"\n' % cases)
+        (b / "gh").chmod(0o755)
+        return {"PATH": os.pathsep.join([str(b), "/usr/bin", "/bin"])}
+
+    def test_send_asks_github_for_the_deployed_heads(self):
+        # round 2 R2-7: state.json may be stale after a push without `pass pr`; the guard verifies deploy.heads on GitHub
+        self.ready_with()
+        d = self.state(); d["prs"]["docs-platform#2"]["state"] = "READY"
+        d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "bbbbbbbb22222222",
+            "heads": {"jsfiller#1": "aaaaaaaa11111111", "docs-platform#2": "bbbbbbbb22222222"}}}; self.write(d)
+        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
+        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 0, r.stderr)
+        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "cccccccc33333333"})
+        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr); self.assertIn("docs-platform#2", r.stderr)
+        env = {"PATH": os.pathsep.join(["/usr/bin", "/bin"])}  # no gh: fail closed
+        self.assertIsNone(shutil.which("gh", path=env["PATH"]))
+        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr)
 
     def test_schedule_is_refused_draft_is_guarded(self):
         self.ready_with()

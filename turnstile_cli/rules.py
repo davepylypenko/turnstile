@@ -299,6 +299,14 @@ def _deploy_is_stack_top(story: dict, prs: Dict[str, dict], out: List[str]) -> N
         out.append("MISSING evidence.deploy.head %s to be the current stack top (%s): redeploy the stack top and record it with "
                    "pass story %s INTEGRATION_REVIEW --build <n> --head <sha>" % (dp.get("head"), ", ".join("%s %s" % x for x in tops), sid))
 
+def _deploy_heads_verified(story: dict, out: List[str]) -> None:
+    """Round 2 R2-7: DONE needs the deploy.heads snapshot and its confirmation on GitHub by an online story pass."""
+    dp = (story.get("evidence") or {}).get("deploy") or {}
+    if not isinstance(dp.get("heads"), dict):
+        out.append("MISSING evidence.deploy.heads (the deploy predates the snapshot; re-record it: pass story %s INTEGRATION_REVIEW --build <n> --head <sha>)" % story.get("_id"))
+    elif (dp.get("head_verified") or {}).get("verified") is not True:
+        out.append("MISSING evidence.deploy.head_verified == true (every PR head in deploy.heads confirmed on GitHub by an online story pass, not --offline)")
+
 def _run_bound_to_deploy(story: dict, out: List[str], label: str) -> None:
     ev = story.get("evidence") or {}
     run, dp = last_env_run(story) or {}, ev.get("deploy") or {}
@@ -382,6 +390,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         _prs_at_least_ready(story, prs, out)
         _review_head_bound(story, out)
         _deploy_is_stack_top(story, prs, out)
+        _deploy_heads_verified(story, out)
         _run_bound_to_deploy(story, out, "env_test")
         et = last_env_run(story) or {}
         cases = et.get("cases") or {}

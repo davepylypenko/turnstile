@@ -3,6 +3,9 @@
 Evidence carries the head it was produced for; a push voids it (`turnstile status` shows the drop). Every PR pass checks
 the head and the evidence against GitHub (`IO.github_facts`): CI rollup, the gate's `gate_check` context, Copilot threads,
 approvals for the head, signed commits, no trailer in commit messages, no generated-with footer in the body, the PR base.
+Every story pass into INTEGRATION_REVIEW (a deploy record), ENV_TESTING and DONE asks GitHub for the head of every PR in
+`evidence.deploy.heads` (`IO.github_head`) and is refused when any differs from the snapshot — a push without `pass pr` cannot
+hide behind a stale `state.json`. `--offline` records `deploy.head_verified: false` and is refused at DONE.
 
 ## PR states
 
@@ -28,7 +31,7 @@ AI review order on one head: deep review (`reviewer` agent) → repo gate (`pdf-
 | **IN_PROGRESS** | every ticket PR ≥ READY, each based on `stories.<S>.branch` or on another PR of the story (a stack) or MERGED; stack top deployed to the slot | `turnstile pass story <S> IN_PROGRESS --approved <start_story ah-id>` (also needs the plan approved, `after` stories DONE and no active story unless the plan lists them as `parallel_with`; no `--reason` override) |
 | **INTEGRATION_REVIEW** | whole-story diff reviewed by `story-reviewer` until clean; fixes in the ticket PRs with gates re-run; `evidence.deploy.head` is the current stack top (the open PR no other PR of the story is based on) | `turnstile pass story <S> INTEGRATION_REVIEW --build <build> --head <stack-top sha>`; after fixes moved the stack top: redeploy and re-enter with the same flags (records the new deploy; the review must then be redone on that head). Every deploy also snapshots `deploy.heads` (every open PR of the story, all repos): any later head change or added PR voids it until the next deploy record, and blocks the send of a DONE story |
 | **ENV_TESTING** | `tester` ran every case + Figma parity on the deployed head; every failed case has a bug keyed story + case (an existing done bug is reopened by the run record, never duplicated); fixed; re-run; one full final run | enter: `turnstile pass story <S> ENV_TESTING --report reports/STORY-<S>-review.md --head <sha> --rounds <r>` (`integration_review.head == deploy.head`); record a run (re-entry): `turnstile pass story <S> ENV_TESTING --report reports/ENV-<S>.md --cases-pass <n> --cases-fail <n> [--failed-cases TP-1,TP-3] --figma-parity pass|fail --build <build> --head <stack-top sha> [--full]` (`--head` must equal `deploy.head`; otherwise record the redeploy first) |
-| **DONE** | last run `--full` with 0 fails and parity pass; `env_test.head == deploy.head ==` the current stack top; every bug of the story `done`; PRs ≥ READY; the lead's `story_done` word | `turnstile pass story <S> DONE --approved <ah-id>` |
+| **DONE** | last run `--full` with 0 fails and parity pass; `env_test.head == deploy.head ==` the current stack top; `deploy.heads` present and every head confirmed on GitHub (`deploy.head_verified: true`, never `--offline`); every bug of the story `done`; PRs ≥ READY; the lead's `story_done` word | `turnstile pass story <S> DONE --approved <ah-id>` |
 
 Stop rule: after DONE nothing starts until the lead approves the story's `start_story` entry (opened when the story becomes
 startable); two stories run at once only when the approved `plan.md` lists them as `parallel_with` (re-plan to add it); each

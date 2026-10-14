@@ -18,7 +18,7 @@ def prs(*states):
     return out
 
 def tested(state="ENV_TESTING", **over):
-    s = story(state, deploy={"build": "173111", "head": H}, integration_review={"report": "r", "head": H, "rounds": 1, "clean": True},
+    s = story(state, deploy={"build": "173111", "head": H, "heads": {"jsfiller#1": H, "docs-platform#2": "bbbbbbbb22222222"}, "head_verified": {"verified": True}}, integration_review={"report": "r", "head": H, "rounds": 1, "clean": True},
               env_test=copy.deepcopy(CLEAN_ENV))
     s["evidence"].update(over)
     return s
@@ -170,3 +170,14 @@ class DeployHeadsSnapshot(unittest.TestCase):
         out = []; rules._story_gates_passed(pr, {"S1": self.s}, out, self.prs); self.assertEqual(out, [])
         self.prs["jsfiller#1"]["head"] = "dddddddd44444444"
         out = []; rules._story_gates_passed(pr, {"S1": self.s}, out, self.prs); self.assertTrue(out)
+
+    def test_to_done_needs_a_heads_snapshot_verified_on_github(self):
+        # round 2 R2-7: DONE trusts deploy.heads only after an online story pass confirmed every head on GitHub
+        s = tested(); s["evidence"]["deploy"].pop("heads")
+        out = rules.check_story(s, "DONE", prs("READY", "MERGED"), FIX["stories"], bugs=[], awaiting=[DONE])
+        self.assertTrue(any("deploy.heads" in m for m in out), out)
+        s = tested(); s["evidence"]["deploy"]["head_verified"] = {"verified": False}
+        out = rules.check_story(s, "DONE", prs("READY", "MERGED"), FIX["stories"], bugs=[], awaiting=[DONE])
+        self.assertTrue(any("head_verified" in m and "offline" in m for m in out), out)
+        s = tested(); s["evidence"]["deploy"].pop("head_verified")
+        self.assertTrue(any("head_verified" in m for m in rules.check_story(s, "DONE", prs("READY", "MERGED"), FIX["stories"], bugs=[], awaiting=[DONE])))
