@@ -9,22 +9,47 @@ prose rules erode under pressure. Stages blur ("AI review" quietly becomes "huma
 and context is lost between sessions. Turnstile moves the rules out of prose and into a state file, a transition
 command, role-scoped agents and hooks that physically block forbidden actions.
 
+## Install
+
+```
+claude plugin marketplace add davepylypenko/turnstile
+claude plugin install turnstile
+```
+
+(Without a marketplace entry: clone the repo and start Claude Code with `--plugin-dir <path>`.)
+
 ## What you get
 
 - `state.json` — a single source of truth for the epic, in git, readable by any session or person.
 - `turnstile pass` — the only way to change state; validates DoR/DoD, verifies the PR head against GitHub, then writes
   the ledger, renders the board, commits the state and tells you which Jira transition to make.
 - `turnstile reconcile` — read-only drift check against GitHub; every command it proposes is one `pass` would accept.
+- `turnstile init` / `plan-submitted` / `brief` / `bug add|set` — the epic skeleton, the lead-approved plan, agent briefs
+  and the bug list, all written through the same guarded path as `pass`.
+- Skill `turnstile` (`skills/turnstile/SKILL.md`): `init`, `status`, `pass`, `dispatch <agent> <brief>`, `story-gate <S>`,
+  `plan`; references for DoR/DoD, kick-off, briefs, PR body, Slack, reports, evidence and env recipes.
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
 - Hooks that block sends, merges, reviewer requests, force pushes and manual state edits unless the lead approved
   that exact action.
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
   anything reaches human review.
 
-## Usage (core)
+## Usage
 
 ```
-echo delivery > .turnstile                      # workspace root → delivery dir
+turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel --knowledge ../pdffiller-knowledge \
+  --lead davyd.pylypenko --lead-github <login> --github-org pdffiller \
+  --repo '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
+  --repo '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}' \
+  --variant l2f-funnel --desk desk05
+# write delivery/plan.md (skill: references/kickoff.md), then
+turnstile plan-submitted                                   # the lead: ! TURNSTILE_LEAD=1 turnstile approve ah-1
+turnstile brief implementer MYD-18075 --var ticket_key=MYD-18075 --var ...   # then Agent(turnstile:implementer, PROMPT line)
+turnstile bug add --story S1 --title "Share visible on published Create form" --source "tester 2026-10-13" --figma KOew:9098-41434
+turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 30 --cases-fail 1 --figma-parity pass   # a run; fails need bugs
+turnstile bug set b01 --state done
+turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --full
+echo delivery > .turnstile                      # workspace root → delivery dir (init writes it; by hand for an existing delivery dir)
 turnstile status                                # reconcile with GitHub + where we are (exit 1 when gh facts are missing)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
@@ -54,6 +79,9 @@ success, `--gate <name>:pass` while that StatusContext/CheckRun is pending, fail
 Copilot threads, `--approvals a,b` with a login missing from `latestReviews` for the head, unresolved human threads or
 changes requested at APPROVED, `MERGED` while GitHub shows the PR open, any unsigned commit in the PR, a PR base that is not the recorded `base`. Self-reported evidence never outranks GitHub. The gate's GitHub context is `epic.repos.<repo>.gate_check` (default: the gate name; `null` for a skill gate that posts no check, e.g. `pr-review`, where the report file is the evidence). Entering AI_REVIEW, CI is the check contexts minus `ci_ignore` (default: the gate's context; jsfiller/docs-platform: `["pdf-review", "gate / gate"]`), because the gate runs during AI_REVIEW; from READY on the whole rollup must be green. `--offline` skips the check with a loud `WARN` line and records
 `evidence.head_verified: false`; `READY` and `ON_HUMAN_REVIEW` stay refused until a pass runs online for that head.
+Every commit message is checked for a `Co-Authored-By` trailer or the generated-with footer and the PR body for the
+footer (R3-10). From REWORK, ON_HUMAN_REVIEW requires a reply by `epic.roles.lead_github` after `rework_since.at` on
+every human thread that was open then.
 
 ### The lead's word (`awaiting_human`)
 
@@ -62,7 +90,19 @@ enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories 
 (see "How the lead approves"). `pass … --approved <ah-id>` then requires an entry of the right type for that
 PR/story that is approved, not consumed and not voided; the pass consumes it. A `send` is voided when the PR drops
 back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message, and the message must
-have gone out through the guarded tool (`used_at`) before the PR can be passed to ON_HUMAN_REVIEW.
+have gone out through the guarded tool (`used_at`) before the PR can be passed to ON_HUMAN_REVIEW. `plan` entries are
+opened by `plan-submitted`; no story leaves PLANNED until the newest one is approved and `plan.md` is unchanged.
+
+### Stories
+
+`stories.<S>.branch` is the story branch; INTEGRATION_REVIEW requires every PR of the story to be based on it or on
+another PR of the story (a stack), or MERGED. ENV_TESTING re-enters itself to record a test run
+(`--cases-pass/--cases-fail/--figma-parity`, `--full` for a complete run); a run with N fails needs N bugs of the story
+added since the previous run (`turnstile bug add`); DONE needs the last run full and clean and every bug of the story done.
+
+Agents (`agents/`): implementer (sonnet), reviewer (opus, xhigh), story-reviewer (fable), stack-step, comments-handler,
+investigator, tester (opus, Figma parity), deployer (sonnet); launched as `turnstile:<name>` with a brief from
+`turnstile brief`.
 
 ### How the lead approves
 
@@ -83,9 +123,9 @@ never runs it.
 
 ### Commands
 
-`pass` (the only writer of `state.json`), `reconcile` (read-only drift check against GitHub, `--json`), `status`
-(reconcile + next actions + what awaits humans), `render-board`, `approve` (lead only), `jira-synced` (validated
-against the PR's state).
+`init`, `plan-submitted`, `pass` (the writer of transitions), `approve` (lead only), `jira-synced` (validated against
+the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders), `bug add|set`, `reconcile` (read-only,
+`--json`), `status`, `render-board`.
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
