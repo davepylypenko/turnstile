@@ -9,7 +9,7 @@ CLEAN_ENV = {"report": "reports/ENV-S1.md", "cases": {"pass": 3, "fail": 0, "not
              "build": "173111", "head": H, "failed_cases": []}
 
 def story(state, **ev):
-    s = copy.deepcopy(FIX["stories"]["S1"]); s["_id"] = "S1"; s["state"] = state; s["evidence"].update(ev); return s
+    s = copy.deepcopy(FIX["stories"]["S1"]); s["_id"] = "S1"; s["state"] = state; s["evidence"].update(ev); s["test_cases"] = ["TP-1", "TP-2", "TP-3"]; return s
 
 def prs(*states):
     out = copy.deepcopy(FIX["prs"])
@@ -181,3 +181,8 @@ class DeployHeadsSnapshot(unittest.TestCase):
         self.assertTrue(any("head_verified" in m and "offline" in m for m in out), out)
         s = tested(); s["evidence"]["deploy"].pop("head_verified")
         self.assertTrue(any("head_verified" in m for m in rules.check_story(s, "DONE", prs("READY", "MERGED"), FIX["stories"], bugs=[], awaiting=[DONE])))
+
+    def test_to_done_full_run_must_match_the_case_list(self):
+        s = tested(); s["test_cases"] = ["TP-1", "TP-2"]
+        out = rules.check_story(s, "DONE", prs("READY", "MERGED"), FIX["stories"], bugs=[], awaiting=[DONE])
+        self.assertTrue(any("2 test cases" in m for m in out), out)

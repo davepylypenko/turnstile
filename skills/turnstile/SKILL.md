@@ -58,7 +58,8 @@ READY with a paired PR outside the epic (locales): `--companions locales#5` so o
 ## dispatch <agent> <brief>
 
 1. `turnstile brief <agent> <NAME> --var k=v …` renders `references/briefs/<agent>.md`; it refuses unfilled
-   placeholders, so pass every agent-specific variable listed in the template. Names: `<KEY>` for tickets,
+   placeholders, so pass every agent-specific variable listed in the template, and refuses every agent but the
+   `investigator` while `plan.md` is unapproved (spec §4.1: no agent starts before the plan). Names: `<KEY>` for tickets,
    `REVIEW-<n>`, `STORY-<S>-review`, `ENV-<S>`, `FIX-<n>-<slug>`, `STACK-<date>`, `COMMENTS-<n>`,
    `INVESTIGATE-<slug>`, `DEPLOY-<slug>-<date>`. A repeat of the same job (a second review round, a rerun) gets a round
    suffix — `REVIEW-<n>-r2`, `STORY-<S>-review-r2`, `ENV-<S>-r2` — so the first round's brief and report survive; `--force`
@@ -86,8 +87,9 @@ is deployed to the story's slot (dispatch `deployer`).
 4. dispatch `tester` (`ENV-S`, mode `full`). For every failed case first `turnstile bug add --story S --case <id> --title …
    --source "tester <date>" --figma <node>` (one bug per story + case; a case that already has a bug needs none: the run
    record appends to it and reopens a done one), then record the run: `turnstile pass story S ENV_TESTING --report
-   reports/ENV-S.md --cases-pass <n> --cases-fail <n> --failed-cases <id,…> --figma-parity pass|fail --build <build>
-   --head <stack top> --full` (the head must be `deploy.head`). Fixes via `implementer` → gates → `stack-step` →
+   reports/ENV-S.md --cases-pass <n> --cases-fail <n> --cases-not-testable <n> --failed-cases <id,…> --figma-parity
+   pass|fail|not_testable_here --build <build> --head <stack top> --full` (the head must be `deploy.head`; the three counts of
+   a full run add up to the story's test cases). Fixes via `implementer` → gates → `stack-step` →
    `deployer` → `pass story S INTEGRATION_REVIEW --build --head` (records the redeploy) → review round → `pass story S
    ENV_TESTING --report … --head …`; `turnstile bug set bNN --state testing` after the deploy; `tester` in mode `rerun`
    (`ENV-S-r2`) for the failed cases (recorded without `--full`); `bug set bNN --state done`; then one full run.

@@ -24,6 +24,14 @@ class Run(unittest.TestCase):
     def setUp(self):
         self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); (self.d / "briefs").mkdir()
         shutil.copy(FIX, self.d / "state.json"); (self.d / ".state.lock").touch(); self.io = FakeIO()
+        self.approve_plan()
+    def approve_plan(self, approved=True):
+        from turnstile_cli import state
+        (self.d / "plan.md").write_text("# plan\n"); digest = state.digest("# plan\n")
+        d = json.loads((self.d / "state.json").read_text()); d["epic"]["plan"] = {"path": "plan.md", "submitted_at": "x", "digest": digest}
+        d["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "plan", "payload": "plan.md", "digest": digest, "created_at": "x",
+                                "approved_at": "2026-10-13T10:00Z" if approved else None, "approved_via": "lead-terminal"}]
+        (self.d / "state.json").write_text(state.dumps(d))
     def run_brief(self, agent, name, var, force=False):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf): rc = brief_cmd.run(self.d, agent, name, var, force=force, io=self.io)
@@ -52,3 +60,14 @@ class Run(unittest.TestCase):
         b = brief_cmd.builtins(json.loads(FIX.read_text()), self.d, "tester", "ENV-S1")
         self.assertEqual((b["report_path"], b["variant"], b["desk"], b["env_recipe"], b["github_org"]), ("reports/ENV-S1.md", "v1", "desk05", "", "pdffiller"))
         self.assertTrue(pathlib.Path(b["delivery"]).is_absolute())
+    def test_no_agent_but_the_investigator_starts_before_the_plan_is_approved(self):
+        # round 2 R2-11 (spec §4.1 "no agent starts"): a brief is the start of an agent
+        self.approve_plan(approved=False)
+        for agent in ("tester", "implementer", "reviewer", "deployer"):
+            rc, out = self.run_brief(agent, "X-" + agent, self.all_vars(agent))
+            self.assertEqual(rc, 2, agent); self.assertIn("plan", out); self.assertFalse((self.d / "briefs" / ("X-%s.md" % agent)).exists())
+        self.assertEqual(self.io.commits, [])
+        self.assertEqual(self.run_brief("investigator", "I", self.all_vars("investigator"))[0], 0)
+        self.approve_plan(); (self.d / "plan.md").write_text("# plan\nedited\n")  # an edited plan voids the approval
+        rc, out = self.run_brief("tester", "T", self.all_vars("tester")); self.assertEqual(rc, 2); self.assertIn("changed", out)
+        self.approve_plan(); self.assertEqual(self.run_brief("tester", "T", self.all_vars("tester"))[0], 0)

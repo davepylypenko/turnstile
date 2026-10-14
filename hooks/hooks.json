@@ -20,6 +20,15 @@
         ]
       },
       {
+        "matcher": "mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_role.py\" || exit 2"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {

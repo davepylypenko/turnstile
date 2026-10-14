@@ -37,3 +37,10 @@ class Bugs(unittest.TestCase):
         self.assertEqual(bug_cmd.set_(self.d, "b01", state="fixed", io=self.io), 2)
         self.assertEqual(bug_cmd.set_(self.d, "b02", state="done", io=self.io), 2)
         self.assertEqual(bug_cmd.set_(self.d, "b01", io=self.io), 2)
+
+    def test_timestamps_carry_seconds(self):
+        # round 2 R2-9: the board compares a db override's updatedAt with the bug's stamp; minute precision tied within a minute
+        import re
+        bug_cmd.add(self.d, "S1", "x", "s", io=self.io); bug_cmd.set_(self.d, "b01", state="ai", io=self.io)
+        b = self.data()["bugs"][0]
+        for k in ("created_at", "updated_at"): self.assertRegex(b[k], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", k)

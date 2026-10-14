@@ -61,6 +61,10 @@ class IO:
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
 
+def _now_s() -> str:
+    """Seconds precision for bug stamps: the board's db override wins only while newer than the bug (round 2 R2-9)."""
+    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
 def _check_report(delivery: pathlib.Path, rel: Optional[str]) -> None:
     if rel and not (pathlib.Path(delivery) / rel).is_file():
         raise TurnstileError("report file %s not found under %s" % (rel, delivery))
@@ -224,7 +228,10 @@ def _apply_story_evidence(story: dict, o: Options) -> None:
         if o.cases_fail > 0 and not o.failed_cases:
             raise TurnstileError("--failed-cases <id,id,…> is required when --cases-fail > 0 (bugs are keyed by story + case id)")
         failed = [x.strip() for x in (o.failed_cases or "").split(",") if x.strip()]
-        run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "failed_cases": failed, "figma_parity": o.figma_parity,
+        if o.cases_not_testable is not None and o.cases_not_testable < 0:
+            raise TurnstileError("--cases-not-testable must be >= 0")
+        run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail, "not_testable_here": o.cases_not_testable or 0},
+               "failed_cases": failed, "figma_parity": o.figma_parity,
                "full": bool(o.full), "build": o.build, "head": head, "at": _now()}
         ev.setdefault("env_runs", []).append(run)
         ev["env_test"] = run
@@ -242,7 +249,7 @@ def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> N
             if b.get("story") == sid and b.get("case") == case:
                 b.setdefault("runs", []).append({"build": run.get("build"), "head": run.get("head"), "report": run.get("report"), "at": run.get("at")})
                 if b.get("state") == "done":
-                    b["state"] = "todo"; b["updated_at"] = _now()
+                    b["state"] = "todo"; b["updated_at"] = _now_s()
                     extra.append("bug %s reopened (case %s failed again on build %s, head %s)" % (b.get("id"), case, run.get("build"), run.get("head")))
 
 def _recompute_next_actions(data: dict) -> None:
@@ -399,6 +406,9 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if target == "ENV_TESTING" and story.get("state") == "ENV_TESTING" and not recording:
                     raise TurnstileError("--report, --cases-pass, --cases-fail, --failed-cases, --figma-parity, --build and --head to record a test run "
                                          "(ENV_TESTING re-entry records a run)")
+                if target == "INTEGRATION_REVIEW" and o.report:  # round 2 R2-13: --report here recorded a review round instead of the deploy
+                    raise TurnstileError("INTEGRATION_REVIEW records a deploy (--build --head), not a review round; drop --report here and record the "
+                                         "round with pass story %s ENV_TESTING --report <reports/STORY-%s-review.md> --head <sha> --rounds <r>" % (ident, ident))
                 if target == "INTEGRATION_REVIEW" and story.get("state") == "INTEGRATION_REVIEW" and not (o.build and o.head):
                     raise TurnstileError("--build and --head to record the redeploy (INTEGRATION_REVIEW re-entry records the new stack top on the slot)")
                 if recording:

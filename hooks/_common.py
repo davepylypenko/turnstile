@@ -23,3 +23,14 @@ def load_state(cwd: str):
     sys.path.insert(0, str(plugin_root()))
     from turnstile_cli import state
     return state.load(delivery_dir(cwd) / "state.json").data
+
+def agent_role(payload: dict) -> str:
+    """Round 2 R2-12: the role the calling agent runs as. An agent's own frontmatter hooks run the guards with TURNSTILE_ROLE
+    set; a payload that names the subagent (`agent_type: turnstile:<role>`) is the fallback. Empty for the orchestrator."""
+    role = os.environ.get("TURNSTILE_ROLE") or ""
+    if not role:
+        for key in ("agent_type", "agent_name", "subagent_type"):
+            v = payload.get(key)
+            if isinstance(v, str) and v.startswith("turnstile:"):
+                role = v.split(":", 1)[1]; break
+    return role.strip().lower()

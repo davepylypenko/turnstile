@@ -40,6 +40,41 @@ class BashGuard(unittest.TestCase):
                             "curl -o %s/../state.json %s" % (ev, url), "curl -o %s/$CASE/figma.png %s" % (str(self.ws / "delivery" / "evidence"), url),
                             "curl -o delivery/evidence/S1/../../board.html %s" % url], "delivery-write")
 
+    def test_tree_wide_git_resets_in_the_knowledge_worktree_are_blocked(self):
+        # round 2 R2-8: `git checkout -- .` at the worktree root rolls state.json and ledger.md back without naming them
+        (self.ws / ".git").mkdir(); (self.ws / "docs").mkdir(); (self.ws / "docs" / "x.md").write_text("x")
+        self.assertBlocked(["git checkout -- .", "git restore .", "git restore --staged --worktree .", "git clean -fd", "git clean -fdx",
+                            "git checkout HEAD~3 -- .", "git reset --hard", "git reset --hard HEAD~1", "git reset", "git stash", "git stash pop",
+                            "git checkout develop", "git checkout -b other", "git switch main", "git checkout -- :/", "git restore -- ..",
+                            "git checkout -- delivery", "git -C %s checkout -- ." % self.ws, "cd docs && git checkout -- ..",
+                            "git checkout -- %s" % self.ws], "knowledge-worktree-reset")
+        self.assertAllowed(["git checkout -- docs/x.md", "git restore docs/x.md", "git stash list", "git stash show -p", "git clean -n",
+                            "git clean --dry-run -d", "git status", "git diff", "git log --oneline"])
+        other = pathlib.Path(tempfile.mkdtemp())  # a repo that is not the knowledge worktree: tree-wide resets are its own business
+        r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": "git checkout -- ."}, "cwd": str(other)}, other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": "git -C %s checkout -- ." % self.ws}, "cwd": str(other)}, other)
+        self.assertEqual(r.returncode, 2); self.assertIn("knowledge-worktree-reset", r.stderr)
+
+    def test_tester_role_cannot_push_commit_or_write_prs(self):
+        # round 2 R2-12: the tester's hooks run the guard with TURNSTILE_ROLE=tester (or the payload names the agent); pushes are then blocked
+        role = {"TURNSTILE_ROLE": "tester"}
+        for cmd in ["git push origin x", "git push", "git -C /tmp/r push -u origin feature/x", "git commit -m 'x'", "gh pr comment 1 --body x",
+                    "gh pr review 1 --approve", "gh pr create --title x", "gh pr edit 1 --body x", "gh api -X POST repos/o/r/issues/1/comments -f body=x",
+                    "gh issue comment 1 --body x"]:
+            r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}, self.ws, env=role)
+            self.assertEqual(r.returncode, 2, cmd); self.assertIn("tester", r.stderr, cmd)
+        ev = str(self.ws / "delivery" / "evidence" / "S1" / "TP-1")
+        for cmd in ["git log --oneline -3", "git status", "gh pr view 1 --repo o/r", "gh api repos/o/r/pulls/1", "npx playwright screenshot https://x %s/env.png" % ev,
+                    "mkdir -p %s" % ev, "git fetch origin", "git diff HEAD~1"]:
+            r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}, self.ws, env=role)
+            self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
+        self.assertAllowed(["git push origin x", "git commit -m 'x'"])  # no role: the orchestrator and the implementer may
+        r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": "git push origin x"}, "cwd": str(self.ws), "agent_type": "turnstile:tester"}, self.ws)
+        self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
+        r = hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": "git push origin x"}, "cwd": str(self.ws), "agent_type": "turnstile:implementer"}, self.ws)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_blocks_round2_evasions(self):
         self.assertBlocked(['git -C "/my dir" push --force', '"git" push --force', "gh --repo=o/r pr merge 1", "gh pr --repo o/r merge 1",
                             'gh "pr" merge 1', "gh pr 'merge' 1", "gh api --method=PUT repos/o/r/pulls/1/merge",
@@ -434,3 +469,32 @@ class StateEditGuard(unittest.TestCase):
     def test_outside_the_delivery_dir_only_state_and_ledger_names_are_blocked(self):
         self.assertEqual(self.edit(str(self.ws / "other" / "board.html"), "Write").returncode, 0)
         self.assertEqual(self.edit(str(self.ws / "other" / "state.json"), "Write").returncode, 2)
+
+
+class RoleGuard(unittest.TestCase):
+    """Round 2 R2-12: Jira writes through any MCP prefix are the orchestrator's; a turnstile agent (role from the env the
+    agent's own hook sets, or the agent name in the payload) is refused."""
+    def setUp(self):
+        self.ws = pathlib.Path(tempfile.mkdtemp())
+
+    def jira(self, tool="mcp__claude_ai_Atlassian__transitionJiraIssue", env=None, **payload):
+        p = {"tool_name": tool, "tool_input": {"issueIdOrKey": "MYD-1"}, "cwd": str(self.ws)}; p.update(payload)
+        return hook("guard_role.py", p, self.ws, env=env)
+
+    def test_agent_roles_are_refused_and_the_orchestrator_passes(self):
+        self.assertEqual(self.jira().returncode, 0)
+        for role in ("tester", "implementer", "reviewer"):
+            r = self.jira(env={"TURNSTILE_ROLE": role}); self.assertEqual(r.returncode, 2); self.assertIn(role, r.stderr)
+        r = self.jira(agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
+        r = self.jira(tool="mcp__plugin_atlassian_jira__editJiraIssue", env={"TURNSTILE_ROLE": "tester"}); self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.jira(env={"TURNSTILE_ROLE": "orchestrator"}).returncode, 0)
+
+    def test_matchers_cover_every_jira_write_under_any_prefix(self):
+        import re
+        pre = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
+        m = next(x["matcher"] for x in pre if "Jira" in x["matcher"])
+        for tool in ("mcp__claude_ai_Atlassian__transitionJiraIssue", "mcp__claude_ai_Atlassian__editJiraIssue", "mcp__claude_ai_Atlassian__createJiraIssue",
+                     "mcp__claude_ai_Atlassian__addCommentToJiraIssue", "mcp__plugin_atlassian_jira__transitionJiraIssue"):
+            self.assertTrue(re.fullmatch(m, tool), tool)
+        self.assertFalse(re.fullmatch(m, "mcp__claude_ai_Atlassian__getJiraIssue"))
+        self.assertIn("guard_role.py", next(x for x in pre if "Jira" in x["matcher"])["hooks"][0]["command"])

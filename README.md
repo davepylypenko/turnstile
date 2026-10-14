@@ -133,14 +133,15 @@ never runs it.
 ### Commands
 
 `init`, `plan-submitted`, `pass` (the writer of transitions), `approve` (lead only), `jira-synced` (validated against
-the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders), `bug add|set`, `reconcile` (read-only,
-`--json`), `status`, `render-board`.
+the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
+plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
 --approved <ah-id>`, `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
-`--report --cases-pass N --cases-fail N [--failed-cases a,b] --figma-parity pass|fail --build --head [--full]`. Report paths are
+`--report --cases-pass N --cases-fail N [--cases-not-testable N] [--failed-cases a,b] --figma-parity pass|fail|not_testable_here --build --head [--full]`
+(a `--full` run's three counts must add up to `stories.<S>.test_cases`). Report paths are
 relative to `delivery/` and must exist.
 
 ### Hooks
@@ -161,9 +162,18 @@ relative to `delivery/` and must exist.
   `tail`, `grep`, `jq`, `ls`, `find` without `-exec|-delete`, `sort` without `-o`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
   `turnstile …` / `python3 -m turnstile_cli …`, and no redirect writes into the delivery dir. `perl -pi`, `node -e`,
   `ruby -e`, `env perl …`, `awk`, `python3 - <<EOF`, `tee`, `cp`, `mv`, `rm`, `mkdir`, `git add|commit|config|worktree` on the delivery dir are therefore
-  refused, as are `git checkout|restore|stash|reset` that touch it. Reports and briefs go through the Write tool and
+  refused, as are `git checkout|restore|stash|reset|clean` that touch it, and — inside the git worktree that holds the
+  delivery dir (the knowledge worktree, by cwd or `-C`) — every `git checkout|switch|restore|stash|reset|clean` with no
+  pathspec, a ref, or a pathspec that covers the delivery dir (`.`, `..`, `:/`, an ancestor); a pathspec elsewhere in that
+  worktree, `git stash list|show`, `git clean -n` pass. Reports and briefs go through the Write tool and
   are committed by the next `turnstile pass`. Global options before the subcommand (`git -C dir`, `git -c k=v`,
-  `gh -R owner/repo`) are covered.
+  `gh -R owner/repo`) are covered. **Role rules:** when the guard runs with `TURNSTILE_ROLE=tester` (the tester agent's own
+  frontmatter hooks set it; a payload `agent_type: turnstile:tester` is the fallback) `git push`, `git commit`,
+  `gh pr|issue comment|review|create|edit|close|reopen|merge|ready` and `gh api` writes are refused too.
+- `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
+  refuses Jira writes under any MCP prefix when the caller is a turnstile agent (`TURNSTILE_ROLE` or the payload's agent
+  name); the orchestrator (no role) passes and records with `jira-synced`. Agent identity reaches the hook only through the
+  agent's frontmatter hooks (`agents/tester.md`) or a payload field; where neither is present the prose rule is all there is.
 - `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
   unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside

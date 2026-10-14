@@ -11,7 +11,7 @@ class EnvRuns(unittest.TestCase):
         (self.d / "reports" / "ENV.md").write_text("ok"); (self.d / "reports" / "S.md").write_text("clean"); self.io = FakeIO()
         data = json.loads((self.d / "state.json").read_text())
         for pid in data["prs"]: data["prs"][pid]["state"] = "MERGED"
-        data["stories"]["S1"]["state"] = "ENV_TESTING"
+        data["stories"]["S1"]["state"] = "ENV_TESTING"; data["stories"]["S1"]["test_cases"] = ["TP-1", "TP-2", "TP-3", "TP-4", "TP-5"]
         data["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": H, "heads": {}}, "integration_review": {"report": "r", "head": H, "clean": True}}
         data["awaiting_human"] = [{"id": "ah-7", "owner": "lead", "type": "story_done", "story": "S1", "created_at": "x", "payload": None,
                                    "approved_at": "2026-10-13T10:00Z", "approved_via": "lead-terminal"}]
@@ -32,7 +32,7 @@ class EnvRuns(unittest.TestCase):
         d = self.data(); run = d["stories"]["S1"]["evidence"]["env_runs"][0]
         self.assertEqual((run["full"], run["build"], run["head"], run["failed_cases"]), (True, "1", H, []))
         self.assertFalse(d["awaiting_human"][0].get("voided_at"))
-        self.assertEqual(d["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 5, "fail": 0})
+        self.assertEqual(d["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 5, "fail": 0, "not_testable_here": 0})
         self.assertNotIn("bug_ids", json.dumps(d))
 
     def test_run_needs_build_and_head_bound_to_the_deploy(self):
@@ -80,7 +80,7 @@ class EnvRuns(unittest.TestCase):
         self.assertEqual(run_capture(self.d, "story", "S1", "DONE", opts(approved="ah-7"), self.io)[0], 0)
 
     def test_done_with_flags_records_a_full_run(self):
-        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True, build="1", head=H, approved="ah-7")
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=5, cases_fail=0, full=True, build="1", head=H, approved="ah-7")
         rc, out = run_capture(self.d, "story", "S1", "DONE", o, self.io)
         self.assertEqual(rc, 0, out); self.assertEqual(self.data()["stories"]["S1"]["evidence"]["env_runs"][-1]["full"], True)
 
@@ -102,3 +102,39 @@ class EnvRuns(unittest.TestCase):
     def test_rule_reads_env_test_when_no_runs(self):
         s = {"_id": "S1", "state": "ENV_TESTING", "evidence": {"env_test": {"report": "r", "cases": {"pass": 1, "fail": 0}, "figma_parity": "pass", "full": True}}}
         self.assertEqual(rules.last_env_run(s)["full"], True)
+
+    def test_full_run_must_add_up_to_the_story_test_cases(self):
+        # round 2 R2-10: --full is not self-declared; pass + fail + not_testable_here equals len(stories.<S>.test_cases)
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True, build="1", head=H)
+        rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io); self.assertEqual(rc, 2); self.assertIn("5 test cases", out); self.assertIn("3", out)
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, cases_not_testable=2, full=True, build="1", head=H)
+        rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 3, "fail": 0, "not_testable_here": 2})
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, build="1", head=H)  # a partial run may be any size
+        self.assertEqual(run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io)[0], 0)
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=6, cases_fail=0, full=True, build="1", head=H)
+        rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io); self.assertEqual(rc, 2); self.assertIn("5 test cases", out)
+        d = self.data(); d["stories"]["S1"]["test_cases"] = []; self.write(d)
+        o = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=0, cases_fail=0, full=True, build="1", head=H)
+        rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io); self.assertEqual(rc, 2); self.assertIn("test_cases", out)
+        # DONE re-checks the last full run against the case list (defence in depth: the list may have changed by a re-plan)
+        d = self.data(); d["stories"]["S1"]["test_cases"] = ["TP-1", "TP-2", "TP-3", "TP-4", "TP-5"]; self.write(d)
+        self.assertEqual(self.run_env(full=True)[0], 0)
+        d = self.data(); d["stories"]["S1"]["test_cases"] = ["TP-1"]; self.write(d)
+        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(approved="ah-7"), self.io); self.assertEqual(rc, 2); self.assertIn("1 test case", out)
+
+    def test_parity_not_testable_here_is_recorded_and_blocks_done(self):
+        o = opts(report="reports/ENV.md", figma_parity="not_testable_here", cases_pass=0, cases_fail=0, cases_not_testable=5, full=True, build="1", head=H)
+        rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", o, self.io); self.assertEqual(rc, 0, out)
+        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(approved="ah-7"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("figma_parity == pass (has not_testable_here)", out)
+
+    def test_integration_review_refuses_a_review_round(self):
+        # round 2 R2-13: --report --build --head on INTEGRATION_REVIEW recorded a review round instead of the deploy
+        d = self.data(); d["stories"]["S1"]["state"] = "INTEGRATION_REVIEW"; self.write(d)
+        rc, out = run_capture(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(report="reports/S.md", build="2", head=H2), self.io)
+        self.assertEqual(rc, 2); self.assertIn("--report", out); self.assertIn("ENV_TESTING --report", out)
+        self.assertEqual(self.data()["stories"]["S1"]["evidence"]["deploy"]["build"], "1")
+        d = self.data(); d["stories"]["S1"]["state"] = "IN_PROGRESS"; self.write(d)
+        rc, out = run_capture(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(report="reports/S.md", build="2", head=H2), self.io)
+        self.assertEqual(rc, 2); self.assertIn("--report", out)

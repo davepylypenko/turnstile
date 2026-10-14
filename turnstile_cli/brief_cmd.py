@@ -1,6 +1,6 @@
 import datetime, pathlib, re
 from typing import List, Tuple
-from . import state as st_mod
+from . import state as st_mod, rules
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -50,6 +50,11 @@ def run(delivery, agent: str, name: str, var_list: List[str], force: bool = Fals
             raise TurnstileError("brief name must be a file stem like FIX-13223-token (got %r)" % name)
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
+            if agent != "investigator":  # round 2 R2-11, spec §4.1: no agent starts before the lead approved the plan; a brief is the start
+                plan_path = delivery / "plan.md"
+                missing_plan = rules.plan_approval_missing(st.data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
+                if missing_plan:
+                    raise TurnstileError("no agent but the investigator starts before the lead approved plan.md (spec §4.1): " + missing_plan)
             vars = builtins(st.data, delivery, agent, name); vars.update(parse_vars(var_list))
             text, missing = render(tpl.read_text(), vars)
             if missing:

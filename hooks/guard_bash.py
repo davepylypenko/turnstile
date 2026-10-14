@@ -1,6 +1,6 @@
 import os, pathlib, posixpath, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, block
+from _common import read_payload, block, agent_role
 
 # global options that may sit between the binary and its subcommand: git -C dir / -c k=v / --opt[=v]; gh -R / --repo owner/repo
 GIT = r"\bgit(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+)|--?[\w.-]+(?:=\S+)?))*\s+"
@@ -39,7 +39,13 @@ READ_ONLY = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "r
              "turnstile", "sed", "python3", "python", "xargs", "which", "type"}
 GIT_READ_ONLY = {"diff", "log", "show", "status", "blame", "ls-files", "rev-parse", "cat-file", "grep", "branch", "remote", "describe",
                  "push", "fetch", "shortlog", "name-rev"}
-GIT_RESTORE = re.compile(GIT + r"(?:checkout|restore|stash|reset)\b", re.I)
+GIT_RESTORE = re.compile(GIT + r"(?:checkout|switch|restore|stash|reset|clean)\b", re.I)
+TREE_SUBS = {"checkout", "switch", "restore", "stash", "reset", "clean"}
+# round 2 R2-12: an agent's own frontmatter hooks run this guard with TURNSTILE_ROLE set; these rules apply on top of the common ones
+ROLE_RULES = {"tester": [("tester-push", GIT + r"push\b"), ("tester-commit", GIT + r"commit\b"),
+                         ("tester-pr-write", GH + r"(?:pr|issue)(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+(?:comment|review|create|edit|close|reopen|merge|ready)\b"),
+                         ("tester-api-write", r"\bgh\s+api\b[^\n;&|]*" + WRITE_FLAGS)]}
+ROLE_HINT = {"tester": "the tester reports; the orchestrator records facts, and nobody pushes from a test run"}
 HARMLESS_REDIRECTS = re.compile(r"\d?>\s*&\d|\d?>\s*/dev/null|&>\s*/dev/null|<<-?\s*\S+")
 REDIRECT_TARGET = re.compile(r"\d?>{1,2}\s*(\S+)")
 STATE_GLOB = re.compile(r"\bstate\.(?:json|\*|\?|\[)|\bstate[*?\[]")
@@ -174,6 +180,80 @@ def _writable_segment(seg: str, mention) -> bool:
                 return False
     return True
 
+def _worktree_root(path: str):
+    """The git worktree that contains `path` (the nearest ancestor with a .git dir or file), or None."""
+    d = os.path.realpath(path)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+def _git_call(seg: str):
+    """(subcommand, the words after it, the -C dir) of a git segment; None when the segment is not a git call."""
+    words = seg.split()
+    while words and re.match(r"^\w+=", words[0]):
+        words.pop(0)
+    if words and words[0] == "env":
+        words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
+    if not words or words[0].rsplit("/", 1)[-1] != "git":
+        return None
+    cdir, sub, i = None, None, 1
+    while i < len(words):
+        w = words[i]
+        if w in ("-C", "-c"):
+            if w == "-C" and i + 1 < len(words):
+                cdir = words[i + 1]
+            i += 2; continue
+        if w.startswith("-"):
+            i += 1; continue
+        sub = w; break
+    return sub, (words[i + 1:] if sub else []), cdir
+
+def _tree_wide_reset(seg: str, cwd: str, delivery_abs):
+    """Round 2 R2-8: `git checkout|switch|restore|stash|reset|clean` run inside the knowledge worktree that holds the delivery
+    dir, with no pathspec (a branch switch, `reset --hard`, `stash`, `clean -fd`) or with one that covers the delivery dir
+    (`.`, `..`, `:/`, an ancestor), rolls state.json and ledger.md back without naming them. Returns the refusal text."""
+    call = _git_call(seg)
+    if not call or call[0] not in TREE_SUBS:
+        return None
+    sub, rest, cdir = call
+    eff = os.path.realpath(os.path.join(cwd or ".", cdir) if cdir else (cwd or "."))
+    if not delivery_abs:
+        try:
+            from _common import delivery_dir
+            delivery_abs = str(delivery_dir(eff))
+        except Exception:
+            return None
+    root = _worktree_root(delivery_abs)
+    if root is None or not (eff == root or eff.startswith(root + os.sep)):
+        return None
+    if sub == "stash" and rest and rest[0] in ("list", "show", "drop", "clear"):
+        return None
+    if sub == "clean" and any(w in ("-n", "--dry-run") or (w.startswith("-") and not w.startswith("--") and "n" in w) for w in rest):
+        return None
+    why = "blocked by rule knowledge-worktree-reset. git %s inside the knowledge worktree %s %s: the delivery dir changes only through 'turnstile pass'; name a path outside it."
+    if "--" in rest:
+        paths = rest[rest.index("--") + 1:]
+        if not paths:
+            return why % (sub, root, "with no pathspec resets the whole tree")
+    else:
+        paths = [w for w in rest if not w.startswith("-")]
+        if sub in ("checkout", "switch", "reset", "stash") and (not paths or any(not os.path.exists(os.path.join(eff, w)) for w in paths)):
+            return why % (sub, root, "with a ref or no pathspec resets the whole tree")
+        if not paths:
+            return why % (sub, root, "with no pathspec resets the whole tree")
+    dl = os.path.realpath(delivery_abs)
+    for pth in paths:
+        if pth.startswith(":") or UNSAFE_PATH.search(pth):
+            return why % (sub, root, "with the pathspec %r (magic, glob or computed) may cover the delivery dir" % pth)
+        ap = os.path.realpath(os.path.join(eff, pth))
+        if ap == dl or dl.startswith(ap + os.sep) or ap.startswith(dl + os.sep):
+            return why % (sub, root, "with the pathspec %r covers the delivery dir" % pth)
+    return None
+
 def _file_contents(flat: str, cwd: str):
     """Text of every file a write command points at with -F/--file/--body-file/--input (R2-11); missing files are skipped."""
     for name in FILE_ARG.findall(flat):
@@ -184,11 +264,11 @@ def _file_contents(flat: str, cwd: str):
         except OSError:
             continue
 
-def check(cmd: str, cwd: str = ".") -> None:
+def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
     for flat in (joined, stripped, re.sub(r"\s+", " ", stripped)):
-        _check(flat)
+        _check(flat, role)
     if WRITE_CTX.search(stripped):
         for name, text in _file_contents(stripped, cwd):
             for rule, rx in CONTENT_RULES:
@@ -197,6 +277,10 @@ def check(cmd: str, cwd: str = ".") -> None:
     flat = re.sub(r"[ \t]+", " ", stripped)
     mention_fn = _delivery_matcher(cwd)
     mention = mention_fn(flat)
+    for seg in _segments(flat):  # round 2 R2-8: tree-wide resets in the knowledge worktree name no delivery path
+        why = _tree_wide_reset(seg, cwd, mention_fn.abs_path)
+        if why:
+            block(why)
     # round 2: the Bash cwd persists across calls, so `cd delivery/evidence` then `cp x ../ledger.md` names no delivery path
     cwd_inside = bool(mention_fn.abs_path) and (os.path.realpath(cwd or ".") + os.sep).startswith(os.path.realpath(mention_fn.abs_path) + os.sep)
     mention = mention or ("cwd " + cwd if cwd_inside else "")
@@ -240,7 +324,10 @@ def _turnstile_sub_ok(flat: str) -> bool:
             return False
     return True
 
-def _check(flat: str) -> None:
+def _check(flat: str, role: str = "") -> None:
+    for name, rx in ROLE_RULES.get(role, []):
+        if re.search(rx, flat, re.I | re.M):
+            block("blocked by rule %s. The %s role cannot run this: %s." % (name, role, ROLE_HINT.get(role, "report it instead")))
     if not _turnstile_sub_ok(flat):
         block("blocked by rule lead-approve. turnstile subcommands are named literally (%s); 'approve' is the lead's. %s"
               % (", ".join(sorted(TURNSTILE_SUBS)), LEAD_HINT))
@@ -270,7 +357,7 @@ def main():
     ti = p.get("tool_input")
     if not isinstance(ti, dict) or not isinstance(ti.get("command"), str):
         block("malformed hook payload (no tool_input.command); failing closed.")
-    check(ti["command"], p.get("cwd") or ".")
+    check(ti["command"], p.get("cwd") or ".", agent_role(p))
     sys.exit(0)
 
 if __name__ == "__main__":

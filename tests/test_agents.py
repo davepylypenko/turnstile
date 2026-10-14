@@ -64,3 +64,10 @@ class Agents(unittest.TestCase):
         evidence = (ROOT / "skills" / "turnstile" / "references" / "evidence.md").read_text()
         for needle in ["curl -o", "__download_assets", "FIGMA_TOKEN", "not_testable_here"]: self.assertIn(needle, evidence, needle)
         self.assertNotIn("saved with the Write tool", evidence)
+    def test_tester_hooks_enforce_no_push_and_no_jira(self):
+        # round 2 R2-12: the tester's own PreToolUse hooks run the guards with TURNSTILE_ROLE=tester, so pushes and Jira writes are blocked, not prose
+        text = (AGENTS / "tester.md").read_text(); fm = text.split("---")[1]
+        self.assertIn("hooks:", fm); self.assertIn("PreToolUse:", fm)
+        self.assertIn("TURNSTILE_ROLE=tester python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_bash.py\"", fm)
+        self.assertIn("TURNSTILE_ROLE=tester python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_role.py\"", fm)
+        self.assertIn("TURNSTILE_ROLE", text.split("## Cannot")[1])

@@ -22,7 +22,7 @@ def _commit(delivery: pathlib.Path, st, summary: str, io) -> int:
 
 def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None, figma: Optional[str] = None, note: str = "",
         case: Optional[str] = None, io=None) -> int:
-    from .pass_cmd import IO, _now
+    from .pass_cmd import IO, _now_s
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
         with st_mod.locked(delivery):
@@ -38,7 +38,7 @@ def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None,
                 if dup:
                     raise TurnstileError("bug %s already covers case %s of %s (state %s): reopen it with 'turnstile bug set %s --state todo', or record the "
                                          "run and it is reopened automatically" % (dup["id"], case, story, dup.get("state"), dup["id"]))
-            now = _now()
+            now = _now_s()
             bug = {"id": next_id(bugs), "story": story, "case": case, "title": title.strip(), "source": source, "pr": pr, "figma": figma,
                    "state": "todo", "note": note or "", "runs": [], "created_at": now, "updated_at": now}
             bugs.append(bug)
@@ -68,8 +68,8 @@ def set_(delivery, bug_id: str, state: Optional[str] = None, pr: Optional[str] =
             if note is not None:
                 bug["note"] = note; changes.append("note")
             if changes:
-                from .pass_cmd import _now
-                bug["updated_at"] = _now()
+                from .pass_cmd import _now_s
+                bug["updated_at"] = _now_s()
             return _commit(delivery, st, "bug %s %s" % (bug_id, ", ".join(changes) or "unchanged"), io)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2

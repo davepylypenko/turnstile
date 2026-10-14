@@ -330,6 +330,21 @@ def last_env_run(story: dict) -> Optional[dict]:
     runs = ev.get("env_runs") or []
     return runs[-1] if runs else (ev.get("env_test") or None)
 
+def _full_run_covers_every_case(story: dict, out: List[str]) -> None:
+    """Round 2 R2-10: --full is not self-declared. A full run's pass + fail + not_testable_here equals the story's test-case
+    count from the approved plan; a story without test cases cannot have a full run."""
+    run = last_env_run(story) or {}
+    if not run.get("full"):
+        return
+    cases = run.get("cases") or {}
+    total = (cases.get("pass") or 0) + (cases.get("fail") or 0) + (cases.get("not_testable_here") or 0)
+    n = len(story.get("test_cases") or [])
+    if n == 0:
+        out.append("MISSING stories.%s.test_cases (plan.md lists the story's cases; a --full run is measured against them)" % story.get("_id"))
+    elif total != n:
+        out.append("MISSING --full run to cover the story's %d test case%s: pass + fail + not_testable_here is %d (--cases-not-testable counts the "
+                   "cases with verdict not_testable_here)" % (n, "" if n == 1 else "s", total))
+
 def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) -> None:
     """Spec §4.2 ENV_TESTING DoD, 2026-10-14 finding 5: every failed case of the last run has a bug keyed by story + case id
     that is not done (new, still open, or reopened by the run record). The count must equal the list."""
@@ -384,6 +399,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         _deploy_is_stack_top(story, prs, out)
         if recording_run:
             _run_bound_to_deploy(story, out, "env_runs[-1]")
+            _full_run_covers_every_case(story, out)
         _fails_became_bugs(story, bugs, out)
         return out
     if target == "DONE":
@@ -404,6 +420,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             out.append("MISSING evidence.env_test.figma_parity == pass (has %s)" % et.get("figma_parity"))
         if not et.get("full"):
             out.append("MISSING evidence.env_runs[-1].full (DONE needs one full final run: pass story %s ENV_TESTING … --full)" % sid)
+        _full_run_covers_every_case(story, out)
         for b in bugs or []:
             if b.get("story") == sid and b.get("state") != "done":
                 out.append("MISSING bug %s to be done (is %s)" % (b.get("id"), b.get("state")))

@@ -327,7 +327,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(data["awaiting_human"][0]["story"], "S1")
 
     def test_story_done_needs_both_case_counts_and_lead_word(self):
-        data = self.data()
+        data = self.data(); data["stories"]["S1"]["test_cases"] = ["TP-1", "TP-2", "TP-3"]
         for pid in ("jsfiller#1", "docs-platform#2"):
             data["prs"][pid]["state"] = "MERGED"
         data["stories"]["S1"]["state"] = "ENV_TESTING"
@@ -344,12 +344,12 @@ class PassCmd(unittest.TestCase):
         rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True, build="1", head=H, approved="ah-7"), self.io)
         self.assertEqual(rc, 0, out)
         data = self.data()
-        self.assertEqual(data["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 3, "fail": 0})
+        self.assertEqual(data["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 3, "fail": 0, "not_testable_here": 0})
         self.assertTrue(data["awaiting_human"][0]["consumed_at"])
 
     def test_reopen_voids_the_open_story_done_and_done_uses_the_newest_entry(self):
         # R2-6: a story_done approval is for one test run; leaving ENV_TESTING backwards voids it, a later run opens a new one
-        data = self.data()
+        data = self.data(); data["stories"]["S1"]["test_cases"] = ["TP-1", "TP-2", "TP-3"]
         for pid in ("jsfiller#1", "docs-platform#2"):
             data["prs"][pid]["state"] = "MERGED"
         data["stories"]["S1"]["state"] = "ENV_TESTING"
