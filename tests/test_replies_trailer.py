@@ -50,6 +50,11 @@ class Rework(unittest.TestCase):
         data = json.loads((self.d / "state.json").read_text()); data["epic"]["roles"]["lead_github"] = None; (self.d / "state.json").write_text(state.dumps(data))
         self.io.facts["jsfiller#1"] = {"threads": [thread("PRRT_1", "2026-10-13T09:00:00Z")]}
         rc, out = self.go(); self.assertEqual(rc, 2); self.assertIn("lead_github", out)
+    def test_unparsable_rework_since_fails_closed(self):
+        data = json.loads((self.d / "state.json").read_text()); data["prs"]["jsfiller#1"]["rework_since"]["at"] = "yesterday"
+        (self.d / "state.json").write_text(state.dumps(data))
+        self.io.facts["jsfiller#1"] = {"threads": [thread("PRRT_1", "2026-10-13T09:00:00Z", [("leadlogin", "2026-10-13T11:00:00Z")])]}
+        rc, out = self.go(); self.assertEqual(rc, 2); self.assertIn("rework_since.at", out)
     def test_bot_threads_ignored(self):
         t = thread("PRRT_2", "2026-10-13T09:00:00Z"); t["human"] = False
         self.io.facts["jsfiller#1"] = {"threads": [t]}

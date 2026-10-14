@@ -126,6 +126,8 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, lead_login: 
         # spec §3 REWORK DoD "replies posted": every human thread open when the rework started has a reply by the lead after it
         from . import github
         since = github.ts((pr.get("rework_since") or {}).get("at"))
+        if since is None:  # fail closed: a rework start that cannot be dated cannot bound the replies check
+            out.append("MISSING a parsable rework_since.at (has %r; expected %%Y-%%m-%%dT%%H:%%MZ) to verify the lead's replies" % (pr.get("rework_since") or {}).get("at"))
         pending = [t for t in facts.threads if t.get("human") and since and (github.ts(t.get("opened_at")) or datetime.datetime.min) <= since]
         if pending and not lead_login:
             out.append("MISSING epic.roles.lead_github (the lead's GitHub login) to verify the replies on %d human thread(s)" % len(pending))
