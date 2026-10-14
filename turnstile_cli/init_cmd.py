@@ -111,14 +111,16 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
         branch = _ensure_worktree(o, io, knowledge, wt)
         created = []  # rolled back when a later step fails, so the next run does not see "already initialised"
         try:
-            (delivery).mkdir(parents=True, exist_ok=True); created.append(delivery)
+            if not delivery.exists():  # round 2: a migrated delivery dir (ledger, briefs, reports moved in first) is never rolled back
+                created.append(delivery)
+            delivery.mkdir(parents=True, exist_ok=True)
             for sub in ("briefs", "reports", "evidence"):
                 (delivery / sub).mkdir(parents=True, exist_ok=True); (delivery / sub / ".gitkeep").touch()
-            st_mod.write_atomic(delivery / "state.json", st_mod.dumps(data))
-            (delivery / "decisions.md").write_text(
+            st_mod.write_atomic(delivery / "state.json", st_mod.dumps(data)); created.append(delivery / "state.json")
+            if not (delivery / "decisions.md").exists(): (delivery / "decisions.md").write_text(
                 "# Decisions — %s\n\n| Date | Topic | Decision | Source |\n|---|---|---|---|\n\n## Open questions\n\n"
                 "| # | Question | Owner | Asked | Answer |\n|---|---|---|---|---|\n" % o.epic)
-            (delivery / "plan.md").write_text(PLAN_TEMPLATE.read_text().replace("{{epic_key}}", o.epic))
+            if not (delivery / "plan.md").exists(): (delivery / "plan.md").write_text(PLAN_TEMPLATE.read_text().replace("{{epic_key}}", o.epic))
             _ensure_repo_files(delivery)
             ledger.append(delivery, "init %s (%s) on %s" % (o.epic, o.workitem, branch))
             rel = os.path.relpath(str(delivery), str(ws))

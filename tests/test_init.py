@@ -89,6 +89,16 @@ class Init(unittest.TestCase):
         self.assertFalse(d.exists()); self.assertFalse((ws2 / ".turnstile").exists()); self.assertFalse((ws2 / "CLAUDE.md").exists())
         self.assertEqual(init_cmd.run(opts(ws2, self.knowledge), FakeGit()), 0)  # a clean re-run works
 
+    def test_failed_init_keeps_a_migrated_delivery_dir(self):
+        # round 2: plan 3 moves ledger/briefs/reports in before init; a rollback must not delete them, init must not overwrite plan/decisions
+        import contextlib, io as _io
+        ws3 = self.tmp / "ws3"; d = ws3 / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"; (d / "reports").mkdir(parents=True)
+        (d / "ledger.md").write_text("old ledger\n"); (d / "reports" / "R.md").write_text("r"); (d / "decisions.md").write_text("mine")
+        with contextlib.redirect_stdout(_io.StringIO()): rc = init_cmd.run(opts(ws3, self.knowledge), FakeGit(fail={"commit"}))
+        self.assertEqual(rc, 2); self.assertTrue((d / "reports" / "R.md").exists()); self.assertIn("old ledger", (d / "ledger.md").read_text())
+        self.assertEqual((d / "decisions.md").read_text(), "mine"); self.assertFalse((d / "state.json").exists())
+        with contextlib.redirect_stdout(_io.StringIO()): self.assertEqual(init_cmd.run(opts(ws3, self.knowledge), FakeGit()), 0)
+
     def test_init_keeps_existing_claude_md(self):
         (self.ws / "CLAUDE.md").write_text("mine\n")
         init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
