@@ -23,6 +23,7 @@ def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str) -> dict:
     return {"epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
             "variant": env.get("variant") or "", "desk": env.get("desk") or "", "env_recipe": env.get("recipe") or "", "agent": agent,
             "brief_name": name, "brief_path": "briefs/%s.md" % name, "report_path": "reports/%s.md" % name,
+            "skill_dir": str(ROOT / "skills" / "turnstile"),
             "today": datetime.datetime.utcnow().strftime("%Y-%m-%d")}
 
 def parse_vars(var_list: List[str]) -> dict:

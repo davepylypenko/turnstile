@@ -13,6 +13,10 @@ class Templates(unittest.TestCase):
         for p in BRIEFS.glob("*.md"):
             ph = placeholders(p.read_text())
             self.assertIn("report_path", ph, p.name); self.assertIn("epic_key", ph, p.name)
+    def test_builtins_name_the_skill_dir_for_references(self):
+        b = brief_cmd.builtins({"epic": {}}, pathlib.Path("/tmp/d"), "tester", "X")
+        self.assertEqual(b["skill_dir"], str(ROOT / "skills" / "turnstile")); self.assertTrue((pathlib.Path(b["skill_dir"]) / "references" / "tools" / "figma.md").exists())
+        tpl = (BRIEFS / "tester.md").read_text(); self.assertIn("{{skill_dir}}/references/tools/figma.md", tpl); self.assertIn("{{skill_dir}}/{{env_recipe}}", tpl)
     def test_render_reports_missing(self):
         self.assertEqual(brief_cmd.render("a {{x}} b {{y}} {{x}}", {"x": "1"}), ("a 1 b {{y}} 1", ["y"]))
 
