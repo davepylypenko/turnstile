@@ -5,7 +5,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 
 ## Story and environment
 {{story_id}} — {{story_title}}. Mode: {{mode}} (`full` or `rerun`; rerun cases: {{rerun_cases}}).
-Environment: variant `{{variant}}`, desk `{{desk}}`, builds {{builds}}. Recipe: `{{env_recipe}}`. Credentials: {{credentials}} (from the lead; never written anywhere else).
+Environment: variant `{{variant}}`, desk `{{desk}}`, builds {{builds}}. Recipe: `{{env_recipe}}`. Credentials: in your launch prompt, not here (briefs are committed to git); never write them to a file or report.
 
 ## Test cases
 {{test_cases}}

@@ -62,8 +62,8 @@ READY with a paired PR outside the epic (locales): `--companions locales#5` so o
    `REVIEW-<n>`, `STORY-<S>-review`, `ENV-<S>`, `FIX-<n>-<slug>`, `STACK-<date>`, `COMMENTS-<n>`,
    `INVESTIGATE-<slug>`, `DEPLOY-<slug>-<date>`.
 2. Launch with the Agent tool: `subagent_type: "turnstile:<agent>"`, prompt = the `PROMPT:` line the command printed.
-   Agents: implementer (sonnet), reviewer (opus xhigh), story-reviewer (fable), stack-step, comments-handler,
-   investigator, tester, deployer (opus unless said). One agent per task; parallel agents only across different
+   For `tester` append the lead's test credentials to the prompt only (briefs are committed). Models: implementer and
+   deployer sonnet, reviewer opus xhigh, story-reviewer fable, the rest opus. One agent per task; parallel agents only across different
    repos or stories.
 3. On return read the ≤ 8-line reply (the report is in `reports/`), record the facts with `turnstile pass` / `bug`,
    then reply to the lead. Never paste agent output into the chat.
