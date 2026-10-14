@@ -31,6 +31,8 @@ def build_parser():
     ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
+    br = sub.add_parser("brief", help="render an agent brief from its template (the dispatch helper)"); br.add_argument("agent"); br.add_argument("name")
+    br.add_argument("--var", action="append", default=[], dest="vars"); br.add_argument("--force", action="store_true"); br.add_argument("--no-commit", action="store_true")
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
@@ -57,6 +59,9 @@ def main(argv=None):
             o = Options(**{k.replace("-", "_"): v for k, v in vars(a).items()
                            if k not in ("cmd", "delivery", "kind", "ident", "target")})
             return run(delivery, a.kind, a.ident, a.target, o)
+        if a.cmd == "brief":
+            from .brief_cmd import run as brief_run
+            return brief_run(delivery, a.agent, a.name, a.vars, force=a.force, no_commit=a.no_commit)
         if a.cmd == "bug":
             from . import bug_cmd
             if a.bug_cmd == "add":
