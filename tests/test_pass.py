@@ -404,8 +404,9 @@ class PassCmd(unittest.TestCase):
 
     def test_start_story_entries_are_opened_for_startable_stories(self):
         data = self.data()
-        data["stories"]["S2"] = dict(data["stories"]["S1"], state="PLANNED", after=[], title="Next")
+        data["stories"]["S2"] = dict(data["stories"]["S1"], state="PLANNED", after=[], parallel_with=["S1"], title="Next")  # S1 is IN_PROGRESS
         data["stories"]["S3"] = dict(data["stories"]["S1"], state="PLANNED", after=["S2"], title="Later")
+        data["stories"]["S4"] = dict(data["stories"]["S1"], state="PLANNED", after=[], title="Not parallel with S1")
         # a story leaves PLANNED only under a lead-approved plan.md (plan-submitted + approve); seed that here
         (self.d / "plan.md").write_text("plan"); data["epic"]["plan"] = {"path": "plan.md", "submitted_at": "x", "digest": state.digest("plan")}
         data["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "plan", "payload": "plan.md", "created_at": "x",

@@ -60,7 +60,7 @@ turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"     
 turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --slack <reply permalink> --approved ah-5
 turnstile pass pr jsfiller#13222 APPROVED --approvals isachivka --open-threads 0
 turnstile pass pr jsfiller#13222 MERGED --merged-sha <sha>
-turnstile pass story S1 IN_PROGRESS --approved ah-1                              # or --reason "lead 2026-10-13: start now"
+turnstile pass story S1 IN_PROGRESS --approved ah-1                              # the lead's start_story word; no --reason bypass
 turnstile pass story S1 INTEGRATION_REVIEW --build 173111 --head <stack-top sha>
 turnstile pass story S1 ENV_TESTING --report reports/STORY-S1-review.md --head <stack-top sha> --rounds 2
 turnstile pass story S1 DONE --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --approved ah-9

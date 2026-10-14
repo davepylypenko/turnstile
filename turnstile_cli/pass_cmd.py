@@ -212,7 +212,7 @@ def _has_open_entry(data: dict, type_: str, key: str, ident: str) -> bool:
 
 def _ensure_start_story_entries(data: dict) -> None:
     for sid, s in data.get("stories", {}).items():
-        if rules.startable(s, data["stories"]) and not _has_open_entry(data, "start_story", "story", sid):
+        if rules.startable(s, data["stories"], sid) and not _has_open_entry(data, "start_story", "story", sid):
             _open_entry(data, "start_story", story=sid)
 
 def _ensure_repo_files(delivery: pathlib.Path) -> None:

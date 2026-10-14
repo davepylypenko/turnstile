@@ -25,13 +25,14 @@ AI review order on one head: deep review (`reviewer` agent) → repo gate (`pdf-
 | State | DoD | Command |
 |---|---|---|
 | **PLANNED** | listed in the approved `plan.md` (`plan` entry approved, digest unchanged) | `turnstile plan-submitted` + the lead's approve line |
-| **IN_PROGRESS** | every ticket PR ≥ READY, each based on `stories.<S>.branch` or on another PR of the story (a stack) or MERGED; stack top deployed to the slot | `turnstile pass story <S> IN_PROGRESS --approved <start_story ah-id>` (also needs the plan approved and `after` stories DONE, or a `--reason` naming the lead for the dependency only) |
+| **IN_PROGRESS** | every ticket PR ≥ READY, each based on `stories.<S>.branch` or on another PR of the story (a stack) or MERGED; stack top deployed to the slot | `turnstile pass story <S> IN_PROGRESS --approved <start_story ah-id>` (also needs the plan approved, `after` stories DONE and no active story unless the plan lists them as `parallel_with`; no `--reason` override) |
 | **INTEGRATION_REVIEW** | whole-story diff reviewed by `story-reviewer` until clean; fixes in the ticket PRs with gates re-run | `turnstile pass story <S> INTEGRATION_REVIEW --build <build> --head <stack-top sha>` |
 | **ENV_TESTING** | `tester` ran every case + Figma parity; every fail became a bug; fixed; re-run; one full final run | enter: `turnstile pass story <S> ENV_TESTING --report reports/STORY-<S>-review.md --head <sha> --rounds <r>`; record a run (re-entry): `turnstile pass story <S> ENV_TESTING --report reports/ENV-<S>.md --cases-pass <n> --cases-fail <n> --figma-parity pass|fail [--full]` |
 | **DONE** | last run `--full` with 0 fails and parity pass; every bug of the story `done`; PRs ≥ READY; the lead's `story_done` word | `turnstile pass story <S> DONE --approved <ah-id>` |
 
-Stop rule: after DONE nothing starts until the lead says so; parallel stories (`parallel_with` or the lead's word) each
-have their own branch, stack, slot and tester run. Human review receives a story's units only after DONE (or with
+Stop rule: after DONE nothing starts until the lead approves the story's `start_story` entry (opened when the story becomes
+startable); two stories run at once only when the approved `plan.md` lists them as `parallel_with` (re-plan to add it); each
+has its own branch, stack, slot and tester run. Human review receives a story's units only after DONE (or with
 `human_review: per_pr` set by the lead in `plan.md` for a legacy story).
 
 ## Jira mapping (printed by `pass`, performed through the Atlassian MCP, recorded with `jira-synced`)

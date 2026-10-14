@@ -19,7 +19,6 @@ PR_FROM = {
     "MERGED": ["APPROVED"],
 }
 HEAD_RX = re.compile(r"^[0-9a-f]{8,40}$")
-LEAD_RX = re.compile(r"\blead\b", re.I)
 SLACK_PERMALINK_RX = re.compile(r"^https://[\w-]+\.slack\.com/archives/")
 
 def valid_head(h: Optional[str]) -> bool:
@@ -229,11 +228,26 @@ STORY_FROM = {
 }
 PR_AT_LEAST_READY = ["READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
 
-def is_lead_override(reason: Optional[str]) -> bool:
-    return bool(reason) and bool(LEAD_RX.search(reason))
+ACTIVE_STORY_STATES = ("IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING")
 
-def startable(story: dict, stories: Dict[str, dict]) -> bool:
-    return story.get("state") == "PLANNED" and all((stories.get(d) or {}).get("state") == "DONE" for d in story.get("after") or [])
+def _parallel(a_id: str, a: dict, b_id: str, b: dict) -> bool:
+    return b_id in (a.get("parallel_with") or []) or a_id in (b.get("parallel_with") or [])
+
+def _start_blockers(sid: str, story: dict, stories: Dict[str, dict]) -> List[str]:
+    """Spec §4.2 stop rule, 2026-10-14 finding 2: `after` stories must be DONE and an active story blocks the start unless
+    the approved plan lists the two as `parallel_with` (either direction). No --reason override exists."""
+    out = []
+    for dep in story.get("after") or []:
+        if (stories.get(dep) or {}).get("state") != "DONE":
+            out.append("MISSING story %s to be DONE first (after: in plan.md; is %s)" % (dep, (stories.get(dep) or {}).get("state")))
+    for oid, other in stories.items():
+        if oid != sid and other.get("state") in ACTIVE_STORY_STATES and not _parallel(sid, story, oid, other):
+            out.append("MISSING story %s to be DONE (is %s), or %s listed as parallel_with %s in the approved plan.md (edit plan.md, "
+                       "turnstile plan-submitted, the lead approves again)" % (oid, other.get("state"), sid, oid))
+    return out
+
+def startable(story: dict, stories: Dict[str, dict], sid: Optional[str] = None) -> bool:
+    return story.get("state") == "PLANNED" and not _start_blockers(sid or story.get("_id"), story, stories)
 
 def _prs_at_least_ready(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
     for pid, p in prs.items():
@@ -298,17 +312,11 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             if not reason:
                 out.append("MISSING --reason to reopen a story")
             return out
-        if plan_missing:  # spec §4.1: without the lead's plan approval no story leaves PLANNED; the lead --reason does not clear it
+        if plan_missing:  # spec §4.1: without the lead's plan approval no story leaves PLANNED
             out.append(plan_missing)
-        override = is_lead_override(reason)
-        if reason and not override:
-            out.append("MISSING --reason naming the lead's override (contains 'lead'), or an approved start_story entry")
-        for dep in story.get("after") or []:
-            if (stories.get(dep) or {}).get("state") != "DONE" and not override:
-                out.append("MISSING story %s to be DONE first (or --reason with the lead's override)" % dep)
-        if not override:
-            entry = latest_entry(awaiting, "start_story", "story", sid)
-            check_approved_entry(approved or (entry or {}).get("id"), "start_story", "story", sid, awaiting, out)
+        out.extend(_start_blockers(sid, story, stories))
+        entry = latest_entry(awaiting, "start_story", "story", sid)  # the lead's word, full stop: no --reason bypass (2026-10-14 finding 2)
+        check_approved_entry(approved or (entry or {}).get("id"), "start_story", "story", sid, awaiting, out)
         return out
     if target == "INTEGRATION_REVIEW":
         _prs_at_least_ready(story, prs, out)

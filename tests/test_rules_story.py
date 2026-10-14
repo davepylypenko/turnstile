@@ -75,20 +75,44 @@ class StoryRules(unittest.TestCase):
         out = rules.check_story(tested(), "DONE", prs("READY", "READY"), FIX["stories"], awaiting=[dict(DONE, story="S2")])
         self.assertTrue(any("story_done" in m for m in out), out)
 
-    def test_planned_needs_start_story_entry_or_lead_override(self):
+    def test_planned_needs_an_approved_start_story_entry_full_stop(self):
+        # 2026-10-14 finding 2: no --reason bypass; the lead's start_story approval is the only way out of PLANNED
         s = story("PLANNED")
         self.assertTrue(any("start_story" in m for m in rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"])))
         self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], awaiting=[START]), [])
-        self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], reason="lead 2026-10-13: go"), [])
-        out = rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], reason="I felt like it")
-        self.assertTrue(any("lead" in m for m in out), out)
+        for reason in ("lead 2026-10-13: go", "per lead", "I felt like it"):
+            out = rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], reason=reason)
+            self.assertTrue(any("start_story" in m for m in out), (reason, out))
+        out = rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], reason="lead: go", awaiting=[dict(START, approved_at=None)])
+        self.assertTrue(any("approved_at" in m for m in out), out)
+        self.assertFalse(hasattr(rules, "is_lead_override"))
 
-    def test_planned_waits_for_after_unless_lead_override(self):
+    def test_planned_waits_for_after_without_any_override(self):
         stories = {"S0": {"state": "IN_PROGRESS"}, "S1": story("PLANNED")}
         s = story("PLANNED"); s["after"] = ["S0"]
         out = rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START])
+        self.assertTrue(any("S0" in m and "DONE" in m for m in out), out)
+        out = rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START], reason="lead: run in parallel")
         self.assertTrue(any("S0" in m for m in out), out)
-        self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, stories, reason="lead: run in parallel"), [])
+        stories["S0"]["state"] = "DONE"
+        self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START]), [])
+
+    def test_parallel_start_only_through_parallel_with_in_the_plan(self):
+        # an active story (IN_PROGRESS / INTEGRATION_REVIEW / ENV_TESTING) blocks a start unless the plan lists them as parallel
+        for active in ("IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING"):
+            stories = {"S0": {"state": active, "parallel_with": []}, "S1": story("PLANNED")}
+            s = story("PLANNED")
+            out = rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START])
+            self.assertTrue(any("S0" in m and "parallel_with" in m for m in out), (active, out))
+            self.assertFalse(rules.startable(s, stories))
+            s["parallel_with"] = ["S0"]
+            self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START]), [])
+            self.assertTrue(rules.startable(s, stories))
+            s["parallel_with"] = []; stories["S0"]["parallel_with"] = ["S1"]  # either direction counts
+            self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, stories, awaiting=[START]), [])
+        stories = {"S0": {"state": "DONE", "parallel_with": []}, "S1": story("PLANNED")}
+        self.assertEqual(rules.check_story(story("PLANNED"), "IN_PROGRESS", {}, stories, awaiting=[START]), [])  # DONE does not block
+        self.assertTrue(rules.startable(story("PLANNED"), stories))
 
     def test_reopen_needs_reason(self):
         s = story("DONE")

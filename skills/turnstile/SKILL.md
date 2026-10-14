@@ -86,7 +86,8 @@ is deployed to the story's slot (dispatch `deployer`).
 5. `turnstile pass story S DONE --approved <story_done ah-id>` — needs the last run `--full` with 0 fails, parity pass,
    every bug of the story `done`, every PR ≥ READY.
 6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story and the sends of this
-   story's units wait for the lead's words (`start_story` / `send` entries; then `pass pr … ON_HUMAN_REVIEW --head …
+   story's units wait for the lead's words (`start_story` / `send` entries — there is no `--reason` way to start a story,
+   and a parallel start needs `parallel_with` in the approved plan; then `pass pr … ON_HUMAN_REVIEW --head …
    --slack <permalink> --reviewers a,b --approved <ah-id>` after the message went out).
 
 ## plan (re-plan after a scope change)
