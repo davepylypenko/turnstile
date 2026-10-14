@@ -139,7 +139,7 @@ def check(cmd: str, cwd: str = ".") -> None:
                   "git diff/log/show/status, turnstile …). The delivery dir is written only by 'turnstile pass'; reports go through the Write tool."
                   % (mention, bad[0][:60]))
 
-TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "-h", "--help", "--version"}
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "-h", "--help", "--version"}
 
 def _turnstile_sub_ok(flat: str) -> bool:
     """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""

@@ -26,6 +26,10 @@ def build_parser():
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
     sub.add_parser("status", help="reconcile + where we are")
+    bg = sub.add_parser("bug", help="record or update a bug found by the tester or the lead"); bsub = bg.add_subparsers(dest="bug_cmd")
+    ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
+    ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
+    bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
@@ -52,6 +56,13 @@ def main(argv=None):
             o = Options(**{k.replace("-", "_"): v for k, v in vars(a).items()
                            if k not in ("cmd", "delivery", "kind", "ident", "target")})
             return run(delivery, a.kind, a.ident, a.target, o)
+        if a.cmd == "bug":
+            from . import bug_cmd
+            if a.bug_cmd == "add":
+                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note)
+            if a.bug_cmd == "set":
+                return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
+            parser.parse_args(["bug", "--help"]); return 2
         if a.cmd == "plan-submitted":
             from .plan_cmd import run as plan_run
             return plan_run(delivery, no_commit=a.no_commit)
