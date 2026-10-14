@@ -13,11 +13,12 @@ Environment: variant `{{variant}}`, desk `{{desk}}`, builds {{builds}} (stack-to
 ## Screens and states → Figma frames
 {{figma_frames}}
 Parity tolerance: {{tolerance}}. Copy source: {{copy_source}}.
+Reference images: `evidence/{{story_id}}/<case>/figma.png` fetched with `curl -o` from the `__download_assets` export URL (png, scale 2), else the `__get_screenshot` URL, else the Figma REST export with `FIGMA_TOKEN` from your environment (if the lead exported it; it is never written anywhere). None works → `not_testable_here: no figma reference` for the affected rows and `--figma-parity not_testable_here`; never parity `pass` without `figma.png` (`{{skill_dir}}/references/tools/figma.md`).
 
 ## Evidence
 `evidence/{{story_id}}/<case>/` per `references/evidence.md`.
 
-Report → `{{report_path}}` § Env test; list every fail in the `turnstile bug add --story {{story_id}} …` form.
+Report → `{{report_path}}` § Env test; list every fail in the `turnstile bug add --story {{story_id}} …` form; totals as pass / fail / not_testable_here (the orchestrator records them with `--cases-pass --cases-fail --cases-not-testable`; a full run's three counts add up to the story's test cases).
 
 ## Don'ts
 No Slack, no Jira, no PR comments, no reviewer requests, no "ready", no merges, no rebase or force-push, no subagents,

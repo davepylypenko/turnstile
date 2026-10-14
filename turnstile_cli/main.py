@@ -15,7 +15,8 @@ def build_parser():
                      ("--reviewers", {}), ("--approved", {}), ("--approvals", {}), ("--open-threads", {"type": int}),
                      ("--reason", {}), ("--merged-sha", {}), ("--report", {}), ("--build", {}),
                      ("--cases-pass", {"type": int}), ("--cases-fail", {"type": int}),
-                     ("--figma-parity", {"choices": ["pass", "fail"]}),
+                     ("--figma-parity", {"choices": ["pass", "fail", "not_testable_here"]}),
+                     ("--cases-not-testable", {"type": int, "help": "cases with verdict not_testable_here in the recorded run (default 0)"}),
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
                      ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"})]:
         ps.add_argument(flag, **kw)

@@ -29,6 +29,7 @@ class Options:
     build: Optional[str] = None
     cases_pass: Optional[int] = None
     cases_fail: Optional[int] = None
+    cases_not_testable: Optional[int] = None
     figma_parity: Optional[str] = None
     failed_cases: Optional[str] = None
     companions: Optional[str] = None

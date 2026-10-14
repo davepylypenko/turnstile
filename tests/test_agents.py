@@ -51,3 +51,16 @@ class Agents(unittest.TestCase):
         mapping = (ROOT / "skills" / "turnstile" / "references" / "tools" / "figma.md").read_text()
         for suffix in ["get_screenshot", "get_design_context", "get_variable_defs", "get_metadata"]: self.assertIn("__" + suffix, mapping)
         self.assertIn("BLOCKED", mapping); self.assertNotIn("mcp__claude_ai_Figma__get_screenshot", mapping.split("prefix")[0][:0] + "")  # prefixes only as examples
+    def test_tester_saves_the_figma_reference_from_a_url_with_a_fallback_and_a_clear_outcome(self):
+        # round 2 R2-6: get_screenshot returns an image to the model, so figma.png is fetched from a URL with `curl -o`
+        text = (AGENTS / "tester.md").read_text()
+        for needle in ["__download_assets", "curl -o", "/v1/images/", "FIGMA_TOKEN", "not_testable_here: no figma reference"]: self.assertIn(needle, text, needle)
+        self.assertNotIn("saved with the Write tool", text)
+        mapping = (ROOT / "skills" / "turnstile" / "references" / "tools" / "figma.md").read_text()
+        for needle in ["__download_assets", "curl -o", "/v1/images/", "FIGMA_TOKEN", "not_testable_here: no figma reference", "scale=2"]: self.assertIn(needle, mapping, needle)
+        self.assertNotIn("saved with the Write tool", mapping)
+        brief = (ROOT / "skills" / "turnstile" / "references" / "briefs" / "tester.md").read_text()
+        for needle in ["figma.png", "FIGMA_TOKEN", "not_testable_here: no figma reference", "--cases-not-testable"]: self.assertIn(needle, brief, needle)
+        evidence = (ROOT / "skills" / "turnstile" / "references" / "evidence.md").read_text()
+        for needle in ["curl -o", "__download_assets", "FIGMA_TOKEN", "not_testable_here"]: self.assertIn(needle, evidence, needle)
+        self.assertNotIn("saved with the Write tool", evidence)

@@ -27,6 +27,19 @@ class BashGuard(unittest.TestCase):
         for cmd in cmds:
             r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
 
+    def test_curl_o_writes_the_figma_reference_into_evidence_only(self):
+        # round 2 R2-6: figma.png comes from a URL (download_assets / get_screenshot / the REST export) through `curl -o`
+        ev = str(self.ws / "delivery" / "evidence" / "S1" / "TP-1")
+        url = "https://figma-alpha-api.s3.us-west-2.amazonaws.com/images/abc?X-Amz-Expires=600&X-Amz-Signature=def"
+        self.assertAllowed(["mkdir -p %s && curl -sSf -o %s/figma.png \"%s\"" % (ev, ev, url),
+                            "curl --output %s/figma.png -L '%s'" % (ev, url),
+                            "curl -s -H \"X-Figma-Token: $FIGMA_TOKEN\" \"https://api.figma.com/v1/images/KEY?ids=1-2&format=png&scale=2\" | jq -r '.images[\"1:2\"]'",
+                            "curl -sSf -o %s/figma.png \"$(curl -s -H \"X-Figma-Token: $FIGMA_TOKEN\" 'https://api.figma.com/v1/images/KEY?ids=1-2&format=png' | jq -r '.images[\"1:2\"]')\"" % ev])
+        d = str(self.ws / "delivery")
+        self.assertBlocked(["curl -o %s/state.json %s" % (d, url), "curl -o %s/ledger.md %s" % (d, url), "curl -o %s/figma.png %s" % (d, url),
+                            "curl -o %s/../state.json %s" % (ev, url), "curl -o %s/$CASE/figma.png %s" % (str(self.ws / "delivery" / "evidence"), url),
+                            "curl -o delivery/evidence/S1/../../board.html %s" % url], "delivery-write")
+
     def test_blocks_round2_evasions(self):
         self.assertBlocked(['git -C "/my dir" push --force', '"git" push --force', "gh --repo=o/r pr merge 1", "gh pr --repo o/r merge 1",
                             'gh "pr" merge 1', "gh pr 'merge' 1", "gh api --method=PUT repos/o/r/pulls/1/merge",
