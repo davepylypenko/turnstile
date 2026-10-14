@@ -164,3 +164,89 @@ stack top, a persisting fail reopens its bug (key story + case); (4) a db bug st
 Known limitation recorded with finding 4: a multi-repo story has one stack top per repo and a single `deploy.head`; the
 check accepts any top, so a head change in the other repo after the deploy is not caught by the CLI (the story-reviewer's
 report names every head).
+
+## Round 2 (2026-10-14)
+
+Scope: `0acec8d..a0d6c5a` against the `## Resolution` table, spec §4–§7 and the core-review invariants. Method: the real hooks
+run on JSON payloads in a throwaway workspace (with symlinks `evidence/link → ../state.json` and `evidence/up → ..`); `rules`
+and `pass` on crafted state. Suite: 231 → **237 tests, `OK`** on Python 3.9.6. Every fix below is signed, has no trailer and is
+pushed to `main`.
+
+### Resolutions verified
+
+| # | Verdict | Evidence |
+|---|---|---|
+| 1 | Closed, with three gaps (R2-1, R2-3, R2-4) | Refused: `delivery/evidence/../state.json`, `…/../ledger.md`, `…/S1/../../ledger.md` (absolute), `evidence/link`, `evidence/up/ledger.md`, `evidence/up/`, `cd delivery/evidence && cp x ../ledger.md`, `git -C delivery/evidence add/commit`, `git add delivery/evidence/a.png`, `ln -s`, `cp -s`. Allowed: `mkdir -p …/evidence/S1/TP-1`, `node shot.mjs --out …/evidence/…/env.png`. The Write tool refuses the same `..`/symlink paths. |
+| 2 | Closed | PLANNED → IN_PROGRESS with `--reason "per lead"` and `--approved` set to a plan entry, a `story_done` entry, another story's `start_story` entry, or an unapproved entry is refused every time. No flag and no environment variable skips `check_approved_entry`. |
+| 3 | Closed | INTEGRATION_REVIEW re-entry needs `--build --head` and re-records the deploy. |
+| 4 | Closed for one repo; multi-repo closed now (R2-2) | A run on a head that is not the deploy head is refused. DONE needs `env_test.head == deploy.head`. |
+| 5 | Closed | `bug add --case` refuses a duplicate story + case. A re-fail reopens a done bug and appends to `runs`. |
+| 6 | Closed (nit R2-9) | The override applies only while `updatedAt` is newer than the bug's `updated_at`/`created_at`. |
+| 7 | Closed for Figma (R2-6 for the rest) | `references/tools/figma.md`; the tester inherits tools and has `disallowedTools`. |
+| 8–13, 15–17 | Closed | Read in code and tests. One regression in 12, fixed below as R2-5. |
+
+### Fixes applied in this round
+
+| Commit | Fix |
+|---|---|
+| `e3c122e` | **R2-2.** Every deploy record (`INTEGRATION_REVIEW --build --head`) snapshots `evidence.deploy.heads = {pr: head}` for every open PR of the story, across all repos. `rules._deploy_is_stack_top` (`rules.py:281`) refuses INTEGRATION_REVIEW, ENV_TESTING and DONE when any open PR's head differs from the snapshot or a PR was added since. `_story_gates_passed` (`rules.py:129`) and the Slack guard `_slack.story_ready` (`hooks/_slack.py:17`) apply the same check to a **DONE** story, so a push after DONE is neither sent nor passed to ON_HUMAN_REVIEW. Tests: `DeployHeadsSnapshot` (2), `test_send_refused_when_a_head_changed_after_the_story_deploy`. Deploys recorded before this change have no `heads` and keep the stack-top check only. |
+| `c23cf0e` | **R2-1, R2-3, R2-4.** `guard_bash.check`: a Bash cwd inside the delivery dir counts as a delivery write. The cwd persists across calls, so `cd delivery/evidence` followed by a separate `cp /tmp/x ../ledger.md` call, or `echo > board.html` from `delivery/`, passed before. Inline code (`node -e`, `python3 -c`, `perl -e` …), shells (`sh x.sh`, `bash …`) and `tar -P` get no evidence allowance. Before the fix, `node -e "…join('delivery','ledger.md')…" delivery/evidence/S1/a` passed because it also named an evidence path. `guard_state_edit` resolves the delivery dir from the file path when the cwd has no `.turnstile` above it; before, a `/` cwd let Write reach `board.html` and `.state.lock`. Tests: 2. |
+| `16326d2` | Lifecycle reference documents `deploy.heads`. |
+| `59f6c14` | **R2-5 (regression of 12, migration blocker).** The rollback `rmtree`-ed the delivery dir even when it existed before `init`. Plan 3 moves `MYD-16538-docs/` there first, so a failed commit would have deleted the migrated ledger, briefs and reports. `init` also overwrote an existing `plan.md`/`decisions.md`. Now only what `init` created is removed (including `state.json`, so a re-run works), and existing `plan.md`/`decisions.md` are kept. Test `test_failed_init_keeps_a_migrated_delivery_dir`. |
+
+### Findings still open
+
+**Major**
+
+- **R2-6. `figma.png` "saved with the Write tool" is not possible** (`references/evidence.md:6,16`, `agents/tester.md:15`).
+  - `get_screenshot` returns image content to the model. Write writes text, and the model cannot emit PNG bytes.
+  - The tester will either stop (`figma.md` says never mark parity `pass` without `figma.png`) or write a non-PNG file.
+  - **Fix (lead decision):**
+    - (a) The Figma REST image export: `GET /v1/images/<file>?ids=<node>&format=png`, then `curl -o …/evidence/<S>/<case>/figma.png`. The hook allows this. It needs a Figma token in the tester's environment, never in the brief.
+    - (b) Or, if the connector's `download_assets` writes a file, use that.
+    - (c) Or drop `figma.png` and record `figma: <file:node>` plus the tester's verdict in `diff.md`.
+  - Until one of these is chosen, the first ENV_TESTING of plan 3 stalls.
+- **R2-7. Story passes never check GitHub** (`pass_cmd.run`, story branch).
+  - A push with no `pass pr` leaves `state.json` stale. `DONE` then passes on the old heads, and the Slack guard (state only) lets the send through.
+  - `pass … ON_HUMAN_REVIEW` refuses afterwards, because it verifies the head, but the message is already out. The lead's `ask` prompt is the only stop.
+  - **Fix (~15 lines plus fixture updates):** a deploy record, ENV_TESTING entry, a run record and DONE call `io.github_facts` for every open PR of the story and refuse on any head mismatch. `--offline` refuses DONE. Interim rule: run `turnstile reconcile` immediately before `pass story … DONE` and before every send (SKILL.md `## story-gate` step 5).
+
+**Minor**
+
+- **R2-8.** `git checkout|restore|reset` that names no delivery path still passes (`guard_bash.py:204`). Example: `git checkout HEAD~3 -- .` at the knowledge worktree root rolls `state.json` and `ledger.md` back. **Fix:** refuse `GIT_RESTORE` whenever the cwd, or `-C`, is the knowledge worktree that contains the delivery dir (`git rev-parse --show-toplevel` of the delivery dir).
+- **R2-9.** Bug timestamps have minute precision (`pass_cmd._now`, `board.html:91`). A board change and a later reopen or `bug set` within the same minute resolve in the board's favour. **Fix:** seconds in `bug.updated_at`, or compare with `>=` against a seconds-precise stamp.
+- **R2-10.** `--full` is self-declared. A full run's `cases.pass + cases.fail (+ not_testable_here)` is not compared with `len(stories.<S>.test_cases)`, and `not_testable_here` has no flag (spec §7.1). **Fix:** `--cases-not-testable`, and refuse `--full` unless the sum equals the story's case count.
+- **R2-11.** Spec §4.1, "no agent starts" before plan approval: `turnstile brief` does not check `plan_approval_missing`. **Fix:** refuse briefs for every agent except `investigator` while the plan is unapproved.
+- **R2-12.** The tester's `disallowedTools` names only `mcp__plugin_slack_slack__*` and `mcp__claude_ai_Atlassian__*`. Under another connector prefix, Jira writes are blocked only in prose. Slack sends still hit `guard_slack`, whose matcher is prefix-agnostic. The tester also inherits Bash, so "no pushes" is prose. **Fix:** a PreToolUse matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)` that refuses unless the caller is the orchestrator. If agent identity is unavailable in the payload, accept the prose rule and record it.
+- **R2-13 (nit).** INTEGRATION_REVIEW re-entry with `--report --build --head` records a review round instead of the deploy: `_apply_story_evidence` checks `--report` first (`pass_cmd.py:200`). Refuse `--report` on that re-entry.
+
+### Spec §4–§7: still unenforced
+
+R2-7 (GitHub facts at story gates), R2-10 (full run equals the test plan; `not_testable_here`), R2-11 (§4.1 "no agent starts"),
+§7.1 "copy verbatim" and "0 open discrepancies" (self-reported through `--figma-parity`; accepted), and the §7 tester
+"cannot push" (prose, R2-12). §6 is covered except R2-8.
+
+### Verdict
+
+**Ready for plan 3 (migration): yes, with conditions.** R2-5 was the only migration blocker and is fixed. R2-6 does not block
+the cut-over, but it blocks the first ENV_TESTING, so the lead must pick (a), (b) or (c) before the first story gate.
+
+What the lead must do live, before the cut-over:
+
+1. With the plugin installed, in a session in **`bypassPermissions`** mode, trigger a guarded Slack send that the state
+   allows. Confirm that the `ask` prompt appears. **If it does not appear, the verdict flips to no.**
+2. From a **background subagent**, trigger the same allowed send. Confirm that it is denied, not sent.
+3. Type `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the prompt. Confirm that it runs, which shows that `!` lines skip
+   PreToolUse. If the hook blocks it, approve from a separate terminal and update the README.
+4. Do one dry run per agent (eight) on a throwaway branch in a sandbox repo. For the reviewer, confirm that `pdf-review` and
+   `crit-review` run without the `Agent` tool.
+5. Do one tester dry run against the env recipe. It proves the Figma tool resolution in the lead's environment and, depending
+   on the R2-6 choice, writes a real `figma.png`.
+6. Migration `state.json`:
+   - `gate_check: null` for skill-gated repos;
+   - `ci_ignore: ["pdf-review", "gate / gate"]` for jsfiller and docs-platform;
+   - each PR's real `base`;
+   - `stories.<S>.branch`;
+   - for each migrated story past IN_PROGRESS, a deploy re-recorded through `INTEGRATION_REVIEW --build --head`, so that
+     `deploy.heads` exists.
+7. Until R2-7 lands, run `turnstile reconcile` before every `pass story … DONE` and before every send.
