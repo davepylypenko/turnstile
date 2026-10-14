@@ -52,7 +52,7 @@ function tiles() {
   const prs = Object.values(STATE.prs || {});
   const t = PR_STATES.map(s => ({ n: prs.filter(p => p.state === s).length, l: s }));
   t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: openBugs(), l: 'Open bugs' },
-         { n: (STATE.awaiting_human || []).filter(a => !a.approved_at).length, l: 'Awaiting humans' });
+         { n: (STATE.awaiting_human || []).filter(a => !a.approved_at && !a.voided_at && !a.consumed_at).length, l: 'Awaiting humans' });
   document.getElementById('tiles').innerHTML = t.map(x => '<div class="tile"><b>' + x.n + '</b><span>' + esc(x.l) + '</span></div>').join('');
 }
 function gateCell(p) {
@@ -85,18 +85,20 @@ function stories() {
     }).join('') + '</tbody></table></div>';
 }
 const BUG_STATES = ['todo', 'ai', 'testing', 'done'];
-let bugOverrides = {}, bugsDb = null, bugsCanWrite = false;
-const bugState = b => (bugOverrides[b.id] && BUG_STATES.includes(bugOverrides[b.id].status)) ? bugOverrides[b.id].status : b.state;
+let bugOverrides = {}, bugsDb = null, bugsCanWrite = false, renderPending = false;
+const ts = s => { const n = Date.parse(s || ''); return isNaN(n) ? 0 : n; };
+// the db override renders only while it is newer than the bug in state.json (bug set / a reopen by a run record wins afterwards)
+const bugState = b => { const o = bugOverrides[b.id]; return (o && BUG_STATES.includes(o.status) && ts(o.updatedAt) > ts(b.updated_at || b.created_at)) ? o.status : b.state; };
 const openBugs = () => (STATE.bugs || []).filter(b => bugState(b) !== 'done').length;
 function bugs() {
   const counts = {}; (STATE.bugs || []).forEach(b => { const k = bugState(b); counts[k] = (counts[k] || 0) + 1; });
   document.getElementById('bugs').innerHTML =
     '<div class="tiles">' + BUG_STATES.map(k => '<div class="tile"><b>' + (counts[k] || 0) + '</b><span>' + k + '</span></div>').join('') + '</div>' +
-    '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Bug</th><th>Source</th><th>PR</th><th>Figma</th><th>State</th><th>Note</th></tr></thead><tbody>' +
+    '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Case</th><th>Bug</th><th>Source</th><th>PR</th><th>Figma</th><th>State</th><th>Note</th></tr></thead><tbody>' +
     (STATE.bugs || []).map(b => {
       const cur = bugState(b);
       const manual = bugOverrides[b.id] ? '<span class="manual">changed ' + esc(String(bugOverrides[b.id].updatedAt || '').slice(0, 16).replace('T', ' ')) + '</span>' : '';
-      return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
+      return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td class="k">' + esc(b.case || '—') + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
         (b.pr ? '<a href="' + esc(prUrl(b.pr)) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td class="k">' + esc(b.figma || '—') + '</td>' +
         '<td>' + badge(cur) + ' <select class="bug" data-bug="' + esc(b.id) + '"' + (bugsCanWrite ? '' : ' disabled title="Status changes are saved by the board owner"') + '>' +
         BUG_STATES.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join('') + '</select>' + manual + '</td>' +
@@ -110,12 +112,21 @@ function bugs() {
     finally { sel.disabled = !bugsCanWrite; }
   }));
 }
+function renderBugs() {
+  // a snapshot while the viewer holds a dropdown open must not destroy it: render once it closes
+  const el = document.activeElement;
+  if (el && el.matches && el.matches('select.bug')) {
+    if (!renderPending) { renderPending = true; el.addEventListener('blur', () => { renderPending = false; renderBugs(); }, { once: true }); }
+    return;
+  }
+  bugs(); tiles();
+}
 async function connectBugsDb() {
   try {
     const db = await claude.use('db'); if (!db) return; bugsDb = db;
     const user = await claude.use('user'); const w = user ? await user.can('data.write') : null;
     bugsCanWrite = (w === null || w === undefined) ? true : !!w; bugs();
-    db.collection('bugs').onSnapshot(snap => { const next = {}; for (const d of snap.docs) { if (d.exists) next[d.id] = d.data(); } bugOverrides = next; bugs(); tiles(); }, () => {});
+    db.collection('bugs').onSnapshot(snap => { const next = {}; for (const d of snap.docs) { if (d.exists) next[d.id] = d.data(); } bugOverrides = next; renderBugs(); }, () => {});
   } catch (e) { /* no db in this view */ }
 }
 function awaiting() {
