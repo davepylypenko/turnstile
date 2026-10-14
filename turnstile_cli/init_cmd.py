@@ -74,6 +74,9 @@ def build_state(o: InitOptions) -> dict:
 def _ensure_worktree(o: InitOptions, io: InitIO, knowledge: pathlib.Path, wt: pathlib.Path) -> str:
     branch = epic_branch_name(o.epic)
     if wt.exists():
+        current = io.git(["branch", "--show-current"], wt).strip()
+        if current != branch:  # e.g. --knowledge points at a clone inside the workspace: never write the epic onto its branch
+            raise TurnstileError("%s exists on branch %r, not %s; pass a --knowledge clone outside the workspace or move it" % (wt, current, branch))
         return branch
     if io.git(["branch", "--list", branch], knowledge).strip():
         io.git(["worktree", "add", str(wt), branch], knowledge)
@@ -96,6 +99,9 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
         delivery = wt / "context" / "workitems" / o.workitem / "delivery"
         if (delivery / "state.json").exists():
             raise TurnstileError("already initialised: %s (state.json exists; run turnstile status)" % delivery)
+        marker = ws / ".turnstile"
+        if marker.exists() and marker.read_text().strip() != os.path.relpath(str(delivery), str(ws)):
+            raise TurnstileError("%s points at another delivery (%s); one epic per workspace" % (marker, marker.read_text().strip()))
         branch = _ensure_worktree(o, io, knowledge, wt)
         for sub in ("briefs", "reports", "evidence"):
             (delivery / sub).mkdir(parents=True, exist_ok=True); (delivery / sub / ".gitkeep").touch()

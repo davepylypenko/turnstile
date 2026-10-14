@@ -90,3 +90,13 @@ class Init(unittest.TestCase):
         self.assertEqual(subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True).stdout.strip(), "epic/myd-1")
         self.assertIn("turnstile: init MYD-1", subprocess.run(["git", "log", "--oneline"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
+
+    def test_init_refuses_knowledge_clone_inside_workspace_and_foreign_marker(self):
+        k = self.ws / "pdffiller-knowledge"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(k)], check=True)
+        io = init_cmd.InitIO()
+        self.assertEqual(init_cmd.run(opts(self.ws, k), io), 2)
+        self.assertFalse((k / "context").exists())
+        (self.ws / ".turnstile").write_text("other/delivery\n")
+        self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), FakeGit()), 2)
+        self.assertEqual((self.ws / ".turnstile").read_text(), "other/delivery\n")
