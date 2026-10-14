@@ -12,7 +12,7 @@
     "environment": { "variant": "v1", "desk": "desk05" }
   },
   "stories": {
-    "S1": { "title": "Header", "tickets": ["MYD-10", "MYD-11"], "repos": ["jsfiller"], "after": [], "parallel_with": [],
+    "S1": { "title": "Header", "tickets": ["MYD-10", "MYD-11"], "repos": ["jsfiller"], "branch": "epic_myd-1", "after": [], "parallel_with": [],
             "state": "IN_PROGRESS", "test_cases": ["TP-1"], "figma": [], "env_slot": { "variant": "v1" },
             "human_review_units": [], "evidence": {} }
   },

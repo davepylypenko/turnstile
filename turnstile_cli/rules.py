@@ -240,6 +240,21 @@ def _prs_at_least_ready(story: dict, prs: Dict[str, dict], out: List[str]) -> No
         if p.get("story") == story.get("_id") and p.get("state") not in PR_AT_LEAST_READY:
             out.append("MISSING PR %s at least READY (is %s)" % (pid, p.get("state")))
 
+def _stacked_into_story_branch(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
+    """Spec §4.2 IN_PROGRESS DoD: every ticket PR of the story is stacked or merged into the story branch. A PR's base is
+    the story branch or the branch of another PR of the same story (a stack); MERGED PRs are exempt."""
+    sid = story.get("_id"); sb = story.get("branch")
+    if not sb:
+        out.append("MISSING stories.%s.branch (the story branch the ticket PRs stack into; set it in plan.md and re-run plan-submitted)" % sid)
+        return
+    mine = {pid: p for pid, p in prs.items() if p.get("story") == sid}
+    for pid, p in mine.items():
+        if p.get("state") == "MERGED":
+            continue
+        allowed = {sb} | {q.get("branch") for qid, q in mine.items() if qid != pid and q.get("branch")}
+        if p.get("base") not in allowed:
+            out.append("MISSING PR %s based on the story branch %s or on another PR of the story (base is %s)" % (pid, sb, p.get("base")))
+
 def _review_head_bound(story: dict, out: List[str]) -> None:
     ev = story.get("evidence") or {}
     ir, dp = ev.get("integration_review") or {}, ev.get("deploy") or {}
@@ -277,6 +292,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         return out
     if target == "INTEGRATION_REVIEW":
         _prs_at_least_ready(story, prs, out)
+        _stacked_into_story_branch(story, prs, out)
         dp = (story.get("evidence") or {}).get("deploy") or {}
         if not dp.get("build"):
             out.append("MISSING evidence.deploy.build (stack top deployed to the story env slot)")
