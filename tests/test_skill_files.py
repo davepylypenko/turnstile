@@ -33,6 +33,13 @@ class SkillFiles(unittest.TestCase):
             self.assertTrue((REFS / name).exists(), name)
     def test_lifecycle_tables_cover_every_state(self):
         text = (REFS / "lifecycle.md").read_text()
+        for k in ["turnstile threads", "self_resolved", "needs_lead"]: self.assertIn(k, text, k)
+        skill = (SKILL / "SKILL.md").read_text()
+        for k in ["turnstile threads", "self_resolved", "needs_lead"]: self.assertIn(k, skill, k)
+        spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-10-13-turnstile-design.md").read_text()
+        for k in ["2026-10-14", "self_resolved", "needs_lead", "turnstile threads", "/replies"]: self.assertIn(k, spec, k)
+        readme = (ROOT / "README.md").read_text()
+        for k in ["turnstile threads", "self_resolved", "needs_lead", "agent_github", "resolve-human-thread", "issue-comment"]: self.assertIn(k, readme, k)
         for s in ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED", "PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]:
             self.assertIn("**" + s + "**", text)
         for k in ["used_at", "rework_since", "human_review: per_pr", "--full", "stories.<S>.branch"]: self.assertIn(k, text, k)

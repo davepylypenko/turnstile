@@ -7,6 +7,12 @@ Every story pass into INTEGRATION_REVIEW (a deploy record), ENV_TESTING and DONE
 `evidence.deploy.heads` (`IO.github_head`) and is refused when any differs from the snapshot — a push without `pass pr` cannot
 hide behind a stale `state.json`. `--offline` records `deploy.head_verified: false` and is refused at DONE.
 
+Review threads (lead rule 2026-10-14): `turnstile threads <repo#n> --self-resolved <ids> --needs-lead <ids>` records each human
+thread's class on the PR from GitHub facts, bound to the reviewer's last comment. The Bash guard lets a reply through only on the
+REST replies route, for a classified thread of a REWORK PR, `self_resolved` at once and `needs_lead` after the lead approved that
+thread's `reply` entry, and only while GitHub shows no newer reviewer comment; issue comments, review submissions and resolving a
+human thread are refused for everyone.
+
 ## PR states
 
 | State | DoR (entry) | DoD (exit) | Command that enters it |
@@ -15,7 +21,7 @@ hide behind a stale `state.json`. `--offline` records `deploy.head_verified: fal
 | **AI_REVIEW** | DEV done | **loop until clean on one head**: `deep_review.clean` + `gate.result = pass` (and `gate_check` green on GitHub) + `copilot.open_threads = 0` where `repo.copilot`; all for `head == pr.head` | `turnstile pass pr <id> AI_REVIEW --head <sha> --ci success` (re-enters itself after a push; voids an open `send`) |
 | **READY** | AI_REVIEW done, head verified online | head unchanged; `blocked_by` null or MERGED for sending; story DONE (or `human_review: per_pr`) | `turnstile pass pr <id> READY --head <sha> --deep-review reports/REVIEW-<n>.md --rounds <r> --gate <gate>:pass:<run-url> [--copilot 0] [--companions locales#5]` → opens `send` |
 | **ON_HUMAN_REVIEW** | lead approved the `send` (bound to the head); message went out through the guarded tool (`used_at`) | ≥ 1 approval for the head; 0 unresolved human threads; no changes requested | `turnstile pass pr <id> ON_HUMAN_REVIEW --head <sha> --slack <permalink> --reviewers a,b --approved <ah-id>` → Jira On Review |
-| **REWORK** | push after send, new human thread, or changes requested | fixes pushed; gate + Copilot green on the new head (deep review is **not** repeated: `rework_since` is set); the lead replied on every human thread open at `rework_since.at`; the lead approved the `reply` entry and the reply went out | `turnstile pass pr <id> REWORK --head <sha> --reason "<thread id or push>"` (opens `reply`); back with `ON_HUMAN_REVIEW --head <new> --ci success --gate … --slack <reply permalink> --approved <ah-id>` |
+| **REWORK** | push after send, new human thread, or changes requested | fixes pushed; gate + Copilot green on the new head (deep review is **not** repeated: `rework_since` is set); every human thread opened since the send (`evidence.human.sent_at`) and every unresolved one is classified (`turnstile threads`, from GitHub facts) and has a reply on GitHub newer than its last reviewer comment: `self_resolved` → the agent's reply (`epic.roles.agent_github`, default the lead's login), posted at once; `needs_lead` → posted after the lead approved that thread's `reply` entry (or the lead replied in person from another login); a reviewer comment newer than the classification needs a new one. No Slack message, no blanket approval | `turnstile pass pr <id> REWORK --head <sha> --reason "<thread id or push>"` (opens no entry); `turnstile threads <id> --self-resolved <ids> --needs-lead <ids> --report reports/COMMENTS-<n>.md` (one `reply` entry per needs_lead thread); back with `turnstile pass pr <id> ON_HUMAN_REVIEW --head <new> --ci success --gate …` (no `--slack`/`--approved`: refused; sets `sent_head`, consumes the thread entries) |
 | **APPROVED** | ON_HUMAN_REVIEW done | lead merged | `turnstile pass pr <id> APPROVED --approvals a,b --open-threads 0` → opens `merge` |
 | **MERGED** | squash-merged by the lead | — | `turnstile pass pr <id> MERGED --merged-sha <sha>` → Jira On Hold; unblocks dependants; notes the story |
 

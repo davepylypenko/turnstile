@@ -21,8 +21,9 @@ Every report starts with `# <TYPE> — <subject> — <date>` and a `Status:` lin
 `turnstile pass` lines to run.
 
 ## Comments
-`reports/COMMENTS-<n>.md` — thread table (id · author · human/Copilot · opened at · verdict · commit · resolved?) · Copilot
-loop rounds · draft replies (per `references/slack.md`) for the lead to post · new head · gate state.
+`reports/COMMENTS-<n>.md` — thread table (id · author · human/Copilot · opened at · class `self_resolved`/`needs_lead` · verdict ·
+commit · reply URL or `draft` · resolved?) · the `turnstile threads` line run · Copilot loop rounds · needs_lead drafts word for word
+with their `ah-<n>` (per `references/slack.md` § Thread replies) · new head · gate state.
 
 ## Investigation
 `reports/INVESTIGATE-<slug>.md` — question · hypotheses · evidence per hypothesis (file:line / command → output) ·

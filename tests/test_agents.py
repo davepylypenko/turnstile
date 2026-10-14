@@ -64,6 +64,16 @@ class Agents(unittest.TestCase):
         evidence = (ROOT / "skills" / "turnstile" / "references" / "evidence.md").read_text()
         for needle in ["curl -o", "__download_assets", "FIGMA_TOKEN", "not_testable_here"]: self.assertIn(needle, evidence, needle)
         self.assertNotIn("saved with the Write tool", evidence)
+    def test_comments_handler_replies_to_self_resolved_threads_and_stops_only_for_the_lead(self):
+        # lead rule 2026-10-14
+        text = (AGENTS / "comments-handler.md").read_text()
+        for needle in ["self_resolved", "needs_lead", "turnstile threads", "/replies", "at once", "decisions.md", "another team", "disagree",
+                       "resolveReviewThread", "Copilot", "gh pr comment", "never resolve", "re-classify"]:
+            self.assertIn(needle, text, needle)
+        self.assertNotIn("the lead posts the GitHub replies themself", text)
+        brief = (ROOT / "skills" / "turnstile" / "references" / "briefs" / "comments-handler.md").read_text()
+        for needle in ["turnstile threads", "self_resolved", "needs_lead", "/replies", "{{sent_at}}"]:
+            self.assertIn(needle, brief, needle)
     def test_no_agent_carries_frontmatter_hooks(self):
         # round 3: Claude Code 2.1.x ignores hooks/mcpServers/permissionMode in plugin agent frontmatter (warns); the plugin-level guards
         # read the payload's agent_type (turnstile:<role>) instead

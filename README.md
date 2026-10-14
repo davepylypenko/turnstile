@@ -24,14 +24,17 @@ claude plugin install turnstile
 - `turnstile pass` — the only way to change state; validates DoR/DoD, verifies the PR head against GitHub, then writes
   the ledger, renders the board, commits the state and tells you which Jira transition to make.
 - `turnstile reconcile` — read-only drift check against GitHub; every command it proposes is one `pass` would accept.
+- `turnstile threads` — records each human review thread as `self_resolved` (the agent replies at once) or `needs_lead`
+  (the reply waits for the lead's word on that thread), from GitHub facts.
 - `turnstile init` / `plan-submitted` / `brief` / `bug add|set` — the epic skeleton, the lead-approved plan (a re-plan cannot
   move a started story's branch), agent briefs and the bug list (one bug per story + test case), all written through the
   same guarded path as `pass`.
 - Skill `turnstile` (`skills/turnstile/SKILL.md`): `init`, `status`, `pass`, `dispatch <agent> <brief>`, `story-gate <S>`,
   `plan`; references for DoR/DoD, kick-off, briefs, PR body, Slack, reports, evidence and env recipes.
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
-- Hooks that block sends, merges, reviewer requests, force pushes and manual state edits unless the lead approved
-  that exact action.
+- Hooks that block sends, merges, reviewer requests, force pushes, PR comments, review submissions, resolving human
+  threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
+  a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
   anything reaches human review.
 
@@ -39,7 +42,7 @@ claude plugin install turnstile
 
 ```
 turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel --knowledge ../pdffiller-knowledge \
-  --lead davyd.pylypenko --lead-github <login> --github-org pdffiller \
+  --lead davyd.pylypenko --lead-github <login> [--agent-github <login the agents' gh posts as>] --github-org pdffiller \
   --repo '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
   --repo '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}' \
   --variant l2f-funnel --desk desk05 --chat-language Ukrainian          # the epic branch is cut from origin/<base> after a fetch
@@ -58,8 +61,11 @@ turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REV
 ! TURNSTILE_LEAD=1 turnstile approve ah-3       # the lead types this in the Claude Code prompt; agents never do
 turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka --approved ah-3
 turnstile jira-synced jsfiller#13222 "On Review"
-turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"      # opens a 'reply' entry for the lead
-turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --slack <reply permalink> --approved ah-5
+turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"      # opens no entry
+turnstile threads jsfiller#13222 --self-resolved PRRT_kwDOa --needs-lead PRRT_kwDOc --report reports/COMMENTS-13222.md   # one 'reply' entry per needs_lead thread
+gh api -X POST repos/pdffiller/jsfiller/pulls/13222/comments/2412345678/replies -f body='Fixed in 9f1c2a3b'   # self_resolved: at once
+! TURNSTILE_LEAD=1 turnstile approve ah-5       # the lead's word on the needs_lead thread; then its reply goes out the same way
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass   # no --slack/--approved from REWORK
 turnstile pass pr jsfiller#13222 APPROVED --approvals isachivka --open-threads 0
 turnstile pass pr jsfiller#13222 MERGED --merged-sha <sha>
 turnstile pass story S1 IN_PROGRESS --approved ah-1                              # the lead's start_story word; no --reason bypass
@@ -82,18 +88,37 @@ Copilot threads, `--approvals a,b` with a login missing from `latestReviews` for
 changes requested at APPROVED, `MERGED` while GitHub shows the PR open, any unsigned commit in the PR, a PR base that is not the recorded `base`. Self-reported evidence never outranks GitHub. The gate's GitHub context is `epic.repos.<repo>.gate_check` (default: the gate name; `null` for a skill gate that posts no check, e.g. `pr-review`, where the report file is the evidence). Entering AI_REVIEW, CI is the check contexts minus `ci_ignore` (default: the gate's context; jsfiller/docs-platform: `["pdf-review", "gate / gate"]`), because the gate runs during AI_REVIEW; from READY on the whole rollup must be green. `--offline` skips the check with a loud `WARN` line and records
 `evidence.head_verified: false`; `READY` and `ON_HUMAN_REVIEW` stay refused until a pass runs online for that head.
 Every commit message is checked for a `Co-Authored-By` trailer or the generated-with footer and the PR body for the
-footer (R3-10). From REWORK, ON_HUMAN_REVIEW requires a reply by `epic.roles.lead_github` after `rework_since.at` on
-every human thread that was open then.
+footer (R3-10). From REWORK, ON_HUMAN_REVIEW requires, for every human thread opened since the send
+(`evidence.human.sent_at`) and every unresolved one, a classification (`prs.<id>.threads`) that covers the reviewer's last
+comment and a reply newer than that comment: by `epic.roles.agent_github` (default `lead_github`) for `self_resolved`, after
+the lead approved the thread's `reply` entry for `needs_lead` (a reply from the lead's own login, when it differs from the
+agents', also settles it). `--slack`, `--approved` and `--reviewers` are refused on that pass: the replies notify the
+reviewers, and only `needs_lead` threads wait for the lead.
+
+### Review threads (lead rule 2026-10-14)
+
+"If a reviewer left a comment and you resolved it yourself, reply immediately without asking; stop only on comments that
+need the lead's decision or involvement." The comments-handler classifies every human thread and records it with
+`turnstile threads <repo#n> --self-resolved <ids> --needs-lead <ids> [--report reports/COMMENTS-<n>.md]` (REWORK only; ids
+are `PRRT_…` thread ids or REST comment ids, checked against GitHub: human thread, reviewer comment present). `self_resolved`
+= fixed in code or answered with a code-level justification: the agent replies at once through
+`gh api -X POST repos/<org>/<repo>/pulls/<n>/comments/<top-level comment id>/replies`. `needs_lead` = a product, design, scope
+or architecture decision, a disagreement on direction, a conflict with a recorded decision, another team: one `reply` entry
+per thread, approved by the lead like every other entry, then the reply goes out. Each classification is bound to the
+reviewer's last comment; a newer one needs a new classification (which voids a `reply` entry made for the old state).
+`turnstile threads <repo#n>` without ids lists the threads in scope; `turnstile status` shows what they still need.
 
 ### The lead's word (`awaiting_human`)
 
-`pass` opens entries for the lead: `send` on READY, `reply` on REWORK, `merge` on APPROVED, `story_done` when a story
+`pass` opens entries for the lead: `send` on READY, `merge` on APPROVED, `story_done` when a story
 enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories are DONE. Only the lead approves them
 (see "How the lead approves"). `pass … --approved <ah-id>` then requires an entry of the right type for that
 PR/story that is approved, not consumed and not voided; the pass consumes it. A `send` is voided when the PR drops
 back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message, and the message must
 have gone out through the guarded tool (`used_at`) before the PR can be passed to ON_HUMAN_REVIEW. `plan` entries are
-opened by `plan-submitted`; no story leaves PLANNED until the newest one is approved and `plan.md` is unchanged.
+opened by `plan-submitted`; no story leaves PLANNED until the newest one is approved and `plan.md` is unchanged. `reply`
+entries are opened by `turnstile threads`, one per `needs_lead` thread; each allows the GitHub replies on that thread only,
+never a Slack message, and is consumed when the PR returns to ON_HUMAN_REVIEW (voided on REWORK → DEV or a re-classification).
 
 ### Stories
 
@@ -132,13 +157,13 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pass` (the writer of transitions), `approve` (lead only), `jira-synced` (validated against
-the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
+`init`, `plan-submitted`, `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+GitHub facts), `jira-synced` (validated against the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
---approved <ah-id>`, `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
+--approved <ah-id>` (READY → ON_HUMAN_REVIEW only), `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
 `--report --cases-pass N --cases-fail N [--cases-not-testable N] [--failed-cases a,b] --figma-parity pass|fail|not_testable_here --build --head [--full]`
 (a `--full` run's three counts must add up to `stories.<S>.test_cases`). Report paths are
@@ -171,11 +196,22 @@ relative to `delivery/` and must exist.
   2.1.x sends `agent_id`/`agent_type` for every subagent tool call; it ignores `hooks` in plugin agent frontmatter, so
   `TURNSTILE_ROLE` is only for tests and non-plugin agents) `git push`, `git commit`,
   `gh pr|issue comment|review|create|edit|close|reopen|merge|ready` and `gh api` writes are refused too.
+  **PR conversation (2026-10-14), for every caller:** `gh pr comment`, `gh issue comment` and `issues/<n>/comments` /
+  `issues/comments/<id>` writes (`issue-comment`; a body — inline, `--body-file` or `-F body=@file` — that carries the repo
+  gate's `<!-- pdf-review:… -->` / `<!-- crit-review:… -->` marker passes, a DELETE never), `gh pr review` and
+  `pulls/<n>/reviews…` writes (`review-submission`), `pulls/<n>/comments` writes incl. `in_reply_to` and
+  `pulls/comments/<id>` edits (`review-comment`), GraphQL `addPullRequestReview*`, `submitPullRequestReview`, `addComment`,
+  `updateIssueComment` and the like (`graphql-review-write`), `resolveReviewThread`/`unresolveReviewThread` unless every
+  literal `PRRT_…` id is a thread GitHub says a bot opened (`resolve-thread`, `resolve-human-thread`), and a REST write to a
+  computed endpoint (`rest-computed-route`). `POST repos/<org>/<repo>/pulls/<n>/comments/<id>/replies` (literal) passes only
+  for a PR of the epic in REWORK (`reply-unknown-pr`, `reply-not-rework`), a thread classified in `state.json`
+  (`reply-unclassified`), with the lead's approved `reply` entry for a `needs_lead` thread (`reply-needs-lead`), and while
+  GitHub shows no reviewer comment newer than the classification (`reply-reclassify`; `gh` failing → `reply-unverified`).
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
   refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
   main-thread orchestrator (no `agent_id`) passes and records with `jira-synced`.
 - `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
-  unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
+  unused `send` entry (PR `READY`) in `awaiting_human` (a `reply` entry never unlocks Slack) and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside
   `epic.repos`) needs no entry of its own when the send entry lists it in `companions` (`pass pr <main> READY
   --companions locales#5`); every refusal names the id it is about. For a DONE story it also asks GitHub for the head of
@@ -203,7 +239,11 @@ only blocked for commands that pass through the model's tool calls. What holds t
   a forged approval still needs the lead to click. This is the one control an agent cannot forge; approvals of
   `start_story`/`story_done`/`send` entries in `state.json` are forgeable by a script file the guard never sees.
 
-The residual risk (same OS user, an unrecognised write path) is accepted; it is reviewed, not prevented.
+The residual risk (same OS user, an unrecognised write path) is accepted; it is reviewed, not prevented. The thread
+rule adds three accepted limits: the `self_resolved` / `needs_lead` call is the agent's judgment (the hook enforces that a
+reply goes only to a classified thread, not that the class is right; the ledger line and the board show every class to the
+lead); the gate-marker exception can be imitated by an agent that writes the marker into an ordinary comment; and a `curl`
+to a URL that is entirely computed (no literal `api.github.com/repos/…`) is not recognised as a GitHub write.
 
 Tests: `python3 -m unittest discover -s tests -v` (stdlib only, no network; a canned `gh` on `PATH` serves the
 end-to-end test).

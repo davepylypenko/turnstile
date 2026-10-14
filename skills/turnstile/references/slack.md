@@ -27,12 +27,20 @@ Estimate review: +<additions>-<deletions>
 <https://github.com/<org>/<repo>/pull/<n>>
 ```
 
-## Reply drafts (human threads; written by comments-handler, posted on GitHub by the lead, announced in Slack with the `reply` entry)
+## Thread replies (GitHub review threads, not Slack; lead rule 2026-10-14)
+
+Posted on the reviewer's own thread through `gh api -X POST repos/<org>/<repo>/pulls/<n>/comments/<top-level comment id>/replies
+-f body=…`, never as an issue comment or a review. A `self_resolved` thread (fixed in code or answered with a code-level
+justification) gets the comments-handler's reply at once; a `needs_lead` thread gets a draft in the report and is posted only
+after the lead approved that thread's `reply` entry, word for word. The reply text:
 
 ```
-<thread id> — <reviewer>: <one-line restatement of the point>
-→ <what was done / why not>, commit `<sha>` (or: declined because <code-level reason>)
+<what changed> in `<sha>` (<file or test that shows it>)            ← fixed
+Kept as is: <code-level reason, file:line or test>                  ← justified
 ```
+
+The report lists each one as `<thread id> — <reviewer>: <one-line restatement> → <reply text>`. No Slack message goes with
+them: GitHub notifies the reviewer, and a `reply` entry never unlocks a Slack send.
 
 ## Story report to the lead (after `pass story <S> DONE`)
 

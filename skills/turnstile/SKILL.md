@@ -16,9 +16,11 @@ The state is `delivery/state.json` in the knowledge worktree (found through `.tu
 - The lead's word is an `awaiting_human` entry approved **by the lead typing** `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
   in the Claude Code prompt (the `!` runs outside the model). You report the pending ids (`turnstile status`) and ask
   for that line; you never run it, no agent runs it, and the Bash guard refuses any spelling of it.
-- Send, reply, merge, story start, story completion, plan approval: all go through such an entry. A Slack send also
-  gets a UI confirmation from the lead (the Slack guard answers `ask`), and must go through the real send tool so the
-  PostToolUse hook records `used_at` — drafts and scheduled sends never count.
+- Send, a reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
+  A Slack send also gets a UI confirmation from the lead (the Slack guard answers `ask`), and must go through the real
+  send tool so the PostToolUse hook records `used_at` — drafts and scheduled sends never count.
+- A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). Issue comments, review
+  submissions and resolving a human thread are refused for everyone (the repo gate's marker comments excepted).
 - A question from the lead is a question: answer and propose, act on a command.
 - Delegate all implementation, review, testing and deployment to the `turnstile:*` agents (`## dispatch`). Never read
   a diff or run a suite yourself; your context is for coordination.
@@ -109,10 +111,16 @@ evidence; a started story cannot be dropped.
 
 ## REWORK (a human thread, changes requested, or a push after the send)
 
-`turnstile status` proposes `pass pr … REWORK --reason …` (opens a `reply` entry). dispatch `comments-handler`; the lead
-posts the GitHub replies themself (the gate requires the lead's login on every thread open at `rework_since`); gate and
-Copilot re-run on the new head (no new deep review); the lead approves the `reply` entry; the Slack reply goes out through
-the guarded tool; then `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --slack <reply permalink> --approved <ah-id>`.
+Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; only threads that need the lead stop.
+1. `turnstile status` proposes `pass pr … REWORK --reason …` (no entry opens); dispatch `comments-handler` (`COMMENTS-<n>`,
+   `--var sent_at=<evidence.human.sent_at> --var approved_replies=none`).
+2. The agent fixes, then classifies every human thread from GitHub facts: `turnstile threads <repo#n> --self-resolved <ids>
+   --needs-lead <ids> --report reports/COMMENTS-<n>.md`. `self_resolved` (fixed, or justified in code) → it replies on the thread
+   at once through the guarded REST replies route. `needs_lead` (decision, direction, a recorded decision, another team) → a
+   `reply` entry per thread; show the lead the draft and the approve line; once approved, post exactly that text (yourself or a
+   `COMMENTS-<n>-r2` dispatch with `approved_replies=<ah-ids>`). A reviewer's follow-up needs a new classification first.
+3. Gate and Copilot on the new head (no new deep review); `turnstile status` lists what the threads still need.
+4. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate …` — no Slack, no `--approved`: the replies are the notification.
 
 ## Bugs on the board
 
