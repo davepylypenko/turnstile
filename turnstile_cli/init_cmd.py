@@ -1,4 +1,4 @@
-import json, os, pathlib, subprocess
+import json, os, pathlib, shutil, subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from . import state as st_mod, ledger
@@ -27,6 +27,7 @@ class InitOptions:
     pm: Optional[str] = None
     design: Optional[str] = None
     recipe: str = "references/env/pdffiller-dev.md"
+    chat_language: str = "English"
 
 class InitIO:
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
@@ -67,6 +68,7 @@ def build_state(o: InitOptions) -> dict:
     e["roles"] = {"lead": o.lead, "lead_github": o.lead_github, "pm": o.pm, "design": o.design}
     e["repos"] = dict(parse_repo(s) for s in o.repos)
     e["environment"] = {"variant": o.variant, "desk": o.desk, "recipe": o.recipe}
+    e["chat_language"] = o.chat_language
     e["board"] = {"artifact_url": o.board_url, "capabilities": ["db", "user"]}
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
     return data
@@ -81,7 +83,11 @@ def _ensure_worktree(o: InitOptions, io: InitIO, knowledge: pathlib.Path, wt: pa
     if io.git(["branch", "--list", branch], knowledge).strip():
         io.git(["worktree", "add", str(wt), branch], knowledge)
     else:
-        io.git(["worktree", "add", "-b", branch, str(wt), o.knowledge_base], knowledge)
+        try:  # minor 12: the local base may be stale; cut from the fetched remote base
+            io.git(["fetch", "origin", o.knowledge_base], knowledge); start = "origin/" + o.knowledge_base
+        except TurnstileError as e:
+            print("WARN %s; cutting %s from the local %s, which may be stale" % (e, branch, o.knowledge_base)); start = o.knowledge_base
+        io.git(["worktree", "add", "-b", branch, str(wt), start], knowledge)
     return branch
 
 def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
@@ -103,24 +109,35 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
         if marker.exists() and marker.read_text().strip() != os.path.relpath(str(delivery), str(ws)):
             raise TurnstileError("%s points at another delivery (%s); one epic per workspace" % (marker, marker.read_text().strip()))
         branch = _ensure_worktree(o, io, knowledge, wt)
-        for sub in ("briefs", "reports", "evidence"):
-            (delivery / sub).mkdir(parents=True, exist_ok=True); (delivery / sub / ".gitkeep").touch()
-        st_mod.write_atomic(delivery / "state.json", st_mod.dumps(data))
-        (delivery / "decisions.md").write_text(
-            "# Decisions — %s\n\n| Date | Topic | Decision | Source |\n|---|---|---|---|\n\n## Open questions\n\n"
-            "| # | Question | Owner | Asked | Answer |\n|---|---|---|---|---|\n" % o.epic)
-        (delivery / "plan.md").write_text(PLAN_TEMPLATE.read_text().replace("{{epic_key}}", o.epic))
-        _ensure_repo_files(delivery)
-        ledger.append(delivery, "init %s (%s) on %s" % (o.epic, o.workitem, branch))
-        rel = os.path.relpath(str(delivery), str(ws))
-        (ws / ".turnstile").write_text(rel + "\n")
-        text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", o.epic).replace("{{delivery}}", rel)
-        target = ws / "CLAUDE.md"
-        if target.exists():
-            target = ws / "CLAUDE.md.turnstile"
-        target.write_text(text)
-        io.git(["add", "-A", "."], delivery)
-        io.git(["commit", "-q", "-m", "turnstile: init %s" % o.epic, "--", "."], delivery)
+        created = []  # rolled back when a later step fails, so the next run does not see "already initialised"
+        try:
+            (delivery).mkdir(parents=True, exist_ok=True); created.append(delivery)
+            for sub in ("briefs", "reports", "evidence"):
+                (delivery / sub).mkdir(parents=True, exist_ok=True); (delivery / sub / ".gitkeep").touch()
+            st_mod.write_atomic(delivery / "state.json", st_mod.dumps(data))
+            (delivery / "decisions.md").write_text(
+                "# Decisions — %s\n\n| Date | Topic | Decision | Source |\n|---|---|---|---|\n\n## Open questions\n\n"
+                "| # | Question | Owner | Asked | Answer |\n|---|---|---|---|---|\n" % o.epic)
+            (delivery / "plan.md").write_text(PLAN_TEMPLATE.read_text().replace("{{epic_key}}", o.epic))
+            _ensure_repo_files(delivery)
+            ledger.append(delivery, "init %s (%s) on %s" % (o.epic, o.workitem, branch))
+            rel = os.path.relpath(str(delivery), str(ws))
+            (ws / ".turnstile").write_text(rel + "\n"); created.append(ws / ".turnstile")
+            text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", o.epic).replace("{{delivery}}", rel).replace("{{chat_language}}", o.chat_language)
+            target = ws / "CLAUDE.md"
+            if target.exists():
+                target = ws / "CLAUDE.md.turnstile"
+            target.write_text(text); created.append(target)
+            io.git(["add", "-A", "."], delivery)
+            io.git(["commit", "-q", "-m", "turnstile: init %s" % o.epic, "--", "."], delivery)
+        except TurnstileError as e:
+            for path in reversed(created):
+                if path.is_dir():
+                    shutil.rmtree(str(path), ignore_errors=True)
+                elif path.exists():
+                    path.unlink()
+            raise TurnstileError("%s — init rolled back (%s removed; the worktree %s stays); fix the cause and re-run the same init command"
+                                 % (e, ", ".join(str(c) for c in created) or "nothing", wt))
         print("WORKTREE: %s (%s)" % (wt, branch)); print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
         print("OK init %s" % o.epic)

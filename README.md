@@ -24,8 +24,9 @@ claude plugin install turnstile
 - `turnstile pass` — the only way to change state; validates DoR/DoD, verifies the PR head against GitHub, then writes
   the ledger, renders the board, commits the state and tells you which Jira transition to make.
 - `turnstile reconcile` — read-only drift check against GitHub; every command it proposes is one `pass` would accept.
-- `turnstile init` / `plan-submitted` / `brief` / `bug add|set` — the epic skeleton, the lead-approved plan, agent briefs
-  and the bug list, all written through the same guarded path as `pass`.
+- `turnstile init` / `plan-submitted` / `brief` / `bug add|set` — the epic skeleton, the lead-approved plan (a re-plan cannot
+  move a started story's branch), agent briefs and the bug list (one bug per story + test case), all written through the
+  same guarded path as `pass`.
 - Skill `turnstile` (`skills/turnstile/SKILL.md`): `init`, `status`, `pass`, `dispatch <agent> <brief>`, `story-gate <S>`,
   `plan`; references for DoR/DoD, kick-off, briefs, PR body, Slack, reports, evidence and env recipes.
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
@@ -41,7 +42,7 @@ turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel --knowledg
   --lead davyd.pylypenko --lead-github <login> --github-org pdffiller \
   --repo '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
   --repo '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}' \
-  --variant l2f-funnel --desk desk05
+  --variant l2f-funnel --desk desk05 --chat-language Ukrainian          # the epic branch is cut from origin/<base> after a fetch
 # write delivery/plan.md (skill: references/kickoff.md), then
 turnstile plan-submitted                                   # the lead: ! TURNSTILE_LEAD=1 turnstile approve ah-1
 turnstile brief implementer MYD-18075 --var ticket_key=MYD-18075 --var ...   # then Agent(turnstile:implementer, PROMPT line)

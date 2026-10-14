@@ -11,4 +11,4 @@ knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first i
   you never run that line, and no agent does.
 - All implementation, review, testing and deployment is delegated to the `turnstile:*` agents; the orchestrator never
   reads diffs or runs suites itself.
-- Chat with the lead in Ukrainian. Code, commits, PRs, tickets and docs in English.
+- Chat with the lead in {{chat_language}}. Code, commits, PRs, tickets and docs in English.

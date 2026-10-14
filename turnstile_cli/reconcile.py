@@ -165,7 +165,7 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
         pending = [a for a in st.data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at")]
         print("awaiting humans: %d" % len(pending))
         for a in pending:
-            print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story")))
+            print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story") or a.get("payload") or ""))
         dirty = uncommitted(delivery)
         if dirty:
             print("uncommitted changes in delivery (%d file(s)): %s — a write outside turnstile; the next pass commits it, reconcile it first"

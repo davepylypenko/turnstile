@@ -29,13 +29,27 @@ class Parse(unittest.TestCase):
 class Merge(unittest.TestCase):
     def test_keeps_state_of_existing_and_plans_new(self):
         existing = json.loads(FIX.read_text())["stories"]
-        merged = plan_cmd.merge_stories(existing, plan_cmd.stories_from_plan(PLAN))
+        merged, warns = plan_cmd.merge_stories(existing, plan_cmd.stories_from_plan(PLAN))
         self.assertEqual((merged["S1"]["state"], merged["S1"]["figma"]), ("IN_PROGRESS", ["F:1-2"]))
         self.assertEqual((merged["S2"]["state"], merged["S2"]["evidence"], merged["S2"]["next_action"]), ("PLANNED", {}, ""))
+        self.assertEqual(warns, [])
     def test_drop_only_planned(self):
-        self.assertNotIn("S1", plan_cmd.merge_stories({"S1": {"state": "PLANNED"}}, {}))
+        self.assertNotIn("S1", plan_cmd.merge_stories({"S1": {"state": "PLANNED"}}, {})[0])
         with self.assertRaises(TurnstileError):
             plan_cmd.merge_stories({"S1": {"state": "PLANNED"}, "S2": {"state": "IN_PROGRESS"}}, {})
+    def test_started_story_keeps_its_branch_and_warns_on_tickets_or_repos(self):
+        # 2026-10-14 minor 9: a re-plan cannot retarget a started story's branch; ticket/repo changes are printed as WARN
+        existing = json.loads(FIX.read_text())["stories"]
+        planned = plan_cmd.stories_from_plan(PLAN.replace('"branch": "epic_myd-1"', '"branch": "story/s1-new"'))
+        with self.assertRaises(TurnstileError) as cm:
+            plan_cmd.merge_stories(existing, planned)
+        self.assertIn("branch", str(cm.exception)); self.assertIn("S1", str(cm.exception))
+        planned = plan_cmd.stories_from_plan(PLAN.replace('"tickets": ["MYD-10", "MYD-11"]', '"tickets": ["MYD-10"]').replace('"repos": ["jsfiller"], "branch": "epic_myd-1"', '"repos": ["jsfiller", "locales"], "branch": "epic_myd-1"'))
+        merged, warns = plan_cmd.merge_stories(existing, planned)
+        self.assertEqual(merged["S1"]["tickets"], ["MYD-10"]); self.assertEqual(len(warns), 2); self.assertTrue(all(w.startswith("WARN S1") for w in warns), warns)
+        planned = plan_cmd.stories_from_plan(PLAN.replace('"branch": "story/s2"', '"branch": "story/s2-moved"'))
+        merged, warns = plan_cmd.merge_stories(existing, planned)  # S2 is new / PLANNED: anything goes
+        self.assertEqual(merged["S2"]["branch"], "story/s2-moved")
 
 class Run(unittest.TestCase):
     def setUp(self):
@@ -65,6 +79,13 @@ class Run(unittest.TestCase):
         self.submit(); self.approve("ah-1"); (self.d / "plan.md").write_text(PLAN + "\nmore\n"); self.submit()
         entries = [a for a in self.data()["awaiting_human"] if a["type"] == "plan"]
         self.assertEqual(len(entries), 2); self.assertTrue(entries[0]["voided_at"]); self.assertIsNone(entries[1]["approved_at"])
+        self.assertEqual(entries[1]["digest"], state.digest(PLAN + "\nmore\n"))
+    def test_resubmit_prints_warnings_for_a_started_story(self):
+        self.submit()
+        (self.d / "plan.md").write_text(PLAN.replace('"tickets": ["MYD-10", "MYD-11"]', '"tickets": ["MYD-10"]'))
+        rc, out = self.submit(); self.assertEqual(rc, 0); self.assertIn("WARN S1", out); self.assertIn("WARN S1", (self.d / "ledger.md").read_text())
+        (self.d / "plan.md").write_text(PLAN.replace('"branch": "epic_myd-1"', '"branch": "elsewhere"'))
+        rc, out = self.submit(); self.assertEqual(rc, 2); self.assertIn("branch", out)
     def test_story_start_needs_plan_approval_even_with_lead_reason(self):
         d = self.data(); d["stories"]["S1"]["state"] = "DONE"; self.write(d)  # S2 is after S1: plan-submitted opens its start_story entry
         self.submit()
@@ -89,3 +110,15 @@ class Run(unittest.TestCase):
         self.assertIn("approve ah-1", rules.plan_approval_missing(d, state.digest(PLAN)))
         d["awaiting_human"][0]["approved_at"] = "x"
         self.assertIsNone(rules.plan_approval_missing(d, state.digest(PLAN)))
+        d["awaiting_human"][0]["digest"] = "another-plan"  # 2026-10-14 minor 8: the approved entry is for this plan digest
+        self.assertIn("approved for another version", rules.plan_approval_missing(d, state.digest(PLAN)))
+        d["awaiting_human"][0]["digest"] = state.digest(PLAN)
+        self.assertIsNone(rules.plan_approval_missing(d, state.digest(PLAN)))
+    def test_approve_and_status_name_the_plan_entry(self):
+        # 2026-10-14 nit 16: no more "plan None"
+        self.submit()
+        buf = io.StringIO()
+        with env(TURNSTILE_LEAD="1"), contextlib.redirect_stdout(buf):
+            pass_cmd.approve(self.d, "ah-1", self.io)
+        self.assertIn("(plan plan.md by lead)", buf.getvalue()); self.assertNotIn("None", buf.getvalue())
+        self.assertIn("approved ah-1 (plan plan.md by lead) approved_via: lead-terminal", (self.d / "ledger.md").read_text())

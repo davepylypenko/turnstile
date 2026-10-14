@@ -60,7 +60,9 @@ READY with a paired PR outside the epic (locales): `--companions locales#5` so o
 1. `turnstile brief <agent> <NAME> --var k=v …` renders `references/briefs/<agent>.md`; it refuses unfilled
    placeholders, so pass every agent-specific variable listed in the template. Names: `<KEY>` for tickets,
    `REVIEW-<n>`, `STORY-<S>-review`, `ENV-<S>`, `FIX-<n>-<slug>`, `STACK-<date>`, `COMMENTS-<n>`,
-   `INVESTIGATE-<slug>`, `DEPLOY-<slug>-<date>`.
+   `INVESTIGATE-<slug>`, `DEPLOY-<slug>-<date>`. A repeat of the same job (a second review round, a rerun) gets a round
+   suffix — `REVIEW-<n>-r2`, `STORY-<S>-review-r2`, `ENV-<S>-r2` — so the first round's brief and report survive; `--force`
+   overwrites them and is for a brief that was never dispatched.
 2. Launch with the Agent tool: `subagent_type: "turnstile:<agent>"`, prompt = the `PROMPT:` line the command printed.
    For `tester` append the lead's test credentials to the prompt only (briefs are committed); the tester resolves its Figma
    tools per `references/tools/figma.md` and comes back `BLOCKED` when the environment has none. Models: implementer and

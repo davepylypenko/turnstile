@@ -11,9 +11,13 @@ def opts(ws, knowledge, **kw):
     base.update(kw); return init_cmd.InitOptions(**base)
 
 class FakeGit(init_cmd.InitIO):
-    def __init__(self): self.calls = []
+    def __init__(self, fail=()): self.calls = []; self.fail = set(fail)
     def git(self, args, cwd):
         self.calls.append((args, pathlib.Path(cwd)))
+        if args[0] in self.fail:
+            raise TurnstileError("git %s failed: simulated" % args[0])
+        if args[:2] == ["branch", "--show-current"]:
+            return "epic/myd-1\n"  # an existing worktree made by an earlier run is on the epic branch
         if args[:2] == ["worktree", "add"]:
             pathlib.Path(args[4] if args[2] == "-b" else args[2]).mkdir(parents=True)
         return ""
@@ -44,7 +48,8 @@ class Init(unittest.TestCase):
         self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), io), 0)
         wt = self.ws / "pdffiller-knowledge"; d = wt / "context" / "workitems" / "demo" / "delivery"
         add = next(c for c in io.calls if c[0][:2] == ["worktree", "add"])  # the branch probe (`git branch --list`) precedes it
-        self.assertEqual(add[0], ["worktree", "add", "-b", "epic/myd-1", str(wt), "main"]); self.assertEqual(add[1], self.knowledge)
+        self.assertEqual(add[0], ["worktree", "add", "-b", "epic/myd-1", str(wt), "origin/main"]); self.assertEqual(add[1], self.knowledge)  # minor 12: after a fetch
+        self.assertIn((["fetch", "origin", "main"], self.knowledge), io.calls)
         data = json.loads((d / "state.json").read_text())
         self.assertEqual((data["epic"]["key"], data["epic"]["github_org"], data["epic"]["roles"]["lead_github"]), ("MYD-1", "pdffiller", "leadlogin"))
         self.assertEqual(data["epic"]["repos"]["pdffiller"]["branch_prefix"], "l2f-myd-")
@@ -56,7 +61,33 @@ class Init(unittest.TestCase):
         self.assertIn("MYD-1", (d / "plan.md").read_text()); self.assertIn("turnstile-stories", (d / "plan.md").read_text())
         self.assertEqual((self.ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo/delivery")
         self.assertIn("MYD-1", (self.ws / "CLAUDE.md").read_text()); self.assertIn("TURNSTILE_LEAD=1", (self.ws / "CLAUDE.md").read_text())
+        self.assertIn("Chat with the lead in English", (self.ws / "CLAUDE.md").read_text()); self.assertEqual(data["epic"]["chat_language"], "English")
         self.assertEqual(io.calls[-1][0][:3], ["commit", "-q", "-m"]); self.assertEqual(io.calls[-1][1], d)
+
+    def test_chat_language_comes_from_init_not_the_template(self):
+        # 2026-10-14 minor 11: personal items stay out of the plugin
+        self.assertNotIn("Ukrainian", (init_cmd.TEMPLATES / "CLAUDE.md.workspace").read_text())
+        init_cmd.run(opts(self.ws, self.knowledge, chat_language="Ukrainian"), FakeGit())
+        self.assertIn("Chat with the lead in Ukrainian", (self.ws / "CLAUDE.md").read_text())
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        self.assertEqual(json.loads((d / "state.json").read_text())["epic"]["chat_language"], "Ukrainian")
+
+    def test_stale_local_base_fallback_and_rollback_on_failure(self):
+        # 2026-10-14 minor 12: cut from origin/<base> after a fetch, fall back to the local base with a WARN; a failure after
+        # state.json was written rolls the delivery dir, the marker and the generated CLAUDE.md back and says how to re-run
+        import contextlib, io as _io
+        git = FakeGit(fail={"fetch"}); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge), git)
+        self.assertEqual(rc, 0); self.assertIn("WARN", buf.getvalue())
+        add = next(c for c in git.calls if c[0][:2] == ["worktree", "add"]); self.assertEqual(add[0][-1], "main")
+        ws2 = self.tmp / "ws2"; ws2.mkdir()
+        git = FakeGit(fail={"commit"}); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(ws2, self.knowledge), git)
+        self.assertEqual(rc, 2); out = buf.getvalue()
+        self.assertIn("rolled back", out); self.assertIn("re-run", out)
+        d = ws2 / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        self.assertFalse(d.exists()); self.assertFalse((ws2 / ".turnstile").exists()); self.assertFalse((ws2 / "CLAUDE.md").exists())
+        self.assertEqual(init_cmd.run(opts(ws2, self.knowledge), FakeGit()), 0)  # a clean re-run works
 
     def test_init_keeps_existing_claude_md(self):
         (self.ws / "CLAUDE.md").write_text("mine\n")

@@ -23,6 +23,7 @@ class SkillFiles(unittest.TestCase):
                     "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--companions"]:
             self.assertIn(cli, text, cli)
         self.assertNotIn("you run `turnstile approve", text.lower())
+        self.assertIn("-r2", text)  # 2026-10-14 minor 13: a second round gets a new brief name, never --force over the first
     def test_every_reference_link_exists(self):
         for md in [SKILL / "SKILL.md"] + list(REFS.glob("*.md")) + list((REFS / "env").glob("*.md")) + list((REFS / "briefs").glob("*.md")):
             for rel in re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", md.read_text()):

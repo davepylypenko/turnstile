@@ -28,7 +28,7 @@ def build_parser():
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
     sub.add_parser("status", help="reconcile + where we are")
-    bg = sub.add_parser("bug", help="record or update a bug found by the tester or the lead"); bsub = bg.add_subparsers(dest="bug_cmd")
+    bg = sub.add_parser("bug", help="record or update a bug found by the tester or the lead"); bsub = bg.add_subparsers(dest="bug_cmd"); p.bug_parser = bg
     ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
     ba.add_argument("--case", help="test-case id the bug covers (one bug per story + case; a persisting fail reopens it)")
@@ -42,7 +42,8 @@ def build_parser():
                      ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, epic_branch, slack[, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
                      ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
                      ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
-                     ("--recipe", {"default": "references/env/pdffiller-dev.md"})]:
+                     ("--recipe", {"default": "references/env/pdffiller-dev.md"}),
+                     ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"})]:
         ini.add_argument(flag, **kw)
     return p
 
@@ -51,6 +52,8 @@ def main(argv=None):
     a = parser.parse_args(argv)
     if a.cmd is None:
         parser.print_help(); return 0
+    if a.cmd == "bug" and a.bug_cmd is None:
+        parser.bug_parser.print_help(sys.stderr); return 2
     try:
         if a.cmd == "init":
             from .init_cmd import run as init_run, InitOptions
@@ -70,7 +73,7 @@ def main(argv=None):
                 return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case)
             if a.bug_cmd == "set":
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
-            parser.parse_args(["bug", "--help"]); return 2
+            return 2
         if a.cmd == "plan-submitted":
             from .plan_cmd import run as plan_run
             return plan_run(delivery, no_commit=a.no_commit)

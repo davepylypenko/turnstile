@@ -98,6 +98,8 @@ def plan_approval_missing(data: dict, plan_digest: Optional[str]) -> Optional[st
     e = latest_entry(data.get("awaiting_human"), "plan", "payload", "plan.md")
     if e is None or not e.get("approved_at"):
         return "MISSING lead approval of plan.md (the lead types: ! TURNSTILE_LEAD=1 turnstile approve %s)" % ((e or {}).get("id") or "<ah-id from turnstile status>")
+    if e.get("digest") and e.get("digest") != plan_digest:  # defence in depth: the entry was approved for another version of the plan
+        return "MISSING plan approval for this plan.md: %s was approved for another version (digest %s…); run turnstile plan-submitted again" % (e.get("id"), str(e.get("digest"))[:12])
     return None
 
 def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ident: Optional[str],

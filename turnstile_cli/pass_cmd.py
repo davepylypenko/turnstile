@@ -453,7 +453,7 @@ def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
                 print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
             entry["approved_at"] = _now()
             entry["approved_via"] = APPROVED_VIA
-            summary = "approved %s (%s %s by %s) approved_via: %s" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story"),
+            summary = "approved %s (%s %s by %s) approved_via: %s" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story") or entry.get("payload"),
                                                                      entry.get("owner"), APPROVED_VIA)
             _side_effects(delivery, st, [summary], io, False)
         print("OK " + summary)
