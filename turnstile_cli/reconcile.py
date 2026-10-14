@@ -26,7 +26,7 @@ def _dry_run(data: dict, pid: str, target: str, cmd: str, facts: Optional[github
         return str(e)
     pr.setdefault("evidence", {})["head_verified"] = {"head": pr.get("head"), "verified": True}
     repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-    missing = pass_cmd._facts_mismatches(pr, target, facts, repo) if facts is not None else []
+    missing = pass_cmd._facts_mismatches(pr, target, facts, repo, lead_login=(data["epic"].get("roles") or {}).get("lead_github")) if facts is not None else []
     missing += rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"), stories=data.get("stories"))
     return "; ".join(missing) if missing else None
 

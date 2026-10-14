@@ -3,7 +3,7 @@
     "key": "MYD-1",
     "workitem": "demo",
     "github_org": "pdffiller",
-    "roles": { "lead": "lead@example.com" },
+    "roles": { "lead": "lead@example.com", "lead_github": "leadlogin" },
     "repos": {
       "jsfiller": { "base": "develop", "epic_branch": "epic_myd-1", "slack": "C1", "gate": "pdf-review", "copilot": false },
       "docs-platform": { "base": "main", "epic_branch": "epic_myd-1", "slack": "C2", "gate": "pdf-review", "copilot": true }

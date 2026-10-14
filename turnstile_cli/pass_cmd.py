@@ -89,7 +89,7 @@ def _apply_pr_evidence(pr: dict, o: Options) -> None:
     if o.merged_sha:
         pr["merged_sha"] = o.merged_sha
 
-def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]:
+def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, lead_login: Optional[str] = None) -> List[str]:
     """R2-5: self-reported evidence must equal what GitHub says for the PR's head. Pure; shared with the reconcile dry run."""
     out: List[str] = []
     h = pr.get("head")
@@ -107,6 +107,10 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]
             out.append("MISSING CI success on GitHub for head %s (is %s); evidence says success" % (h, actual_ci))
         if facts.unsigned:
             out.append("MISSING every commit signed (unsigned: %s)" % ", ".join(facts.unsigned))
+        if facts.trailered:  # R3-10: an escaped spelling passes the Bash guard; the message on GitHub does not
+            out.append("MISSING no Co-Authored-By trailer / generated-with footer in commit messages (has: %s)" % ", ".join(facts.trailered))
+        if facts.body_footer:
+            out.append("MISSING PR body without the generated-with footer")
         if pr.get("base") and facts.base and facts.base != pr.get("base"):
             out.append("MISSING PR base %s on GitHub (is %s): ticket PRs go into the planned story/epic branch" % (pr.get("base"), facts.base))
     if target in ("READY", "ON_HUMAN_REVIEW"):
@@ -118,6 +122,17 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]
         c = for_head("copilot")
         if repo_cfg.get("copilot") and c and c.get("open_threads") == 0 and facts.copilot_threads_open != 0:
             out.append("MISSING Copilot threads == 0 on GitHub for head %s (has %d); evidence says 0" % (h, facts.copilot_threads_open))
+    if target == "ON_HUMAN_REVIEW" and pr.get("rework_since"):
+        # spec §3 REWORK DoD "replies posted": every human thread open when the rework started has a reply by the lead after it
+        from . import github
+        since = github.ts((pr.get("rework_since") or {}).get("at"))
+        pending = [t for t in facts.threads if t.get("human") and since and (github.ts(t.get("opened_at")) or datetime.datetime.min) <= since]
+        if pending and not lead_login:
+            out.append("MISSING epic.roles.lead_github (the lead's GitHub login) to verify the replies on %d human thread(s)" % len(pending))
+        for t in pending:
+            if lead_login and not any(r.get("login") == lead_login and (github.ts(r.get("at")) or datetime.datetime.min) > since for r in t.get("replies") or []):
+                out.append("MISSING reply by the lead (%s) after %s on human thread %s (opened %s): REWORK DoD \"replies posted\""
+                           % (lead_login, pr["rework_since"].get("at"), t.get("id"), t.get("opened_at")))
     if target == "APPROVED":
         human = ev.get("human") or {}
         for login in human.get("approvals") or []:
@@ -134,7 +149,8 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict) -> List[str]
             out.append("MISSING merged_sha == GitHub merge commit %s (has %s)" % (facts.merged_sha, pr.get("merged_sha")))
     return out
 
-def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, org: str, o: Options, io: IO, notes: List[str]) -> List[str]:
+def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, org: str, o: Options, io: IO, notes: List[str],
+                           lead_login: Optional[str] = None) -> List[str]:
     """Bind the evidence to the PR's real head and to GitHub's facts: GitHub decides, not the caller."""
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
@@ -149,7 +165,7 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     if not rules.same_head(facts.head, h):
         raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
-    return _facts_mismatches(pr, target, facts, repo_cfg)
+    return _facts_mismatches(pr, target, facts, repo_cfg, lead_login)
 
 def _apply_story_evidence(story: dict, o: Options) -> None:
     ev = story.setdefault("evidence", {})
@@ -264,7 +280,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 repo = st_mod.repo_cfg(st, ident)
                 trial = copy.deepcopy(pr); trial["_id"] = ident
                 _apply_pr_evidence(trial, o)
-                missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes)
+                missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes,
+                                                 lead_login=(data["epic"].get("roles") or {}).get("lead_github"))
                 missing += rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
                 if missing:
                     print("\n".join(notes + missing)); return 2

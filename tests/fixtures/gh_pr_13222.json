@@ -4,6 +4,21 @@
   "mergeCommit": null,
   "headRefOid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812",
   "reviewDecision": "APPROVED",
+  "body": "Scope:\n- x\n\nRelated: https://j/MYD-1",
+  "allCommits": {
+    "totalCount": 1,
+    "nodes": [
+      {
+        "commit": {
+          "oid": "aaaaaaaa11111111aaa0288e05b49fa4583d8812",
+          "message": "feat(x): [MYD-10] y",
+          "signature": {
+            "isValid": true
+          }
+        }
+      }
+    ]
+  },
   "latestReviews": {
     "nodes": [
       {
@@ -68,10 +83,12 @@
               "author": {
                 "__typename": "User",
                 "login": "lMakDen"
-              }
+              },
+              "createdAt": "2026-10-12T09:00:00Z"
             }
           ]
-        }
+        },
+        "id": "PRRT_1"
       },
       {
         "isResolved": true,
@@ -81,10 +98,12 @@
               "author": {
                 "__typename": "User",
                 "login": "copilot-pull-request-reviewer"
-              }
+              },
+              "createdAt": "2026-10-12T09:00:00Z"
             }
           ]
-        }
+        },
+        "id": "PRRT_2"
       },
       {
         "isResolved": false,
@@ -94,10 +113,12 @@
               "author": {
                 "__typename": "Bot",
                 "login": "github-actions"
-              }
+              },
+              "createdAt": "2026-10-12T09:00:00Z"
             }
           ]
-        }
+        },
+        "id": "PRRT_3"
       },
       {
         "isResolved": false,
@@ -107,10 +128,12 @@
               "author": {
                 "__typename": "User",
                 "login": "application-pdffiller"
-              }
+              },
+              "createdAt": "2026-10-12T09:00:00Z"
             }
           ]
-        }
+        },
+        "id": "PRRT_4"
       }
     ]
   },

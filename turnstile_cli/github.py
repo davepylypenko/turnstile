@@ -1,4 +1,4 @@
-import json, subprocess
+import datetime, json, re, subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from .errors import TurnstileError
@@ -7,12 +7,14 @@ from .rules import same_head
 BOT = "copilot-pull-request-reviewer"
 BOT_LOGINS = {BOT, "Snyk-Agent", "application-pdffiller"}
 QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
-  isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision
-  allCommits: commits(last:100){totalCount nodes{commit{oid signature{isValid}}}}
+  isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision body
+  allCommits: commits(last:100){totalCount nodes{commit{oid message signature{isValid}}}}
   latestReviews(first:30){nodes{author{__typename login} state commit{oid}}}
-  reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{__typename login}}}}}
+  reviewThreads(first:100){nodes{id isResolved comments(first:50){nodes{author{__typename login} createdAt}}}}
   commits(last:1){nodes{commit{oid signature{isValid} statusCheckRollup{state contexts(first:100){totalCount nodes{
     ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}} } } }"""
+TRAILER_RX = re.compile(r"Co-Authored-By|Generated with \[Claude Code\]", re.I)
+FOOTER_RX = re.compile(r"Generated with \[Claude Code\]", re.I)
 
 FAILURE = {"failure", "cancelled", "timed_out", "action_required", "error", "startup_failure", "stale"}
 PENDING = {"pending", "in_progress", "queued", "expected", "waiting", "requested", "none"}
@@ -35,6 +37,9 @@ class PrFacts:
     head_signed: Optional[bool] = None
     base: Optional[str] = None
     unsigned: List[str] = field(default_factory=list)  # every commit of the PR without a valid signature (spec §3 DEV DoD)
+    threads: List[dict] = field(default_factory=list)   # {id, resolved, human, opened_at, replies: [{login, at}]}
+    trailered: List[str] = field(default_factory=list)  # commits whose message carries a trailer or the generated-with footer
+    body_footer: bool = False
 
     def ci_without(self, names) -> str:
         """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
@@ -58,6 +63,14 @@ def _norm(value: str) -> str:
     if v in ("skipped", "neutral"):
         return "skipped"
     return "pending"
+
+def ts(s: Optional[str]) -> Optional[datetime.datetime]:
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%MZ"):
+        try:
+            return datetime.datetime.strptime(s or "", fmt)
+        except ValueError:
+            continue
+    return None
 
 def is_bot(author: Optional[dict]) -> bool:
     a = author or {}
@@ -96,19 +109,26 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
         if r.get("state") == "CHANGES_REQUESTED":
             changes.append(login)
     human_open = copilot_open = 0
+    threads = []
     for t in (pr.get("reviewThreads") or {}).get("nodes") or []:
+        comments = (t.get("comments") or {}).get("nodes") or [{}]
+        first = comments[0]; author = first.get("author") or {}
+        human = author.get("login") != BOT and not is_bot(author)
+        threads.append({"id": t.get("id"), "resolved": bool(t.get("isResolved")), "human": human, "opened_at": first.get("createdAt") or "",
+                        "replies": [{"login": (c.get("author") or {}).get("login") or "", "at": c.get("createdAt") or ""} for c in comments[1:]]})
         if t.get("isResolved"):
             continue
-        first = ((t.get("comments") or {}).get("nodes") or [{}])[0]
-        author = first.get("author") or {}
         if author.get("login") == BOT:
             copilot_open += 1
-        elif not is_bot(author):
+        elif human:
             human_open += 1
     sig = last.get("signature")
     unsigned = [((n.get("commit") or {}).get("oid") or "")[:12] for n in (pr.get("allCommits") or {}).get("nodes") or []
                 if not ((n.get("commit") or {}).get("signature") or {}).get("isValid")]
-    return PrFacts(base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
+    trailered = [((n.get("commit") or {}).get("oid") or "")[:8] for n in (pr.get("allCommits") or {}).get("nodes") or []
+                 if TRAILER_RX.search((n.get("commit") or {}).get("message") or "")]
+    return PrFacts(threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
+                   base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
                    checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes),
                    human_threads_open=human_open, copilot_threads_open=copilot_open,
