@@ -63,7 +63,7 @@ class Run(unittest.TestCase):
     def test_no_agent_but_the_investigator_starts_before_the_plan_is_approved(self):
         # round 2 R2-11 (spec §4.1 "no agent starts"): a brief is the start of an agent
         self.approve_plan(approved=False)
-        for agent in ("tester", "implementer", "reviewer", "deployer"):
+        for agent in ("tester", "implementer", "reviewer", "deployer", "comments-handler", "stack-step", "story-reviewer"):
             rc, out = self.run_brief(agent, "X-" + agent, self.all_vars(agent))
             self.assertEqual(rc, 2, agent); self.assertIn("plan", out); self.assertFalse((self.d / "briefs" / ("X-%s.md" % agent)).exists())
         self.assertEqual(self.io.commits, [])

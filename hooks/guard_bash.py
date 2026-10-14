@@ -40,7 +40,7 @@ READ_ONLY = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "r
 GIT_READ_ONLY = {"diff", "log", "show", "status", "blame", "ls-files", "rev-parse", "cat-file", "grep", "branch", "remote", "describe",
                  "push", "fetch", "shortlog", "name-rev"}
 GIT_RESTORE = re.compile(GIT + r"(?:checkout|switch|restore|stash|reset|clean)\b", re.I)
-TREE_SUBS = {"checkout", "switch", "restore", "stash", "reset", "clean"}
+TREE_SUBS = {"checkout", "switch", "restore", "stash", "reset", "clean", "read-tree", "checkout-index", "revert"}
 # round 2 R2-12: an agent's own frontmatter hooks run this guard with TURNSTILE_ROLE set; these rules apply on top of the common ones
 ROLE_RULES = {"tester": [("tester-push", GIT + r"push\b"), ("tester-commit", GIT + r"commit\b"),
                          ("tester-pr-write", GH + r"(?:pr|issue)(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+(?:comment|review|create|edit|close|reopen|merge|ready)\b"),
@@ -193,20 +193,23 @@ def _worktree_root(path: str):
 
 def _git_call(seg: str):
     """(subcommand, the words after it, the -C dir) of a git segment; None when the segment is not a git call."""
-    words = seg.split()
-    while words and re.match(r"^\w+=", words[0]):
+    words = seg.strip("() ").split()
+    cdir = None  # round 3: GIT_WORK_TREE= / --work-tree= point git at the worktree as -C does; ( … ), command, sh -c unwrap
+    while words and (re.match(r"^\w+=", words[0]) or words[0] in ("env", "command", "exec", "sh", "bash", "zsh", "-c")):
+        if words[0].startswith("GIT_WORK_TREE="):
+            cdir = words[0].split("=", 1)[1]
         words.pop(0)
-    if words and words[0] == "env":
-        words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
     if not words or words[0].rsplit("/", 1)[-1] != "git":
         return None
-    cdir, sub, i = None, None, 1
+    sub, i = None, 1
     while i < len(words):
         w = words[i]
-        if w in ("-C", "-c"):
-            if w == "-C" and i + 1 < len(words):
+        if w in ("-C", "-c", "--work-tree", "--git-dir"):
+            if w in ("-C", "--work-tree") and i + 1 < len(words):
                 cdir = words[i + 1]
             i += 2; continue
+        if w.startswith("--work-tree="):
+            cdir = w.split("=", 1)[1]
         if w.startswith("-"):
             i += 1; continue
         sub = w; break
@@ -241,7 +244,7 @@ def _tree_wide_reset(seg: str, cwd: str, delivery_abs):
             return why % (sub, root, "with no pathspec resets the whole tree")
     else:
         paths = [w for w in rest if not w.startswith("-")]
-        if sub in ("checkout", "switch", "reset", "stash") and (not paths or any(not os.path.exists(os.path.join(eff, w)) for w in paths)):
+        if sub in ("checkout", "switch", "reset", "stash", "read-tree", "revert") and (not paths or any(not os.path.exists(os.path.join(eff, w)) for w in paths)):
             return why % (sub, root, "with a ref or no pathspec resets the whole tree")
         if not paths:
             return why % (sub, root, "with no pathspec resets the whole tree")
@@ -277,8 +280,12 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     flat = re.sub(r"[ \t]+", " ", stripped)
     mention_fn = _delivery_matcher(cwd)
     mention = mention_fn(flat)
+    seg_cwd = cwd or "."
     for seg in _segments(flat):  # round 2 R2-8: tree-wide resets in the knowledge worktree name no delivery path
-        why = _tree_wide_reset(seg, cwd, mention_fn.abs_path)
+        m = re.match(r"\(?\s*(?:cd|pushd)\s+(\S+)", seg)  # round 3: `cd <worktree> && git checkout -- .` in one command
+        if m:
+            seg_cwd = os.path.join(seg_cwd, os.path.expanduser(m.group(1).rstrip(")"))); continue
+        why = _tree_wide_reset(seg, seg_cwd, mention_fn.abs_path)
         if why:
             block(why)
     # round 2: the Bash cwd persists across calls, so `cd delivery/evidence` then `cp x ../ledger.md` names no delivery path

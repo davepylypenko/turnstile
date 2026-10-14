@@ -7,7 +7,7 @@ from _common import read_payload, block, agent_role
 
 def main():
     p = read_payload()
-    role = agent_role(p)
+    role = agent_role(p) or ("subagent %s" % (p.get("agent_type") or "?") if p.get("agent_id") else "")  # round 3: any subagent
     if role and role != "orchestrator":
         block("blocked by rule role-jira. The %s role cannot write Jira (%s): report the transition in your reply; the orchestrator performs "
               "it and records it with 'turnstile jira-synced'." % (role, p.get("tool_name") or "Jira write"))

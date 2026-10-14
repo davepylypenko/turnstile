@@ -252,6 +252,23 @@ class BashGuard(unittest.TestCase):
         self.assertEqual(len(post), 1); self.assertIn("slack", post[0]["matcher"]); self.assertIn("post_slack.py", post[0]["hooks"][0]["command"])
         self.assertEqual(post[0]["matcher"], next(m["matcher"] for m in h["PreToolUse"] if "slack" in m["matcher"]))
 
+class TreeResetRealLayout(unittest.TestCase):
+    def test_round3_resets_from_other_cwds_and_wrappers_are_blocked(self):
+        # round 3: the real layout (.turnstile at the workspace root, the knowledge worktree a child of it); one-command cd, subshells,
+        # sh -c, command, --work-tree / GIT_WORK_TREE and read-tree / checkout-index / revert passed in round 2
+        ws = pathlib.Path(tempfile.mkdtemp()); kn = ws / "kn"; d = kn / "ctx" / "delivery"; d.mkdir(parents=True)
+        (kn / ".git").write_text("gitdir: /nowhere\n"); shutil.copy(FIX, d / "state.json"); (ws / ".turnstile").write_text("kn/ctx/delivery\n")
+        js = ws / "jsfiller"; js.mkdir(); (js / ".git").mkdir()
+        def run(cmd, cwd):
+            return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}, cwd)
+        for cwd, cmd in [(js, "cd ../kn && git checkout -- ."), (js, "cd %s && git restore ." % kn), (js, "(cd ../kn; git reset --hard)"),
+                         (kn, "(git checkout -- .)"), (kn, "sh -c 'git checkout -- .'"), (kn, "command git reset --hard"),
+                         (js, "git --work-tree=../kn --git-dir=x checkout -- ."), (js, "GIT_WORK_TREE=../kn GIT_DIR=x git checkout -- ."),
+                         (kn, "git read-tree -u --reset HEAD~1"), (kn, "git checkout-index -a -f"), (kn, "git revert --no-edit HEAD")]:
+            r = run(cmd, cwd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("knowledge-worktree-reset", r.stderr, cmd)
+        for cwd, cmd in [(js, "git checkout -- ."), (js, "git reset --hard"), (js, "cd ../kn && git status"), (kn, "git stash list")]:
+            r = run(cmd, cwd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
+
 class SlackGuard(unittest.TestCase):
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
@@ -278,9 +295,14 @@ class SlackGuard(unittest.TestCase):
     def ready_with(self, pr="jsfiller#1", state="READY", story_state="DONE", **entry):
         d = self.state(); d["prs"][pr]["state"] = state; d["stories"]["S1"]["state"] = story_state
         e = {"id": "ah-1", "owner": "lead", "type": "send", "pr": pr, "created_at": "x", "payload": None, "approved_at": "2026-10-13T10:00Z"}
-        e.update(entry); d["awaiting_human"] = [e]; self.write(d)
+        e.update(entry); d["awaiting_human"] = [e]
+        if story_state == "DONE":  # round 3: a DONE story is sent only with a deploy.heads snapshot that GitHub confirms
+            d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "bbbbbbbb22222222",
+                "heads": {p: x["head"] for p, x in d["prs"].items() if x.get("story") == "S1" and x["state"] not in ("MERGED", "CLOSED")}}}
+        self.write(d)
 
     def slack(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message", env=None):
+        env = env if env is not None else self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
         return hook("guard_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "cwd": str(self.ws)}, self.ws, env=env)
 
     MSG = "PR: <https://github.com/pdffiller/jsfiller/pull/1>"
@@ -380,7 +402,7 @@ class SlackGuard(unittest.TestCase):
 
     def gh_on_path(self, heads):
         """A canned `gh` that answers the GraphQL query with the head for the repo named in `-f r=<repo>`."""
-        b = self.ws / "bin"; b.mkdir(exist_ok=True)
+        b = pathlib.Path(tempfile.mkdtemp())
         cases = "".join('*"r=%s"*) h=%s;; ' % (repo, h) for repo, h in heads.items())
         (b / "gh").write_text('#!/bin/sh\ncase "$*" in %s*) h=none;; esac\n'
                               'printf \'{"data":{"repository":{"pullRequest":{"headRefOid":"%%s"}}}}\' "$h"\n' % cases)
@@ -488,6 +510,9 @@ class RoleGuard(unittest.TestCase):
         r = self.jira(agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
         r = self.jira(tool="mcp__plugin_atlassian_jira__editJiraIssue", env={"TURNSTILE_ROLE": "tester"}); self.assertEqual(r.returncode, 2)
         self.assertEqual(self.jira(env={"TURNSTILE_ROLE": "orchestrator"}).returncode, 0)
+        # round 3: any subagent (payload agent_id, as Claude Code 2.1.x sends it) is refused, turnstile or not
+        r = self.jira(agent_id="a1", agent_type="general-purpose"); self.assertEqual(r.returncode, 2); self.assertIn("general-purpose", r.stderr)
+        r = self.jira(agent_id="a2", agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
 
     def test_matchers_cover_every_jira_write_under_any_prefix(self):
         import re

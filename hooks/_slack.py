@@ -28,6 +28,8 @@ def story_ready(pid: str, prs: dict, stories: dict, org: str = None, live: bool 
     if out:
         return False
     snap = ((s.get("evidence") or {}).get("deploy") or {}).get("heads")
+    if live and not (isinstance(snap, dict) and snap):  # round 3: a DONE story without a deploy.heads snapshot (migrated) is not sent
+        return False
     if live and isinstance(snap, dict) and snap:  # round 2 R2-7: state.json may be stale after a push without `pass pr`; ask GitHub
         from turnstile_cli import github
         for p, h in sorted(snap.items()):

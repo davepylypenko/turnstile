@@ -64,10 +64,11 @@ class Agents(unittest.TestCase):
         evidence = (ROOT / "skills" / "turnstile" / "references" / "evidence.md").read_text()
         for needle in ["curl -o", "__download_assets", "FIGMA_TOKEN", "not_testable_here"]: self.assertIn(needle, evidence, needle)
         self.assertNotIn("saved with the Write tool", evidence)
-    def test_tester_hooks_enforce_no_push_and_no_jira(self):
-        # round 2 R2-12: the tester's own PreToolUse hooks run the guards with TURNSTILE_ROLE=tester, so pushes and Jira writes are blocked, not prose
-        text = (AGENTS / "tester.md").read_text(); fm = text.split("---")[1]
-        self.assertIn("hooks:", fm); self.assertIn("PreToolUse:", fm)
-        self.assertIn("TURNSTILE_ROLE=tester python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_bash.py\"", fm)
-        self.assertIn("TURNSTILE_ROLE=tester python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_role.py\"", fm)
-        self.assertIn("TURNSTILE_ROLE", text.split("## Cannot")[1])
+    def test_no_agent_carries_frontmatter_hooks(self):
+        # round 3: Claude Code 2.1.x ignores hooks/mcpServers/permissionMode in plugin agent frontmatter (warns); the plugin-level guards
+        # read the payload's agent_type (turnstile:<role>) instead
+        for f in AGENTS.glob("*.md"):
+            fm = f.read_text().split("---")[1]
+            for key in ("hooks:", "mcpServers:", "permissionMode:"):
+                self.assertNotIn(key, fm, f.name)
+        self.assertIn("agent_type: turnstile:tester", (AGENTS / "tester.md").read_text().split("## Cannot")[1])

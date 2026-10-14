@@ -167,13 +167,13 @@ relative to `delivery/` and must exist.
   pathspec, a ref, or a pathspec that covers the delivery dir (`.`, `..`, `:/`, an ancestor); a pathspec elsewhere in that
   worktree, `git stash list|show`, `git clean -n` pass. Reports and briefs go through the Write tool and
   are committed by the next `turnstile pass`. Global options before the subcommand (`git -C dir`, `git -c k=v`,
-  `gh -R owner/repo`) are covered. **Role rules:** when the guard runs with `TURNSTILE_ROLE=tester` (the tester agent's own
-  frontmatter hooks set it; a payload `agent_type: turnstile:tester` is the fallback) `git push`, `git commit`,
+  `gh -R owner/repo`) are covered. **Role rules:** when the hook payload names the caller `agent_type: turnstile:tester` (Claude Code
+  2.1.x sends `agent_id`/`agent_type` for every subagent tool call; it ignores `hooks` in plugin agent frontmatter, so
+  `TURNSTILE_ROLE` is only for tests and non-plugin agents) `git push`, `git commit`,
   `gh pr|issue comment|review|create|edit|close|reopen|merge|ready` and `gh api` writes are refused too.
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
-  refuses Jira writes under any MCP prefix when the caller is a turnstile agent (`TURNSTILE_ROLE` or the payload's agent
-  name); the orchestrator (no role) passes and records with `jira-synced`. Agent identity reaches the hook only through the
-  agent's frontmatter hooks (`agents/tester.md`) or a payload field; where neither is present the prose rule is all there is.
+  refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
+  main-thread orchestrator (no `agent_id`) passes and records with `jira-synced`.
 - `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
   unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside
