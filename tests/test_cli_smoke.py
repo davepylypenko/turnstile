@@ -17,6 +17,10 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "bug"], cwd=ws, capture_output=True, text=True, env=dict(__import__("os").environ, PYTHONPATH=str(ROOT)))
         self.assertEqual(out.returncode, 2); self.assertIn("usage:", out.stdout + out.stderr); self.assertIn("add", out.stdout + out.stderr)
 
+    def test_threads_subcommand_is_wired(self):
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "threads", "--help"], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for flag in ("--self-resolved", "--needs-lead", "--report"): self.assertIn(flag, out.stdout)
     def test_shim_forwards(self):
         out = subprocess.run([str(ROOT / "scripts" / "turnstile"), "--version"],
                              cwd=ROOT, capture_output=True, text=True)

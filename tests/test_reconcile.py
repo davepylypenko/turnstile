@@ -5,6 +5,7 @@ D = pathlib.Path(__file__).parent / "fixtures"
 FIX = json.loads((D / "state_min.json").read_text())
 PAYLOAD = json.loads((D / "gh_pr_13222.json").read_text())
 H = "aaaaaaaa11111111"
+from turnstile_cli.rules import same_head as rules_same
 HUMAN = {"head": H, "sent_head": H, "slack_permalink": "u", "approved": "ah-1", "open_threads": 0, "approvals": []}
 
 class Parse(unittest.TestCase):
@@ -67,6 +68,32 @@ class Compare(unittest.TestCase):
         for st in ("DEV", "REWORK"):
             props = reconcile.compare(self.data(st), self.facts(head="ffffffff66666666", ci="success", human_threads_open=0))
             self.assertEqual(props[0].kind, "head_changed", st); self.assertIsNone(props[0].suggested_cmd, st)
+    def test_a_thread_answered_after_its_last_reviewer_comment_does_not_reopen_rework(self):
+        # 2026-10-14: back on ON_HUMAN_REVIEW the replied threads stay unresolved (only reviewers resolve); a reviewer follow-up reopens
+        d = self.data("ON_HUMAN_REVIEW", human=HUMAN)
+        f = self.facts(); t = f["jsfiller#1"].threads[0]
+        t["comments"] = [{"id": "1", "login": "lMakDen", "at": "2026-10-12T09:00:00Z", "bot": False},
+                         {"id": "2", "login": "leadlogin", "at": "2026-10-12T10:00:00Z", "bot": False}]
+        self.assertEqual(self.kinds(reconcile.compare(d, f)), [])
+        t["comments"].append({"id": "3", "login": "lMakDen", "at": "2026-10-12T11:00:00Z", "bot": False})
+        props = reconcile.compare(d, f); self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)
+    def test_changes_requested_on_an_older_head_do_not_reopen_rework(self):
+        # 2026-10-14: after the rework the PR is back on ON_HUMAN_REVIEW with a new head; the reviewer's old CHANGES_REQUESTED stays in
+        # latestReviews until they re-review, and must not send the PR back to REWORK (it still blocks APPROVED)
+        p = copy.deepcopy(PAYLOAD); p["latestReviews"]["nodes"][0]["state"] = "CHANGES_REQUESTED"
+        f = github.parse("jsfiller#1", p)
+        self.assertEqual(f.changes_requested, ["isachivka"]); self.assertTrue(rules_same(f.changes_requested_heads["isachivka"], f.head))
+        p["latestReviews"]["nodes"][0]["commit"]["oid"] = "0123456789abcdef"
+        f = github.parse("jsfiller#1", p); f.human_threads_open = 0
+        props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), {"jsfiller#1": f})
+        self.assertNotIn("changes_requested", self.kinds(props))
+    def test_rework_lists_what_the_threads_still_need(self):
+        # 2026-10-14: unclassified reviewer threads, missing agent replies and the lead's pending word show in status (no command: judgment)
+        d = self.data("REWORK", human=dict(HUMAN, sent_at="2026-10-11T10:00Z"))
+        props = [p for p in reconcile.compare(d, self.facts()) if p.kind == "threads"]
+        self.assertEqual(len(props), 1); self.assertIn("PRRT_1", props[0].message); self.assertIn("turnstile threads", props[0].message)
+        self.assertIsNone(props[0].suggested_cmd)
+        self.assertEqual([p for p in reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts()) if p.kind == "threads"], [])
     def test_human_thread_proposes_rework(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts())
         self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)

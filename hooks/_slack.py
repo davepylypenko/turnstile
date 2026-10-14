@@ -4,7 +4,8 @@ sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import block
 
 PR_RX = re.compile(r"github\.com/[^/\s]+/([^/\s]+)/pull/(\d+)|\b([a-z0-9-]+)#(\d+)\b", re.I)
-STATE_FOR_TYPE = {"send": "READY", "reply": "REWORK"}
+# 2026-10-14: a `reply` entry is the lead's word for one GitHub reply on one needs_lead thread (guard_bash), never a Slack message
+STATE_FOR_TYPE = {"send": "READY"}
 LEAD_HINT = "Get the lead's word; the lead runs `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt."
 
 def prs_in(text: str):
@@ -50,7 +51,7 @@ def usable(entry: dict, pid: str, prs: dict, stories: dict = None, org: str = No
             and (entry["type"] != "send" or story_ready(pid, prs, stories, org, live)))
 
 def choose(data: dict, ids, channel: str, live: bool = True) -> dict:
-    """pid -> the approved, unused send/reply entry that allows this message; blocks (exit 2) when any PR lacks one.
+    """pid -> the approved, unused send entry that allows this message; blocks (exit 2) when any PR lacks one.
     A PR listed in a chosen entry's `companions` (a paired locales PR, a repo outside epic.repos) needs no entry of
     its own (R2-12); every refusal names the id it is about. `live` asks GitHub for the deployed heads (PreToolUse);
     the PostToolUse record skips the network so a transient gh failure never leaves a sent message unrecorded."""
@@ -79,7 +80,7 @@ def choose(data: dict, ids, channel: str, live: bool = True) -> dict:
         if not story_ready(pid, prs, data.get("stories"), org, live):
             hint += (" (story %s is not DONE, or a PR head changed after its deploy: human review receives only stories that passed their "
                      "gates on the current heads)" % prs.get(pid, {}).get("story"))
-        block("no usable (approved, unused) send/reply for %s in awaiting_human (state %s)%s. %s"
+        block("no usable (approved, unused) send for %s in awaiting_human (state %s)%s. %s"
               % (pid, prs.get(pid, {}).get("state"), hint, LEAD_HINT))
     return chosen
 

@@ -1,7 +1,7 @@
 import copy, datetime, os, pathlib, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from . import state as st_mod, rules, ledger
+from . import state as st_mod, rules, ledger, threads
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
@@ -98,7 +98,7 @@ def _apply_pr_evidence(pr: dict, o: Options) -> None:
     if o.merged_sha:
         pr["merged_sha"] = o.merged_sha
 
-def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, lead_login: Optional[str] = None) -> List[str]:
+def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Optional[dict] = None) -> List[str]:
     """R2-5: self-reported evidence must equal what GitHub says for the PR's head. Pure; shared with the reconcile dry run."""
     out: List[str] = []
     h = pr.get("head")
@@ -131,19 +131,12 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, lead_login: 
         c = for_head("copilot")
         if repo_cfg.get("copilot") and c and c.get("open_threads") == 0 and facts.copilot_threads_open != 0:
             out.append("MISSING Copilot threads == 0 on GitHub for head %s (has %d); evidence says 0" % (h, facts.copilot_threads_open))
-    if target == "ON_HUMAN_REVIEW" and pr.get("rework_since"):
-        # spec §3 REWORK DoD "replies posted": every human thread open when the rework started has a reply by the lead after it
-        from . import github
-        since = github.ts((pr.get("rework_since") or {}).get("at"))
-        if since is None:  # fail closed: a rework start that cannot be dated cannot bound the replies check
-            out.append("MISSING a parsable rework_since.at (has %r; expected %%Y-%%m-%%dT%%H:%%MZ) to verify the lead's replies" % (pr.get("rework_since") or {}).get("at"))
-        pending = [t for t in facts.threads if t.get("human") and since and (github.ts(t.get("opened_at")) or datetime.datetime.min) <= since]
-        if pending and not lead_login:
-            out.append("MISSING epic.roles.lead_github (the lead's GitHub login) to verify the replies on %d human thread(s)" % len(pending))
-        for t in pending:
-            if lead_login and not any(r.get("login") == lead_login and (github.ts(r.get("at")) or datetime.datetime.min) > since for r in t.get("replies") or []):
-                out.append("MISSING reply by the lead (%s) after %s on human thread %s (opened %s): REWORK DoD \"replies posted\""
-                           % (lead_login, pr["rework_since"].get("at"), t.get("id"), t.get("opened_at")))
+    if target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK":
+        # spec §3 REWORK DoD (lead rule 2026-10-14): every human thread opened since the send, and every unresolved one, has a reply newer
+        # than its last reviewer comment — the agent's for a self_resolved thread, after the lead's approved reply entry for a needs_lead one
+        epic = (data or {}).get("epic") or {}
+        out.extend(threads.replies_missing(pr, pr.get("_id") or "", facts.threads, epic.get("roles"), (data or {}).get("awaiting_human"),
+                                           epic.get("github_org") or ""))
     if target == "APPROVED":
         human = ev.get("human") or {}
         for login in human.get("approvals") or []:
@@ -161,7 +154,7 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, lead_login: 
     return out
 
 def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, org: str, o: Options, io: IO, notes: List[str],
-                           lead_login: Optional[str] = None) -> List[str]:
+                           data: Optional[dict] = None) -> List[str]:
     """Bind the evidence to the PR's real head and to GitHub's facts: GitHub decides, not the caller."""
     h = pr.get("head")
     ev = pr.setdefault("evidence", {})
@@ -176,7 +169,7 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     if not rules.same_head(facts.head, h):
         raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
-    return _facts_mismatches(pr, target, facts, repo_cfg, lead_login)
+    return _facts_mismatches(pr, target, facts, repo_cfg, data)
 
 def _verify_story_heads(story: dict, sid: str, data: dict, o: Options, io: IO, notes: List[str]) -> List[str]:
     """Round 2 R2-7: a story gate trusts evidence.deploy.heads only after GitHub confirms that every PR in the snapshot still
@@ -347,10 +340,12 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
             if kind == "pr":
                 pr = st_mod.pr(st, ident)
                 repo = st_mod.repo_cfg(st, ident)
+                if target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK" and (o.slack or o.approved or o.reviewers):
+                    raise TurnstileError("REWORK → ON_HUMAN_REVIEW takes no --slack/--approved/--reviewers: the replies on the reviewers' threads are "
+                                         "the notification, and only a needs_lead thread waits for the lead (its own reply entry; 2026-10-14)")
                 trial = copy.deepcopy(pr); trial["_id"] = ident
                 _apply_pr_evidence(trial, o)
-                missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes,
-                                                 lead_login=(data["epic"].get("roles") or {}).get("lead_github"))
+                missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes, data=data)
                 missing += rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
                 if missing:
                     print("\n".join(notes + missing)); return 2
@@ -365,8 +360,18 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if (pr.get("jira") or {}).get("status") != jira_target:
                     pr["jira"] = {"status": jira_target, "synced": False}
                     jira_line = "JIRA: %s → %s" % (pr["ticket"], jira_target)
-                if target == "ON_HUMAN_REVIEW":
+                if target == "ON_HUMAN_REVIEW" and src == "READY":
                     rules.find_entry(awaiting, o.approved)["consumed_at"] = _now()
+                if target == "ON_HUMAN_REVIEW" and src == "REWORK":  # back to the same reviewers: the replies notified them on GitHub
+                    human = pr.setdefault("evidence", {}).setdefault("human", {})
+                    human["sent_head"] = pr.get("head"); human["returned_at"] = _now()
+                    for a in awaiting:
+                        if a.get("type") == "reply" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
+                            if a.get("approved_at"):
+                                a["consumed_at"] = _now()
+                            else:
+                                a["voided_at"] = _now()
+                                extra.append("voided %s (reply for %s thread %s: the thread was answered without it)" % (a["id"], ident, a.get("thread")))
                 if target == "READY" and not _has_open_entry(data, "send", "pr", ident):
                     extra_keys = {"companions": [x for x in o.companions.split(",") if x]} if o.companions else {}
                     _open_entry(data, "send", pr=ident, head=pr.get("head"), **extra_keys)
@@ -375,12 +380,11 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                         if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
                             a["voided_at"] = _now()
                             extra.append("voided %s (send for %s: head changed to %s)" % (a["id"], ident, pr.get("head")))
-                if target == "REWORK":
+                if target == "REWORK":  # no blanket reply entry (2026-10-14): turnstile threads opens one per needs_lead thread
                     pr["rework_since"] = {"head": pr.get("head"), "at": _now(), "reason": o.reason}
-                    _open_entry(data, "reply", pr=ident, head=pr.get("head"))
                 if target == "DEV":
                     pr.pop("rework_since", None)  # a re-implementation: deep review is required again (R2-7)
-                    for a in awaiting:  # the reply word was for that rework, not a later one (R3-7)
+                    for a in awaiting:  # a thread's reply word was for that rework, not a later one (R3-7)
                         if a.get("type") == "reply" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
                             a["voided_at"] = _now(); extra.append("voided %s (reply for %s: PR went back to DEV)" % (a["id"], ident))
                 if target == "APPROVED":

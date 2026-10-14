@@ -39,7 +39,11 @@ Object.assign(COLORS, { PLANNED:'var(--planned)', IN_PROGRESS:'var(--progress)',
 const JIRA = { DEV:'In progress', AI_REVIEW:'In progress', READY:'In progress', ON_HUMAN_REVIEW:'On Review', REWORK:'On Review', APPROVED:'On Review', MERGED:'On Hold' };
 function note(p) {
   const h = (p.evidence || {}).human || {}, out = [];
-  if (p.state === 'REWORK') out.push('reviewer not notified' + (h.sent_head && p.head && !(p.head.startsWith(h.sent_head) || h.sent_head.startsWith(p.head)) ? ' (new head)' : ''));
+  if (p.state === 'REWORK') {
+    out.push('reviewer not notified' + (h.sent_head && p.head && !(p.head.startsWith(h.sent_head) || h.sent_head.startsWith(p.head)) ? ' (new head)' : ''));
+    const nl = Object.values(p.threads || {}).filter(t => t && t.class === 'needs_lead').length;
+    if (nl) out.push(nl + ' thread(s) need the lead');
+  }
   if (p.state === 'READY' && p.blocked_by) out.push('waits for ' + p.blocked_by);
   if (p.last_reason) out.push(p.last_reason);
   return out.join(' · ');
@@ -131,7 +135,7 @@ async function connectBugsDb() {
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
-    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tabs button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
@@ -139,7 +143,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 }));
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
-    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted.' +
+    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry.' +
     '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.';
 }
 if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend();

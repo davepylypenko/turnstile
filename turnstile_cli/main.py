@@ -34,12 +34,17 @@ def build_parser():
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
     ba.add_argument("--case", help="test-case id the bug covers (one bug per story + case; a persisting fail reopens it)")
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
+    th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
+    th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
+    th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
+    th.add_argument("--report", help="the comments-handler report with the draft replies (relative to delivery/)"); th.add_argument("--no-commit", action="store_true")
     br = sub.add_parser("brief", help="render an agent brief from its template (the dispatch helper)"); br.add_argument("agent"); br.add_argument("name")
     br.add_argument("--var", action="append", default=[], dest="vars"); br.add_argument("--force", action="store_true"); br.add_argument("--no-commit", action="store_true")
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
+                     ("--agent-github", {"help": "GitHub login the agents post thread replies as (default: --lead-github)"}),
                      ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, epic_branch, slack[, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
                      ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
                      ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
@@ -75,6 +80,9 @@ def main(argv=None):
             if a.bug_cmd == "set":
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
             return 2
+        if a.cmd == "threads":
+            from .threads import run as threads_run
+            return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit)
         if a.cmd == "plan-submitted":
             from .plan_cmd import run as plan_run
             return plan_run(delivery, no_commit=a.no_commit)

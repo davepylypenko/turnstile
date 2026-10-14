@@ -30,6 +30,8 @@ class Board(unittest.TestCase):
         self.assertIn("/^https:\\/\\//.test(h.slack_permalink", tpl)
     def test_legend_note_colours_and_tabs(self):
         tpl = board.TEMPLATE.read_text()
+        for s in ("need the lead", "a.thread", "self-resolved threads"):
+            self.assertIn(s, tpl, s)
         for s in ("Jira mapping", "reviewer not notified", "role=\"tablist\"", "aria-selected", "PLANNED:'var(--planned)'", "todo:'var(--todo)'",
                   "(e.env_test.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563"):
             self.assertIn(s, tpl, s)

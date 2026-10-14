@@ -162,6 +162,17 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
         _head_verified(pr, out)
         _ai_review_done(pr, repo_cfg, out)
         return out
+    if target == "ON_HUMAN_REVIEW" and src == "REWORK":
+        # back to the same reviewers (lead rule 2026-10-14): gate + Copilot on the new head; the replies on every reviewer thread are
+        # checked against GitHub by pass (threads.replies_missing); no Slack message and no blanket lead approval
+        _head_verified(pr, out)
+        _ai_review_done(pr, repo_cfg, out)
+        if not (_ev(pr, "human") or {}).get("sent_at"):
+            out.append("MISSING evidence.human.sent_at (the send this rework answers; the replies are counted from it)")
+        b = pr.get("blocked_by")
+        if b and (prs.get(b) or {}).get("state") != "MERGED":
+            out.append("MISSING blocked_by %s to be MERGED before sending (is %s)" % (b, (prs.get(b) or {}).get("state")))
+        return out
     if target == "ON_HUMAN_REVIEW":
         _head_verified(pr, out)
         _ai_review_done(pr, repo_cfg, out)
@@ -172,9 +183,8 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
             out.append("MISSING evidence.human.slack_permalink of the form https://<workspace>.slack.com/archives/… (has %s)" % h["slack_permalink"])
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
-        if src == "READY":
-            _story_gates_passed(pr, stories, out, prs)
-        e = check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
+        _story_gates_passed(pr, stories, out, prs)
+        e = check_approved_entry(h.get("approved"), "send", "pr", pr.get("_id"), awaiting, out)
         if e and not e.get("used_at"):
             out.append("MISSING awaiting_human %s used_at (no Slack message went through the guarded tool for it)" % e.get("id"))
         if e and e.get("type") == "send" and e.get("head") and not same_head(e.get("head"), pr.get("head")):
@@ -218,7 +228,8 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
     if s == "ON_HUMAN_REVIEW":
         return "wait for human approval; reconcile for threads/pushes"
     if s == "REWORK":
-        return "fix, re-run gate/copilot on the new head, draft replies, get the lead's word, then pass ON_HUMAN_REVIEW"
+        return ("fix and push; classify the reviewer threads (turnstile threads); reply to self_resolved ones at once; the lead approves each "
+                "needs_lead reply; gate/copilot on the new head; then pass ON_HUMAN_REVIEW")
     if s == "APPROVED":
         return "wait for the lead to merge"
     return "done"

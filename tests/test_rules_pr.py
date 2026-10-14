@@ -148,19 +148,20 @@ class ToHuman(unittest.TestCase):
         self.assertTrue(any("sent_head" in m for m in out))
         self.assertEqual(rules.check_pr(p, "REWORK", self.repo, FIX["prs"], reason="push after send"), [])
         self.assertTrue(any("--reason" in m for m in rules.check_pr(p, "REWORK", self.repo, FIX["prs"])))
-    def test_rework_back_needs_gate_copilot_reply_but_no_new_deep_review(self):
+    def test_rework_back_needs_gate_and_copilot_but_no_new_deep_review_slack_or_blanket_reply(self):
+        # 2026-10-14: the replies on GitHub are checked against the facts (threads.replies_missing); the rules need no Slack and no reply entry
         repo_cp = dict(self.repo, copilot=True)
         p = self.ready(); p["state"] = "REWORK"; p["head"] = H2
         p["rework_since"] = {"head": H, "at": "2026-10-13T10:00Z", "reason": "human thread"}
         p["evidence"].update(ci={"head": H2, "status": "success"}, gate={"name": "pdf-review", "head": H2, "result": "pass"},
                              copilot={"head": H2, "open_threads": 0}, head_verified={"head": H2, "verified": True},
-                             human={"head": H2, "slack_permalink": PERMALINK, "sent_head": H2, "approved": "ah-2"})
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[REPLY])
-        self.assertEqual(out, [])  # deep_review is still for H, not required after human review
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[dict(SEND, id="ah-2")])
-        self.assertTrue(any("type reply" in m for m in out), out)
+                             human={"head": H, "slack_permalink": PERMALINK, "sent_head": H, "sent_at": "2026-10-13T09:00Z", "approved": "ah-1"})
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[SEND]), [])  # deep_review is still for H
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[]), [])
         p["evidence"]["gate"]["head"] = H
-        self.assertTrue(any("gate" in m for m in rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[REPLY])))
+        self.assertTrue(any("gate" in m for m in rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[])))
+        p["evidence"]["gate"]["head"] = H2; del p["evidence"]["human"]["sent_at"]
+        self.assertTrue(any("sent_at" in m for m in rules.check_pr(p, "ON_HUMAN_REVIEW", repo_cp, FIX["prs"], awaiting=[])))
     def test_without_rework_marker_deep_review_is_required(self):
         p = self.ready(); p["state"] = "REWORK"; p["head"] = H2
         p["evidence"].update(ci={"head": H2, "status": "success"}, gate={"name": "pdf-review", "head": H2, "result": "pass"},

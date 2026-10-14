@@ -266,24 +266,19 @@ class PassCmd(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", send, self.io)
         self.assertEqual(rc, 0, out)
 
-    def test_rework_marks_pr_voids_nothing_and_opens_reply_entry(self):
+    def test_rework_opens_no_reply_entry_and_returns_on_the_replies_without_slack(self):
+        # 2026-10-14: no blanket `reply` entry; the PR returns to humans once every reviewer thread has its reply on GitHub
         self.to_human()
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="human thread r1"), self.io)
         self.assertEqual(rc, 0)
         data = self.data(); pr = data["prs"]["jsfiller#1"]
         self.assertEqual(pr["rework_since"]["head"], H); self.assertEqual(pr["rework_since"]["reason"], "human thread r1")
-        reply = [a for a in data["awaiting_human"] if a["type"] == "reply"]
-        self.assertEqual(len(reply), 1); self.assertEqual(reply[0]["pr"], "jsfiller#1"); self.assertIsNone(reply[0]["approved_at"])
-        # back to humans: new head, gate on it, approved reply, no new deep review
-        self.io.heads["jsfiller#1"] = H2
-        with env(TURNSTILE_LEAD="1"):
-            pass_cmd.approve(self.d, reply[0]["id"], self.io)
-        self.sent(reply[0]["id"])
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW",
-                              opts(head=H2, ci="success", gate="pdf-review:pass", slack=LINK + "?thread_ts=2", approved=reply[0]["id"]), self.io)
+        self.assertEqual([a for a in data["awaiting_human"] if a["type"] == "reply"], [])
+        self.io.heads["jsfiller#1"] = H2  # back to humans: new head, gate on it, no new deep review, no Slack, no approval
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", gate="pdf-review:pass"), self.io)
         self.assertEqual(rc, 0, out)
         pr = self.data()["prs"]["jsfiller#1"]
-        self.assertEqual(pr["evidence"]["human"]["sent_head"], H2)
+        self.assertEqual(pr["evidence"]["human"]["sent_head"], H2); self.assertEqual(pr["evidence"]["human"]["slack_permalink"], LINK)
         self.assertEqual(pr["evidence"]["deep_review"]["head"], H)
 
     def test_approved_opens_merge_entry_and_merged_logs_unblocked(self):
@@ -395,10 +390,12 @@ class PassCmd(unittest.TestCase):
         self.to_human()
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="human thread r1"), self.io), 0)
         self.assertIn("rework_since", self.data()["prs"]["jsfiller#1"])
+        data = self.data(); data["awaiting_human"].append({"id": "ah-9", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "thread": "PRRT_1",
+                                                           "created_at": "x", "payload": None, "approved_at": "2026-10-13T10:00Z"}); self.write(data)
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "DEV", opts(reason="re-implementation after the review"), self.io), 0)
         self.assertNotIn("rework_since", self.data()["prs"]["jsfiller#1"])
         replies = [a for a in self.data()["awaiting_human"] if a["type"] == "reply"]
-        self.assertTrue(replies and all(a.get("voided_at") for a in replies))  # R3-7: not reusable in a later REWORK
+        self.assertTrue(replies and all(a.get("voided_at") for a in replies))  # R3-7: a thread's reply word is not reusable in a later REWORK
         self.io.heads["jsfiller#1"] = H2
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "AI_REVIEW", opts(head=H2, ci="success"), self.io), 0)
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(head=H2, ci="success", gate="pdf-review:pass"), self.io)

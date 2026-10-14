@@ -1,7 +1,7 @@
 import copy, json, pathlib, re, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from . import rules, state as st_mod, github
+from . import rules, state as st_mod, github, threads
 
 @dataclass
 class Proposal:
@@ -26,7 +26,7 @@ def _dry_run(data: dict, pid: str, target: str, cmd: str, facts: Optional[github
         return str(e)
     pr.setdefault("evidence", {})["head_verified"] = {"head": pr.get("head"), "verified": True}
     repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-    missing = pass_cmd._facts_mismatches(pr, target, facts, repo, lead_login=(data["epic"].get("roles") or {}).get("lead_github")) if facts is not None else []
+    missing = pass_cmd._facts_mismatches(pr, target, facts, repo, data) if facts is not None else []
     missing += rules.check_pr(pr, target, repo, data["prs"], reason=o.reason, awaiting=data.get("awaiting_human"), stories=data.get("stories"))
     return "; ".join(missing) if missing else None
 
@@ -36,6 +36,37 @@ def _propose(out: List[Proposal], data: dict, pid: str, kind: str, message: str,
         out.append(Proposal(pid, kind, "%s — no clean pass available: %s" % (message, refusal), None))
     else:
         out.append(Proposal(pid, kind, message, cmd))
+
+def _threads_waiting_for_us(data: dict, f: github.PrFacts) -> int:
+    """Unresolved human threads whose last reviewer comment has no newer reply from the agents or the lead. A thread answered
+    after the reviewer's last word stays unresolved until the reviewer resolves it; it does not reopen REWORK (2026-10-14)."""
+    if f.human_threads_open == 0 or not f.threads:
+        return f.human_threads_open
+    agent, lead = threads.logins((data.get("epic") or {}).get("roles"))
+    ours = {agent, lead} - {""}
+    n = 0
+    for t in f.threads:
+        if not t.get("human") or t.get("resolved"):
+            continue
+        last = threads.last_reviewer_at(t, ours)
+        if last is None:
+            continue
+        if not any(c.get("login") in ours and threads._ts(c.get("at")) > threads._ts(last) for c in t.get("comments") or []):
+            n += 1
+    return n
+
+def _changes_on_head(f: github.PrFacts) -> List[str]:
+    """CHANGES_REQUESTED reviews on the current head (a review without a recorded commit counts). One on an older head was answered
+    by the rework's push; it stays in latestReviews until the reviewer re-reviews and still blocks APPROVED, but reopens nothing."""
+    heads = f.changes_requested_heads or {}
+    return [l for l in f.changes_requested if not heads.get(l) or rules.same_head(heads[l], f.head)]
+
+def _threads_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: github.PrFacts) -> None:
+    """REWORK: what the review threads still need before ON_HUMAN_REVIEW (classification, the agent's replies, the lead's word)."""
+    epic = data.get("epic") or {}
+    miss = threads.replies_missing(dict(pr, _id=pid), pid, f.threads, epic.get("roles"), data.get("awaiting_human"), epic.get("github_org") or "")
+    if miss:
+        out.append(Proposal(pid, "threads", "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss), None))
 
 def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
     out: List[Proposal] = []
@@ -66,15 +97,19 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
                 _propose(out, data, pid, "head_changed", msg + " (CI %s)" % f.ci, "AI_REVIEW", cmd, facts=f, head=f.head, ci=ci)
             elif st == "REWORK":
                 out.append(Proposal(pid, "head_changed", msg + "; record it with the ON_HUMAN_REVIEW pass (--head %s) once gate/copilot are green" % f.head[:12], None))
+                _threads_proposal(out, data, pid, pr, f)
             else:
                 out.append(Proposal(pid, "head_changed", msg + " (DEV: pushes are expected; pass AI_REVIEW with --head when CI is green)", None))
             continue
-        if st in ("ON_HUMAN_REVIEW", "APPROVED") and f.human_threads_open > 0:
-            reason = "%d human thread(s)" % f.human_threads_open
-            _propose(out, data, pid, "human_thread", "%d unresolved human thread(s)" % f.human_threads_open, "REWORK",
+        if st == "REWORK":
+            _threads_proposal(out, data, pid, pr, f)
+        waiting = _threads_waiting_for_us(data, f)
+        if st in ("ON_HUMAN_REVIEW", "APPROVED") and waiting > 0:
+            reason = "%d human thread(s)" % waiting
+            _propose(out, data, pid, "human_thread", "%d unresolved human thread(s) waiting for a reply" % waiting, "REWORK",
                      'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
-        elif st in ("ON_HUMAN_REVIEW", "APPROVED") and f.changes_requested:
-            reason = "changes requested by %s" % ", ".join(f.changes_requested)
+        elif st in ("ON_HUMAN_REVIEW", "APPROVED") and _changes_on_head(f):
+            reason = "changes requested by %s" % ", ".join(_changes_on_head(f))
             _propose(out, data, pid, "changes_requested", reason, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
         elif st == "ON_HUMAN_REVIEW" and f.approvals and f.human_threads_open == 0:
             _propose(out, data, pid, "approved", "approved by %s" % ", ".join(f.approvals), "APPROVED",

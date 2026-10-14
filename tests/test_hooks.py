@@ -341,11 +341,13 @@ class SlackGuard(unittest.TestCase):
         r = self.post(self.MSG, "sent, ts=1760000000.2 message_ts missing"); self.assertEqual(r.returncode, 0)
         self.assertNotIn("used_at", self.state()["awaiting_human"][0])
 
-    def test_send_needs_ready_reply_needs_rework(self):
+    def test_only_a_send_entry_on_a_ready_pr_unlocks_slack(self):
+        # 2026-10-14: a `reply` entry is the lead's word for one GitHub reply on one needs_lead thread, never a Slack message
         self.ready_with(state="AI_REVIEW"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(state="REWORK", type="reply"); self.assertEqual(self.slack(self.MSG).returncode, 0)
+        self.ready_with(state="REWORK", type="reply", thread="PRRT_1"); self.assertEqual(self.slack(self.MSG).returncode, 2)
         self.ready_with(state="ON_HUMAN_REVIEW", type="reply"); self.assertEqual(self.slack(self.MSG).returncode, 2)
         self.ready_with(state="READY", type="merge"); self.assertEqual(self.slack(self.MSG).returncode, 2)
+        self.ready_with(state="READY"); self.assertEqual(self.slack(self.MSG).returncode, 0)
 
     def test_consumed_or_voided_entries_do_not_unlock(self):
         self.ready_with(consumed_at="x"); self.assertEqual(self.slack(self.MSG).returncode, 2)
@@ -368,7 +370,7 @@ class SlackGuard(unittest.TestCase):
         r = self.slack(paired); self.assertEqual(r.returncode, 2)
         self.assertIn("locales#5", r.stderr); self.assertIn("not in epic.repos", r.stderr); self.assertNotIn("cannot read", r.stderr)
         r = self.slack(self.MSG + " and jsfiller#99"); self.assertEqual(r.returncode, 2)
-        self.assertIn("no usable (approved, unused) send/reply for jsfiller#99", r.stderr)
+        self.assertIn("no usable (approved, unused) send for jsfiller#99", r.stderr)
         self.ready_with(companions=["locales#5"])
         r = self.slack(paired); self.assertEqual(r.returncode, 0, r.stderr)
         r = self.post(paired, '{"ok":true,"message_ts":"1760000000.9"}'); self.assertEqual(r.returncode, 0, r.stderr)
@@ -381,14 +383,14 @@ class SlackGuard(unittest.TestCase):
         out = json.loads(r.stdout)["hookSpecificOutput"]
         self.assertEqual(out["permissionDecision"], "ask"); self.assertIn("jsfiller#1", out["permissionDecisionReason"])
 
-    def test_send_waits_for_the_story_reply_does_not(self):
+    def test_send_waits_for_the_story(self):
         # R3-3: the Slack guard applies the same story gate as pass READY -> ON_HUMAN_REVIEW
         self.ready_with(story_state="IN_PROGRESS")
         r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("story S1 is not DONE", r.stderr)
         d = self.state(); d["stories"]["S1"]["human_review"] = "per_pr"; self.write(d)
         self.assertEqual(self.slack(self.MSG).returncode, 0)
         self.ready_with(state="REWORK", type="reply", story_state="IN_PROGRESS")
-        self.assertEqual(self.slack(self.MSG).returncode, 0)
+        self.assertEqual(self.slack(self.MSG).returncode, 2)
 
     def test_send_refused_when_a_head_changed_after_the_story_deploy(self):
         # round 2: a DONE story whose deploy.heads no longer match the PR heads (a push after DONE) is not sent
@@ -523,3 +525,138 @@ class RoleGuard(unittest.TestCase):
             self.assertTrue(re.fullmatch(m, tool), tool)
         self.assertFalse(re.fullmatch(m, "mcp__claude_ai_Atlassian__getJiraIssue"))
         self.assertIn("guard_role.py", next(x for x in pre if "Jira" in x["matcher"])["hooks"][0]["command"])
+
+CANNED_GH = r'''#!/usr/bin/env python3
+import json, os, sys
+R = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "responses.json")))
+args = sys.argv[1:]
+q = next((a[len("query="):] for a in args if a.startswith("query=")), "")
+kv = dict(a.split("=", 1) for a in args if "=" in a and not a.startswith("query="))
+if "node(" in q:
+    a = R.get("nodes", {}).get(kv.get("id"))
+    if a is None:
+        sys.exit(1)
+    print(json.dumps({"data": {"node": {"comments": {"nodes": [{"author": a}]}}}}))
+else:
+    p = R.get("prs", {}).get("%s#%s" % (kv.get("r"), kv.get("n")))
+    if p is None:
+        sys.exit(1)
+    print(json.dumps({"data": {"repository": {"pullRequest": p}}}))
+'''
+
+def gql_thread(tid, comments, resolved=False):
+    return {"id": tid, "isResolved": resolved, "comments": {"totalCount": len(comments), "nodes": [
+        {"databaseId": cid, "author": {"__typename": "Bot" if login.endswith("reviewer") else "User", "login": login}, "createdAt": at}
+        for cid, login, at in comments]}}
+
+class ReviewWrites(unittest.TestCase):
+    """2026-10-14: issue comments, review submissions and review comments are refused for every caller (the repo gate's marker
+    comments excepted); a reply goes through the REST replies route to a thread classified in state.json — self_resolved at once,
+    needs_lead after the lead approved its own `reply` entry; resolving is allowed for bot (Copilot) threads only."""
+    T1 = "2026-10-13T11:00:00Z"
+    def setUp(self):
+        self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
+        shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
+        data = json.loads((d / "state.json").read_text()); data["epic"]["roles"]["agent_github"] = "agentlogin"
+        pr = data["prs"]["jsfiller#1"]; pr["state"] = "REWORK"
+        rec = lambda cls, cid: {"class": cls, "classified_at": "2026-10-13T12:00:00Z", "comment_id": cid, "comment_ids": [cid], "reviewer": "isachivka",
+                                "last_reviewer_at": self.T1}
+        pr["threads"] = {"PRRT_s": rec("self_resolved", "101"), "PRRT_l": rec("needs_lead", "201")}
+        data["awaiting_human"] = [{"id": "ah-3", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "thread": "PRRT_l", "last_reviewer_at": self.T1,
+                                   "created_at": "2026-10-13T12:00Z", "payload": None, "approved_at": None}]
+        (d / "state.json").write_text(json.dumps(data))
+        payload = json.loads((ROOT / "tests" / "fixtures" / "gh_pr_13222.json").read_text())
+        payload["reviewThreads"] = {"nodes": [gql_thread("PRRT_s", [(101, "isachivka", self.T1)]), gql_thread("PRRT_l", [(201, "isachivka", self.T1)]),
+                                              gql_thread("PRRT_cop", [(301, "copilot-pull-request-reviewer", self.T1)])]}
+        self.responses = {"prs": {"jsfiller#1": payload}, "nodes": {"PRRT_cop": {"__typename": "Bot", "login": "copilot-pull-request-reviewer"},
+                                                                     "PRRT_s": {"__typename": "User", "login": "isachivka"}}}
+        self.bin = pathlib.Path(tempfile.mkdtemp()); (self.bin / "gh").write_text(CANNED_GH); (self.bin / "gh").chmod(0o755); self.save()
+
+    def save(self):
+        (self.bin / "responses.json").write_text(json.dumps(self.responses))
+    def state(self):
+        return json.loads((self.ws / "delivery" / "state.json").read_text())
+    def write(self, data):
+        (self.ws / "delivery" / "state.json").write_text(json.dumps(data))
+    def bash(self, cmd, gh=True, **payload):
+        p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}; p.update(payload)
+        path = os.pathsep.join(([str(self.bin)] if gh else []) + ["/usr/bin", "/bin"])
+        return hook("guard_bash.py", p, self.ws, env={"PATH": path})
+    def assertBlocked(self, cmds, rule):
+        for cmd in cmds:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn(rule, r.stderr, cmd)
+    def assertAllowed(self, cmds):
+        for cmd in cmds:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
+    REPLY = "gh api -X POST repos/pdffiller/jsfiller/pulls/1/comments/%s/replies -f body='Fixed in abc1234'"
+
+    def test_issue_comments_reviews_and_review_comments_are_refused_for_everyone(self):
+        self.assertBlocked(["gh pr comment 1 --body 'fixed'", "gh pr comment 1 -R pdffiller/jsfiller --body x", "gh -R pdffiller/jsfiller issue comment 1 -b x",
+                            "gh api -X POST repos/pdffiller/jsfiller/issues/1/comments -f body=x", "gh api repos/pdffiller/jsfiller/issues/1/comments -f body=x",
+                            "gh api -X PATCH repos/pdffiller/jsfiller/issues/comments/9 -f body=x", "gh api -X DELETE repos/pdffiller/jsfiller/issues/comments/9",
+                            "curl -s -X POST https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments -d '{\"body\":\"x\"}'"], "issue-comment")
+        self.assertBlocked(["gh pr review 1 --approve", "gh pr review 1 --comment -b ok", "gh pr -R pdffiller/jsfiller review 1 --request-changes -b x",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE", "gh api repos/pdffiller/jsfiller/pulls/1/reviews/5/events -f event=COMMENT",
+                            "gh api -X PUT repos/pdffiller/jsfiller/pulls/1/reviews/5/dismissals -f message=x"], "review-submission")
+        self.assertBlocked(["gh api -X POST repos/pdffiller/jsfiller/pulls/1/comments -f body=x -F in_reply_to=101",
+                            "gh api -X PATCH repos/pdffiller/jsfiller/pulls/comments/101 -f body=x", "gh api -X DELETE repos/pdffiller/jsfiller/pulls/comments/101"],
+                           "review-comment")
+        self.assertBlocked(["gh api graphql -f query='mutation{addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:\"PRRT_s\",body:\"x\"}){comment{id}}}'",
+                            "gh api graphql -f query='mutation { addComment(input: {subjectId: \"PR_1\", body: \"x\"}) { clientMutationId } }'",
+                            "gh api graphql -f query='mutation{submitPullRequestReview(input:{pullRequestReviewId:\"x\",event:APPROVE}){clientMutationId}}'"],
+                           "graphql-review-write")
+
+    def test_reads_and_the_repo_gates_marker_comments_pass(self):
+        (self.ws / "result.md").write_text("<!-- pdf-review:result -->\n3 findings, 2 applied\n")
+        (self.ws / "plain.md").write_text("just a comment\n")
+        self.assertAllowed(["gh api repos/pdffiller/jsfiller/pulls/1/comments --paginate", "gh api repos/pdffiller/jsfiller/pulls/1/reviews",
+                            "gh api -X GET repos/pdffiller/jsfiller/pulls/1/comments -F per_page=100", "gh pr view 1 --comments",
+                            "gh api repos/pdffiller/jsfiller/issues/1/comments --jq '.[].body'", "grep -rn addComment src",
+                            "gh pr comment 1 --body '<!-- pdf-review:summary --> What changed'", "gh pr comment 1 --body-file result.md",
+                            "gh api -X PATCH repos/pdffiller/jsfiller/issues/comments/9 -F body=@result.md",
+                            "gh api -X POST repos/pdffiller/jsfiller/issues/1/comments -f body='<!-- crit-review:result --> ok'",
+                            "gh api graphql -f query='{ repository(owner:\"pdffiller\", name:\"jsfiller\") { pullRequest(number:1) { reviewThreads(first:100) { nodes { id } } } } }'"])
+        self.assertBlocked(["gh pr comment 1 --body-file plain.md", "gh pr comment 1 --body-file missing.md"], "issue-comment")
+
+    def test_self_resolved_reply_passes_at_once(self):
+        self.assertAllowed([self.REPLY % "101", "gh api --method POST /repos/pdffiller/jsfiller/pulls/1/comments/101/replies -f body=x"])
+
+    def test_needs_lead_reply_waits_for_the_lead_approved_entry_of_that_thread(self):
+        r = self.bash(self.REPLY % "201"); self.assertEqual(r.returncode, 2); self.assertIn("reply-needs-lead", r.stderr)
+        self.assertIn("ah-3", r.stderr); self.assertIn("TURNSTILE_LEAD=1 turnstile approve", r.stderr)
+        d = self.state(); d["awaiting_human"].append({"id": "ah-4", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "thread": "PRRT_s",
+                                                      "approved_at": "2026-10-13T12:30Z"}); self.write(d)
+        self.assertEqual(self.bash(self.REPLY % "201").returncode, 2)  # an approval for another thread does not count
+        d = self.state(); d["awaiting_human"][0]["approved_at"] = "2026-10-13T12:30Z"; self.write(d)
+        self.assertAllowed([self.REPLY % "201"])
+        d = self.state(); d["awaiting_human"][0]["voided_at"] = "2026-10-13T12:40Z"; self.write(d)
+        self.assertEqual(self.bash(self.REPLY % "201").returncode, 2)
+
+    def test_unclassified_foreign_computed_or_off_state_replies_are_refused(self):
+        r = self.bash(self.REPLY % "999"); self.assertEqual(r.returncode, 2); self.assertIn("reply-unclassified", r.stderr); self.assertIn("turnstile threads", r.stderr)
+        r = self.bash("gh api -X POST repos/pdffiller/other/pulls/1/comments/101/replies -f body=x"); self.assertEqual(r.returncode, 2); self.assertIn("reply-unknown-pr", r.stderr)
+        r = self.bash("gh api -X POST repos/someone/jsfiller/pulls/1/comments/101/replies -f body=x"); self.assertEqual(r.returncode, 2); self.assertIn("reply-unknown-pr", r.stderr)
+        for cmd in ["gh api -X POST repos/pdffiller/jsfiller/pulls/$N/comments/101/replies -f body=x", "gh api -X POST repos/{owner}/{repo}/pulls/1/comments/101/replies -f body=x",
+                    "gh api -X POST \"$URL\" -f body=x"]:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("computed", r.stderr, cmd)
+        d = self.state(); d["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; self.write(d)
+        r = self.bash(self.REPLY % "101"); self.assertEqual(r.returncode, 2); self.assertIn("REWORK", r.stderr)
+
+    def test_a_reviewer_follow_up_or_github_unavailable_blocks_the_reply(self):
+        threads = self.responses["prs"]["jsfiller#1"]["reviewThreads"]["nodes"]
+        threads[0]["comments"]["nodes"].append({"databaseId": 102, "author": {"__typename": "User", "login": "isachivka"}, "createdAt": "2026-10-13T13:00:00Z"})
+        threads[0]["comments"]["totalCount"] = 2; self.save()
+        r = self.bash(self.REPLY % "101"); self.assertEqual(r.returncode, 2); self.assertIn("reply-reclassify", r.stderr); self.assertIn("2026-10-13T13:00:00Z", r.stderr)
+        r = self.bash(self.REPLY % "101", gh=False); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr)
+
+    def test_resolving_human_threads_is_refused_bot_threads_pass(self):
+        q = "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"%s\"}) { thread { isResolved } } }'"
+        self.assertAllowed([q % "PRRT_cop"])
+        for cmd in [q % "PRRT_s", q.replace("resolveReviewThread", "unresolveReviewThread") % "PRRT_s",
+                    "gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t=$T",
+                    q % "PRRT_unknown"]:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("resolve", r.stderr, cmd)
+        r = self.bash(q % "PRRT_cop", gh=False); self.assertEqual(r.returncode, 2)
+
+    def test_tester_role_still_cannot_reply(self):
+        r = self.bash(self.REPLY % "101", agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)

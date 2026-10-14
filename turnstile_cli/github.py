@@ -10,7 +10,7 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ p
   isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision body
   allCommits: commits(last:100){totalCount nodes{commit{oid message signature{isValid}}}}
   latestReviews(first:30){nodes{author{__typename login} state commit{oid}}}
-  reviewThreads(first:100){nodes{id isResolved comments(first:50){nodes{author{__typename login} createdAt}}}}
+  reviewThreads(first:100){nodes{id isResolved comments(first:100){totalCount nodes{databaseId author{__typename login} createdAt}}}}
   commits(last:1){nodes{commit{oid signature{isValid} statusCheckRollup{state contexts(first:100){totalCount nodes{
     ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}} } } }"""
 TRAILER_RX = re.compile(r"Co-Authored-By|Generated with \[Claude Code\]", re.I)
@@ -32,12 +32,15 @@ class PrFacts:
     checks_complete: bool = True
     approvals: List[str] = field(default_factory=list)
     changes_requested: List[str] = field(default_factory=list)
+    changes_requested_heads: Dict[str, str] = field(default_factory=dict)  # login -> the commit the CHANGES_REQUESTED review was on
     human_threads_open: int = 0
     copilot_threads_open: int = 0
     head_signed: Optional[bool] = None
     base: Optional[str] = None
     unsigned: List[str] = field(default_factory=list)  # every commit of the PR without a valid signature (spec §3 DEV DoD)
-    threads: List[dict] = field(default_factory=list)   # {id, resolved, human, opened_at, replies: [{login, at}]}
+    # {id, resolved, human, opened_at, author, comment_id (REST id of the top-level comment), comment_ids, truncated,
+    #  comments: [{id, login, at, bot}], replies: [{login, at}] (comments after the first)}
+    threads: List[dict] = field(default_factory=list)
     trailered: List[str] = field(default_factory=list)  # commits whose message carries a trailer or the generated-with footer
     body_footer: bool = False
 
@@ -98,7 +101,7 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
     total = contexts.get("totalCount")
     checks_complete = total is None or total <= len(nodes)
     head = pr.get("headRefOid") or ""
-    approvals, changes = [], []
+    approvals, changes, changes_heads = [], [], {}
     for r in (pr.get("latestReviews") or {}).get("nodes") or []:
         if is_bot(r.get("author")):
             continue
@@ -107,15 +110,21 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
         if r.get("state") == "APPROVED" and same_head(oid, head):
             approvals.append(login)
         if r.get("state") == "CHANGES_REQUESTED":
-            changes.append(login)
+            changes.append(login); changes_heads[login] = oid or ""
     human_open = copilot_open = 0
     threads = []
     for t in (pr.get("reviewThreads") or {}).get("nodes") or []:
-        comments = (t.get("comments") or {}).get("nodes") or [{}]
+        conn = t.get("comments") or {}
+        comments = conn.get("nodes") or [{}]
         first = comments[0]; author = first.get("author") or {}
         human = author.get("login") != BOT and not is_bot(author)
+        cs = [{"id": str(c["databaseId"]) if c.get("databaseId") is not None else None, "login": (c.get("author") or {}).get("login") or "",
+               "at": c.get("createdAt") or "", "bot": is_bot(c.get("author"))} for c in comments]
+        total = conn.get("totalCount")
         threads.append({"id": t.get("id"), "resolved": bool(t.get("isResolved")), "human": human, "opened_at": first.get("createdAt") or "",
-                        "replies": [{"login": (c.get("author") or {}).get("login") or "", "at": c.get("createdAt") or ""} for c in comments[1:]]})
+                        "author": author.get("login") or "", "comment_id": cs[0]["id"], "comment_ids": [c["id"] for c in cs if c["id"]],
+                        "comments": cs, "truncated": bool(total is not None and total > len(comments)),
+                        "replies": [{"login": c["login"], "at": c["at"]} for c in cs[1:]]})
         if t.get("isResolved"):
             continue
         if author.get("login") == BOT:
@@ -130,7 +139,7 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
     return PrFacts(threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
                    base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
-                   checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes),
+                   checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes), changes_requested_heads=changes_heads,
                    human_threads_open=human_open, copilot_threads_open=copilot_open,
                    head_signed=(bool(sig.get("isValid")) if isinstance(sig, dict) else None))
 
@@ -142,3 +151,16 @@ def fetch(pr_id: str, org: str) -> PrFacts:
         raise TurnstileError("gh api failed for %s: %s" % (pr_id, out.stderr.strip()[:200]))
     pr = json.loads(out.stdout)["data"]["repository"]["pullRequest"]
     return parse(pr_id, pr)
+
+NODE_QUERY = "query($id:ID!){ node(id:$id){ ... on PullRequestReviewThread { comments(first:1){ nodes{ author{__typename login} } } } } }"
+
+def thread_author(thread_id: str) -> dict:
+    """The author of a review thread's first comment ({__typename, login}); the Bash guard asks it before a resolve."""
+    out = subprocess.run(["gh", "api", "graphql", "-f", "query=" + NODE_QUERY, "-f", "id=" + thread_id], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise TurnstileError("gh api failed for thread %s: %s" % (thread_id, out.stderr.strip()[:200]))
+    node = (json.loads(out.stdout).get("data") or {}).get("node") or {}
+    nodes = (node.get("comments") or {}).get("nodes") or []
+    if not nodes:
+        raise TurnstileError("review thread %s not found on GitHub" % thread_id)
+    return nodes[0].get("author") or {}

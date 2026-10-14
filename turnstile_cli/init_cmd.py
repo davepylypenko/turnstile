@@ -28,6 +28,7 @@ class InitOptions:
     design: Optional[str] = None
     recipe: str = "references/env/pdffiller-dev.md"
     chat_language: str = "English"
+    agent_github: Optional[str] = None
 
 class InitIO:
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
@@ -65,7 +66,7 @@ def build_state(o: InitOptions) -> dict:
     data = json.loads((TEMPLATES / "state.json").read_text())
     e = data["epic"]
     e["key"] = o.epic; e["workitem"] = o.workitem; e["github_org"] = o.github_org
-    e["roles"] = {"lead": o.lead, "lead_github": o.lead_github, "pm": o.pm, "design": o.design}
+    e["roles"] = {"lead": o.lead, "lead_github": o.lead_github, "agent_github": o.agent_github, "pm": o.pm, "design": o.design}
     e["repos"] = dict(parse_repo(s) for s in o.repos)
     e["environment"] = {"variant": o.variant, "desk": o.desk, "recipe": o.recipe}
     e["chat_language"] = o.chat_language

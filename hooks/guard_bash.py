@@ -1,6 +1,6 @@
 import os, pathlib, posixpath, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, block, agent_role
+from _common import read_payload, block, agent_role, plugin_root, load_state
 
 # global options that may sit between the binary and its subcommand: git -C dir / -c k=v / --opt[=v]; gh -R / --repo owner/repo
 GIT = r"\bgit(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+)|--?[\w.-]+(?:=\S+)?))*\s+"
@@ -21,6 +21,7 @@ RULES = [
     ("graphql-file", r"\bgraphql\b[^\n;&|]*(?:query=@|--input\b)|(?:query=@|--input\b)[^\n;&|]*\bgraphql\b"),
 ]
 FILE_ARG = re.compile(r"(?:^|\s)(?:-F|--file|--body-file|--input)(?:=|\s+)[\"']?([^\s\"']+)")
+FIELD_FILE_ARG = re.compile(r"(?:^|\s)(?:-F|--field)(?:=|\s+)[\"']?[\w\[\]]+=@([^\s\"']+)")  # gh api -F body=@file
 # a PR/commit write: the only places where a trailer or the footer can land
 WRITE_CTX = re.compile(GIT + r"commit\b|" + GH + PR + r"(?:create|edit)\b|" + GH + r"api\b", re.I)
 CONTENT_RULES = [("trailer", r"Co-Authored-By"), ("footer", r"Generated with \[Claude Code\]")]
@@ -258,8 +259,8 @@ def _tree_wide_reset(seg: str, cwd: str, delivery_abs):
     return None
 
 def _file_contents(flat: str, cwd: str):
-    """Text of every file a write command points at with -F/--file/--body-file/--input (R2-11); missing files are skipped."""
-    for name in FILE_ARG.findall(flat):
+    """Text of every file a write command points at with -F/--file/--body-file/--input or -F key=@file (R2-11); missing files are skipped."""
+    for name in FILE_ARG.findall(flat) + FIELD_FILE_ARG.findall(flat):
         p = pathlib.Path(name) if pathlib.Path(name).is_absolute() else pathlib.Path(cwd or ".") / name
         try:
             if p.is_file() and p.stat().st_size < 1_000_000:
@@ -272,6 +273,7 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
     for flat in (joined, stripped, re.sub(r"\s+", " ", stripped)):
         _check(flat, role)
+    _review_writes(stripped, cwd)
     if WRITE_CTX.search(stripped):
         for name, text in _file_contents(stripped, cwd):
             for rule, rx in CONTENT_RULES:
@@ -307,7 +309,7 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
                   "`..`, no symlinks, no cd into the delivery dir). The rest of the delivery dir is written only by 'turnstile pass' and, for "
                   "plan.md/decisions.md, the Write tool." % (mention, bad[0][:60]))
 
-TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "-h", "--help", "--version"}
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "-h", "--help", "--version"}
 
 def _turnstile_sub_ok(flat: str) -> bool:
     """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""
@@ -358,6 +360,138 @@ def _check(flat: str, role: str = "") -> None:
         writing = bool(values) or re.search(WRITE_FLAGS, flat) is not None
         if writing and ("--input" in flat or not values or any(v != COPILOT for v in values)):
             block("blocked by rule human-reviewer-request. The lead requests human reviewers (only %s may be requested here)." % COPILOT)
+
+# Lead rule 2026-10-14: PR conversation writes. Issue comments, review submissions and review comments (and their edits) are refused
+# for every caller — the repo gate's own marker comments excepted. A reply to a reviewer thread goes only through the REST replies
+# route and only to a thread classified in state.json: `self_resolved` at once, `needs_lead` after the lead approved that thread's
+# `reply` entry; GitHub must show no reviewer comment newer than the classification. Resolving is allowed for bot threads only.
+GATE_MARKER = re.compile(r"<!--\s*(?:pdf-review|crit-review):[a-z-]+\s*-->")
+GH_API = re.compile(GH + r"api\b")
+ISSUE_COMMENT_CLI = re.compile(GH + r"(?:" + PR + r"|issue(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+)comment\b")
+REVIEW_CLI = re.compile(GH + PR + r"review\b")
+GQL_REVIEW_WRITES = re.compile(r"\b(?:addPullRequestReview(?:Comment|Thread|ThreadReply)?|submitPullRequestReview|updatePullRequestReview(?:Comment)?"
+                               r"|deletePullRequestReview(?:Comment)?|dismissPullRequestReview|addComment|updateIssueComment|deleteIssueComment"
+                               r"|(?:un)?minimizeComment)\b")
+GQL_RESOLVE = re.compile(r"\b(?:un)?resolveReviewThread\b")
+THREAD_ID = re.compile(r"\bPRRT_[A-Za-z0-9_-]+")
+ROUTE = re.compile(r"(?:^|[\s/=])/?repos/([^/\s]+)/([^/\s]+)/(pulls|issues)/([^\s?#]*)")
+METHOD = re.compile(r"(?:^|\s)(?:-X|--method|--request)(?:\s*|=)([A-Za-z]+)")
+PARAMS = re.compile(r"(?:^|\s)(?:-[fFd]|--field|--raw-field|--input|--data(?:-raw|-binary|-urlencode)?|--json)(?:\s|=|$)")
+COMPUTED = re.compile(r"[$`{}*]")
+API_FLAGS_WITH_ARG = {"-X", "--method", "-H", "--header", "-f", "-F", "--field", "--raw-field", "--input", "-q", "--jq", "-t", "--template",
+                      "--cache", "-p", "--preview", "--hostname", "-R", "--repo"}
+REPLY_HINT = ("answer a reviewer on their own thread: classify it (turnstile threads <repo#n> --self-resolved|--needs-lead <thread id>), then "
+              "gh api -X POST repos/<org>/<repo>/pulls/<n>/comments/<top-level comment id>/replies -f body=…")
+
+def _method(seg: str) -> str:
+    m = METHOD.search(seg)
+    if m:
+        return m.group(1).upper()
+    return "POST" if PARAMS.search(seg) else "GET"  # gh api: parameters without -X make a POST
+
+def _api_endpoint(seg: str):
+    m = GH_API.search(seg)
+    if not m:
+        return None
+    words, i = seg[m.end():].split(), 0
+    while i < len(words):
+        if words[i].startswith("-"):
+            i += 2 if words[i] in API_FLAGS_WITH_ARG else 1; continue
+        return words[i]
+    return None
+
+def _route_kind(kind: str, parts):
+    if kind == "pulls":
+        if len(parts) >= 4 and parts[1] == "comments" and parts[3] == "replies":
+            return "reply"
+        if len(parts) >= 2 and parts[1] == "reviews":
+            return "review"
+        if len(parts) == 2 and parts[1] == "comments":
+            return "review-comment"
+        if len(parts) >= 2 and parts[0] == "comments":
+            return "review-comment"
+        return None
+    if (len(parts) == 2 and parts[1] == "comments") or (len(parts) >= 2 and parts[0] == "comments"):
+        return "issue-comment"
+    return None
+
+def _gate_comment(flat: str, cwd: str) -> bool:
+    """The repo gate (pdf-review / crit-review) upserts its summary and result comments through a hidden marker; those pass."""
+    return bool(GATE_MARKER.search(flat)) or any(GATE_MARKER.search(text) for _, text in _file_contents(flat, cwd))
+
+def _issue_comment_refused() -> None:
+    block("blocked by rule issue-comment. PR conversation comments are refused for every caller (only the repo gate's own marker comments "
+          "<!-- pdf-review:… --> / <!-- crit-review:… --> pass); " + REPLY_HINT + ".")
+
+def _turnstile_modules():
+    sys.path.insert(0, str(plugin_root()))
+    from turnstile_cli import github, threads
+    return github, threads
+
+def _reply_verdict(org: str, repo: str, number: str, comment_id: str, cwd: str):
+    try:
+        data = load_state(cwd)
+    except Exception as e:
+        return "blocked by rule reply-unverified. A thread reply is checked against the delivery state, which cannot be read (%s); failing closed." % e
+    github, threads = _turnstile_modules()
+    epic_org = (data.get("epic") or {}).get("github_org") or ""
+    return threads.reply_refusal(data, org, repo, number, comment_id, lambda pid: github.fetch(pid, epic_org).threads)
+
+def _resolve_check(flat: str) -> None:
+    ids = sorted(set(THREAD_ID.findall(flat)))
+    if not ids:
+        block("blocked by rule resolve-thread. Name the review thread id literally (PRRT_…): only bot (Copilot) threads are resolved here, after a "
+              "fix or a recorded justification; human threads are resolved by the reviewer or the lead.")
+    github, _ = _turnstile_modules()
+    for tid in ids:
+        try:
+            author = github.thread_author(tid)
+        except Exception as e:
+            block("blocked by rule resolve-thread. Cannot read thread %s on GitHub (%s); failing closed." % (tid, e))
+        if not github.is_bot(author):
+            block("blocked by rule resolve-human-thread. Thread %s was opened by %s, a human: only the reviewer or the lead resolves it; %s."
+                  % (tid, author.get("login") or "?", REPLY_HINT))
+
+def _review_writes(flat: str, cwd: str) -> None:
+    if REVIEW_CLI.search(flat):
+        block("blocked by rule review-submission. Review submissions (approve / comment / request changes) are refused for every caller; " + REPLY_HINT + ".")
+    if ISSUE_COMMENT_CLI.search(flat) and not _gate_comment(flat, cwd):
+        _issue_comment_refused()
+    if not (GH_API.search(flat) or "api.github.com" in flat):
+        return
+    if re.search(r"\bgraphql\b", flat):
+        m = GQL_REVIEW_WRITES.search(flat)
+        if m:
+            block("blocked by rule graphql-review-write. %s is refused (reviews, review comments and issue comments are not written through "
+                  "GraphQL); %s." % (m.group(0), REPLY_HINT))
+        if GQL_RESOLVE.search(flat):
+            _resolve_check(flat)
+    for seg in _segments(flat):
+        if not (GH_API.search(seg) or "api.github.com" in seg):
+            continue
+        method, routes = _method(seg), list(ROUTE.finditer(seg))
+        ep = _api_endpoint(seg)
+        if method != "GET" and not routes and ep and COMPUTED.search(ep):
+            block("blocked by rule rest-computed-route. A REST write to a computed endpoint (%s) cannot be checked: name the route literally." % ep)
+        for m in routes:
+            org, repo, kind, rest = m.groups()
+            parts = [x for x in rest.split("/") if x]
+            rk = _route_kind(kind, parts)
+            if rk == "reply":
+                if COMPUTED.search("/".join([org, repo, parts[0], parts[2]])):
+                    block("blocked by rule rest-computed-route. A thread reply names its org, repo, PR number and comment id literally "
+                          "(repos/<org>/<repo>/pulls/<n>/comments/<id>/replies), so the guard can check the thread; a computed route is refused.")
+                why = _reply_verdict(org, repo, parts[0], parts[2], cwd)
+                if why:
+                    block(why)
+            elif rk and method != "GET":
+                if rk == "review":
+                    block("blocked by rule review-submission. Review submissions are refused for every caller; " + REPLY_HINT + ".")
+                if rk == "review-comment":
+                    block("blocked by rule review-comment. New review comments and edits or deletions of review comments are refused "
+                          "(in_reply_to included); " + REPLY_HINT + ".")
+                if method == "DELETE" or not _gate_comment(flat, cwd):
+                    _issue_comment_refused()
 
 def main():
     p = read_payload()

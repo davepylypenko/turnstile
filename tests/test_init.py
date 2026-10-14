@@ -64,6 +64,13 @@ class Init(unittest.TestCase):
         self.assertIn("Chat with the lead in English", (self.ws / "CLAUDE.md").read_text()); self.assertEqual(data["epic"]["chat_language"], "English")
         self.assertEqual(io.calls[-1][0][:3], ["commit", "-q", "-m"]); self.assertEqual(io.calls[-1][1], d)
 
+    def test_agent_github_is_optional_and_recorded(self):
+        # 2026-10-14: the replies to self_resolved threads come from the agents' GitHub account (default: the lead's)
+        init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        self.assertIsNone(json.loads((d / "state.json").read_text())["epic"]["roles"]["agent_github"])
+        self.assertIn("agent_github", json.loads((init_cmd.TEMPLATES / "state.json").read_text())["epic"]["roles"])
+        self.assertEqual(init_cmd.build_state(opts(self.ws, self.knowledge, agent_github="agentbot"))["epic"]["roles"]["agent_github"], "agentbot")
     def test_chat_language_comes_from_init_not_the_template(self):
         # 2026-10-14 minor 11: personal items stay out of the plugin
         self.assertNotIn("Ukrainian", (init_cmd.TEMPLATES / "CLAUDE.md.workspace").read_text())
