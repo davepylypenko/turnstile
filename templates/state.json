@@ -1,0 +1,16 @@
+{
+  "awaiting_human": [],
+  "bugs": [],
+  "epic": {
+    "board": { "artifact_url": null, "capabilities": ["db", "user"] },
+    "environment": { "desk": null, "recipe": "references/env/pdffiller-dev.md", "variant": null },
+    "github_org": null,
+    "key": null,
+    "plan": { "digest": null, "path": "plan.md", "submitted_at": null },
+    "repos": {},
+    "roles": { "design": null, "lead": null, "lead_github": null, "pm": null },
+    "workitem": null
+  },
+  "prs": {},
+  "stories": {}
+}

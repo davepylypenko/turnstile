@@ -26,6 +26,14 @@ def build_parser():
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
     sub.add_parser("status", help="reconcile + where we are")
+    ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
+    for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
+                     ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
+                     ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, epic_branch, slack[, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
+                     ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
+                     ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
+                     ("--recipe", {"default": "references/env/pdffiller-dev.md"})]:
+        ini.add_argument(flag, **kw)
     return p
 
 def main(argv=None):
@@ -34,6 +42,9 @@ def main(argv=None):
     if a.cmd is None:
         parser.print_help(); return 0
     try:
+        if a.cmd == "init":
+            from .init_cmd import run as init_run, InitOptions
+            return init_run(InitOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
         delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
         if a.cmd == "pass":
             from .pass_cmd import run, Options

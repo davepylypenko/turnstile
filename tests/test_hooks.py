@@ -124,7 +124,8 @@ class BashGuard(unittest.TestCase):
                             "\"turnstile\" 'approve' ah-3", "turnstile   approve ah-3", "bash <<EOF\nTURNSTILE_LEAD=1 turnstile approve ah-1\nEOF",
                             "echo $TURNSTILE_LEAD", "export TURNSTILE_LEAD=1", "TURNSTILE_MIGRATION=1 cp new.json delivery/state.json",
                             "TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "env | grep TURNSTILE_MIGRATION"], "lead-")
-        self.assertAllowed(["git commit -m 'feat(turnstile): approve flow'", "turnstile status", "turnstile pass pr jsfiller#1 READY --head a"])
+        self.assertAllowed(["git commit -m 'feat(turnstile): approve flow'", "turnstile status", "turnstile pass pr jsfiller#1 READY --head a",
+                            "turnstile init --epic MYD-1 --workitem demo --knowledge ../k --lead a --lead-github b --github-org o"])
 
     def test_round3_computed_subcommands_and_writers(self):
         # R3-1: a computed subcommand forged `approve` with the lead's ledger line; R3-2: env/awk/find/sort/git config wrote state.json
