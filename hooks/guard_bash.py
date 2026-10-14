@@ -48,7 +48,10 @@ STATE_GLOB = re.compile(r"\bstate\.(?:json|\*|\?|\[)|\bstate[*?\[]")
 WRITABLE_SUBDIRS = ("evidence", "reports", "briefs")
 PROTECTED = {"state.json", "ledger.md", "plan.md", "decisions.md", "board.html", ".state.lock", ".gitattributes", ".gitignore"}
 UNSAFE_PATH = re.compile(r"[$`*?\[{~]")          # a computed or glob path may expand to `..`
-NO_ALLOWANCE_HEADS = {"git", "ln", "turnstile", "turnstile_cli"}  # git writes go through `turnstile pass`; symlinks never
+# git writes go through `turnstile pass`; symlinks never; a shell runs code the guard does not see
+NO_ALLOWANCE_HEADS = {"git", "ln", "turnstile", "turnstile_cli", "bash", "sh", "zsh", "dash", "ksh", "eval", "exec", "source", "."}
+INLINE_CODE = re.compile(r"^(?:\S*/)?(?:python3?|node|deno|bun|perl|ruby|php|osascript)\b.*\s(?:-[a-zA-Z]*[ceEpr]\b|--eval\b|--print\b)"
+                         r"|^(?:\S*/)?tar\b.*\s(?:-[a-zA-Z]*P|--absolute-names\b)")
 
 def _segments(flat: str):
     return [s.strip() for s in re.split(r"\n|;|&&|\|\||\|&?", flat) if s.strip()]
@@ -152,6 +155,8 @@ def _writable_segment(seg: str, mention) -> bool:
         words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
     if not words or words[0].rsplit("/", 1)[-1] in NO_ALLOWANCE_HEADS:
         return False
+    if INLINE_CODE.search(" ".join(words)):  # round 2: inline code or tar -P writes wherever it likes, whatever evidence path it also names
+        return False
     rels = mention.paths(seg)
     if not rels:
         return False
@@ -192,11 +197,14 @@ def check(cmd: str, cwd: str = ".") -> None:
     flat = re.sub(r"[ \t]+", " ", stripped)
     mention_fn = _delivery_matcher(cwd)
     mention = mention_fn(flat)
+    # round 2: the Bash cwd persists across calls, so `cd delivery/evidence` then `cp x ../ledger.md` names no delivery path
+    cwd_inside = bool(mention_fn.abs_path) and (os.path.realpath(cwd or ".") + os.sep).startswith(os.path.realpath(mention_fn.abs_path) + os.sep)
+    mention = mention or ("cwd " + cwd if cwd_inside else "")
     if mention:
         if GIT_RESTORE.search(flat):
             block("blocked by rule delivery-git-restore. git checkout/restore/stash/reset must not touch %s: the delivery dir changes only "
                   "through 'turnstile pass'." % mention)
-        bad, in_delivery = [], False
+        bad, in_delivery = [], cwd_inside
         for seg in _segments_for_writes(flat, mention_fn):
             if not _read_only_segment(seg, mention_fn, in_delivery) and (in_delivery or not _writable_segment(seg, mention_fn)):
                 bad.append(seg)

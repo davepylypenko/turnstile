@@ -145,6 +145,19 @@ class BashGuard(unittest.TestCase):
                             "echo x > %s/evidence/S1/up/evidence/S1/../../state.json" % (self.ws / "delivery")], "delivery-")
         self.assertAllowed(["echo x > delivery/evidence/S1/ok.png", "cp a delivery/evidence/S1/up/evidence/S1/ok.png"])
 
+    def test_round2_cwd_inside_delivery_inline_code_and_shells_get_no_allowance(self):
+        d = self.ws / "delivery"; (d / "evidence" / "S1").mkdir(parents=True)
+        def at(cwd, cmd):
+            return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}, cwd).returncode
+        for cwd, cmd in [(d / "evidence", "cp /tmp/x ../ledger.md"), (d, "cp /tmp/x ledger.md"), (d, "echo x > board.html"),
+                         (d / "evidence" / "S1", "cp /tmp/x env.png")]:
+            self.assertEqual(at(cwd, cmd), 2, (cwd, cmd))
+        for cwd, cmd in [(d, "cat state.json"), (d, "ls -la"), (d / "evidence", "git log -1"), (d, "turnstile status")]:
+            self.assertEqual(at(cwd, cmd), 0, (cwd, cmd))
+        self.assertBlocked(["node -e \"require('fs').writeFileSync(require('path').join('delivery','ledger.md'),'x')\" delivery/evidence/S1/a",
+                            "tar -xPf /tmp/evil.tar -C delivery/evidence/S1", "sh delivery/evidence/run.sh", "bash delivery/evidence/S1/x.sh"], "delivery-write")
+        self.assertAllowed(["node shot.mjs --out delivery/evidence/S1/TP-1/env.png", "tar -xf /tmp/a.tar -C delivery/evidence/S1"])
+
     def test_approve_and_lead_markers_are_blocked_in_every_form(self):
         # R2-1: the lead approves only from the Claude Code prompt with the `!` prefix, outside the model's tool calls.
         # Any model-issued command that carries the approve command or the lead/migration markers is refused.
@@ -374,6 +387,12 @@ class StateEditGuard(unittest.TestCase):
         self.assertEqual(self.edit(str(ev / "up" / "notes.md"), "Write").returncode, 2)  # resolves to the delivery root
         self.assertEqual(self.edit(str(ev / "up" / "state.json"), "Write").returncode, 2)
         self.assertEqual(self.edit(str(ev / "up" / "evidence" / "S1" / "ok.png"), "Write").returncode, 0)
+
+    def test_round2_cwd_outside_the_workspace_still_protects_the_delivery_root(self):
+        d = self.ws / "delivery"
+        for name in ("board.html", ".state.lock", "evidence/../board.html"):
+            r = hook("guard_state_edit.py", {"tool_name": "Write", "tool_input": {"file_path": str(d / name)}, "cwd": "/"}, "/")
+            self.assertEqual(r.returncode, 2, name)
 
     def test_outside_the_delivery_dir_only_state_and_ledger_names_are_blocked(self):
         self.assertEqual(self.edit(str(self.ws / "other" / "board.html"), "Write").returncode, 0)

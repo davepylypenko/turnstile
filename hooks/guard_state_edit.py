@@ -14,12 +14,16 @@ def _refusal(fp: str, cwd: str):
     name = pathlib.PurePath(fp).name
     if name in NAMES_ANYWHERE:
         return "%s is written only by 'turnstile pass' (state changes only through a transition)" % name
-    try:
-        from _common import delivery_dir
-        root = os.path.realpath(str(delivery_dir(cwd)))
-    except Exception:
-        return None
+    from _common import delivery_dir
     target = fp if os.path.isabs(fp) else os.path.join(cwd or ".", fp)
+    root = None
+    for start in (cwd or ".", os.path.dirname(target)):  # round 2: a cwd outside the workspace must not unlock board.html/.state.lock
+        try:
+            root = os.path.realpath(str(delivery_dir(start))); break
+        except Exception:
+            continue
+    if root is None:
+        return None
     rel = os.path.relpath(os.path.realpath(target), root)
     parts = rel.split(os.sep)
     if parts[0] == "..":
