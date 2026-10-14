@@ -98,7 +98,7 @@ class BashGuard(unittest.TestCase):
         self.assertBlocked(["perl -pi -e 's/DEV/READY/' delivery/state.json", "node -e \"require('fs').writeFileSync('delivery/state.json','{}')\"",
                             "ruby -e 'File.write(\"delivery/state.json\", \"{}\")'", "python3 - <<EOF\nimport json\nopen('delivery/' + 'state.json','w')\nEOF",
                             "sed -i '' s/a/b/ state.*", "rm -rf %s/reports" % d, "echo x > %s/ledger.md" % d, "cd delivery && rm ledger.md",
-                            "cat > delivery/reports/X.md <<EOF\nhi\nEOF", "mkdir delivery/x", "cat delivery/state.json | python3",
+                            "mkdir delivery/x", "cat delivery/state.json | python3",
                             "cat other.json | tee delivery/state.json", "cp -r delivery /tmp/d", "jq '.x=1' delivery/state.json > tmp && mv tmp delivery/state.json",
                             "perl -e 'print 1' > delivery/state.json", "git add delivery/state.json && git commit -m x"], "delivery-write")
         self.assertBlocked(["git checkout HEAD~3 -- delivery/state.json", "git restore delivery/state.json", "git stash push -- delivery",
@@ -112,6 +112,38 @@ class BashGuard(unittest.TestCase):
                             "find delivery -name '*.md'", "git -C delivery push origin epic/x", "turnstile --delivery %s pass pr jsfiller#1 READY" % d,
                             "sed -n 1,5p delivery/ledger.md", "cat delivery/state.json | jq .prs | grep READY", "git checkout feature/x",
                             "git stash", "git reset --hard origin/develop", "echo hi > out.txt"])
+
+    def test_evidence_reports_briefs_are_writable_by_any_command(self):
+        # 2026-10-14 finding 1: the tester writes evidence (PNG, JSON) with any tool; state.json, ledger.md, plan.md, decisions.md,
+        # board.html, .state.lock and the delivery root stay the CLI's / the Write tool's
+        d = str(self.ws / "delivery")
+        self.assertAllowed(["mkdir -p delivery/evidence/S1/TP-1", "mkdir -p %s/evidence/S1/TP-1" % d,
+                            "node shot.mjs --out %s/evidence/S1/TP-1/env.png" % d, "node shot.mjs --out=%s/evidence/S1/TP-1/env.png" % d,
+                            "npx playwright screenshot --full-page https://x.test %s/evidence/S1/TP-1/env.png" % d,
+                            "cp /tmp/a.png delivery/evidence/S1/TP-1/env.png", "echo '{}' > delivery/evidence/S1/TP-1/dom.json",
+                            "cat > delivery/reports/X.md <<EOF\nhi\nEOF", "cp /tmp/b.md delivery/briefs/B.md", "rm delivery/evidence/S1/TP-1/env.png",
+                            "python3 measure.py --out delivery/evidence/S1/TP-1/dom.json", "mv delivery/evidence/S1 /tmp/x",
+                            "cat /tmp/a.png | tee delivery/evidence/S1/TP-1/figma.png", "rm -rf delivery/evidence/S1/",
+                            "mkdir -p delivery/evidence/S1 && cp /tmp/a.png delivery/evidence/S1/env.png && echo done"])
+        self.assertBlocked(["echo x > delivery/evidence/../state.json", "cp a delivery/evidence/../../delivery/ledger.md",
+                            "cp a delivery/evidence/./../plan.md", "cp a 'delivery/evidence/S1/../../decisions.md'", "echo x > delivery/board.html",
+                            "echo x > delivery/.state.lock", "echo x > delivery/decisions.md", "echo x > delivery/plan.md", "rm -rf delivery/evidence",
+                            "rm -rf delivery/evidence/S1/..", "mkdir delivery/x", "tar cf delivery/evidence/S1/all.tar delivery/",
+                            "cp delivery/state.json delivery/evidence/S1/s.json", "mv delivery/plan.md delivery/evidence/S1/",
+                            "echo x > delivery/evidence/$S/x", "echo x > delivery/evidence/*/x", "echo x > delivery/evidence/`echo S1`/x",
+                            "ln -s ../ledger.md delivery/evidence/S1/x", "ln -s %s/ledger.md delivery/evidence/S1/x" % d,
+                            "ln -s ../state.json delivery/evidence/S1/x", "git add delivery/evidence/S1", "git -C delivery add evidence",
+                            "cd delivery/evidence/S1 && node x --out env.png", "cd delivery/evidence && echo x > ../ledger.md",
+                            "X=delivery/state.json; cp a $X", "echo x > delivery/evidence/S1/state.json",
+                            "python3 - <<EOF\nopen('delivery/evidence/S1/x','w')\nEOF"], "delivery-")
+
+    def test_evidence_symlinks_resolve_outside_are_blocked(self):
+        ev = self.ws / "delivery" / "evidence" / "S1"; ev.mkdir(parents=True)
+        (ev / "link.png").symlink_to("../../ledger.md"); (ev / "up").symlink_to("../..")
+        (self.ws / "delivery" / "ledger.md").write_text("- x\n")
+        self.assertBlocked(["echo x > delivery/evidence/S1/link.png", "cp a delivery/evidence/S1/up/plan.md", "cp a delivery/evidence/S1/up/new.md",
+                            "echo x > %s/evidence/S1/up/evidence/S1/../../state.json" % (self.ws / "delivery")], "delivery-")
+        self.assertAllowed(["echo x > delivery/evidence/S1/ok.png", "cp a delivery/evidence/S1/up/evidence/S1/ok.png"])
 
     def test_approve_and_lead_markers_are_blocked_in_every_form(self):
         # R2-1: the lead approves only from the Claude Code prompt with the `!` prefix, outside the model's tool calls.
@@ -311,3 +343,29 @@ class StateEditGuard(unittest.TestCase):
         self.assertEqual(self.edit(str(self.ws / "delivery" / "ledger.md")).returncode, 2)  # R3-8: a forged approve line would hide from reconcile
         self.assertEqual(self.edit(str(self.ws / "delivery" / "reports" / "R.md")).returncode, 0)
         self.assertEqual(self.edit(str(self.ws / "delivery" / "reports" / "state.json.md")).returncode, 0)
+
+    def test_delivery_subfolders_and_plan_decisions_writable_rest_of_delivery_not(self):
+        # 2026-10-14 finding 1: figma.png lands through Write; plan.md/decisions.md are the orchestrator's; the root and the CLI's files are not
+        d = self.ws / "delivery"
+        for rel in ("evidence/S1/TP-1/figma.png", "evidence/S1/TP-1/dom.json", "reports/ENV-S1.md", "briefs/ENV-S1.md", "plan.md", "decisions.md"):
+            self.assertEqual(self.edit(str(d / rel), "Write").returncode, 0, rel)
+        self.assertEqual(self.edit("delivery/evidence/S1/x.png", "Write").returncode, 0)  # relative to cwd
+        for rel in ("board.html", ".state.lock", "notes.md", "evidence", "evidence/../state.json", "evidence/../../delivery/ledger.md",
+                    "reports/../board.html", "evidence/./../notes.md", ".gitattributes"):
+            r = self.edit(str(d / rel), "Write"); self.assertEqual(r.returncode, 2, rel); self.assertIn("turnstile", r.stderr)
+        self.assertEqual(self.edit("delivery/evidence/../ledger.md", "Edit").returncode, 2)
+        self.assertEqual(self.edit(str(d / "evidence" / "S1" / "x.png"), "Write", env={"TURNSTILE_MIGRATION": "1"}).returncode, 0)
+        self.assertEqual(self.edit(str(d / "board.html"), "Write", env={"TURNSTILE_MIGRATION": "1"}).returncode, 0)
+
+    def test_symlinks_inside_evidence_cannot_reach_the_root(self):
+        d = self.ws / "delivery"; ev = d / "evidence" / "S1"; ev.mkdir(parents=True)
+        (ev / "link.md").symlink_to("../../ledger.md"); (ev / "up").symlink_to("../..")
+        self.assertEqual(self.edit(str(ev / "link.md"), "Write").returncode, 2)
+        self.assertEqual(self.edit(str(ev / "up" / "plan.md"), "Write").returncode, 0)   # resolves to delivery/plan.md: the orchestrator's file
+        self.assertEqual(self.edit(str(ev / "up" / "notes.md"), "Write").returncode, 2)  # resolves to the delivery root
+        self.assertEqual(self.edit(str(ev / "up" / "state.json"), "Write").returncode, 2)
+        self.assertEqual(self.edit(str(ev / "up" / "evidence" / "S1" / "ok.png"), "Write").returncode, 0)
+
+    def test_outside_the_delivery_dir_only_state_and_ledger_names_are_blocked(self):
+        self.assertEqual(self.edit(str(self.ws / "other" / "board.html"), "Write").returncode, 0)
+        self.assertEqual(self.edit(str(self.ws / "other" / "state.json"), "Write").returncode, 2)

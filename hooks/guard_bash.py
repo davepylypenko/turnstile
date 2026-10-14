@@ -1,4 +1,4 @@
-import pathlib, re, sys
+import os, pathlib, posixpath, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, block
 
@@ -43,9 +43,32 @@ GIT_RESTORE = re.compile(GIT + r"(?:checkout|restore|stash|reset)\b", re.I)
 HARMLESS_REDIRECTS = re.compile(r"\d?>\s*&\d|\d?>\s*/dev/null|&>\s*/dev/null|<<-?\s*\S+")
 REDIRECT_TARGET = re.compile(r"\d?>{1,2}\s*(\S+)")
 STATE_GLOB = re.compile(r"\bstate\.(?:json|\*|\?|\[)|\bstate[*?\[]")
+# 2026-10-14 finding 1: the tester's evidence (PNG, JSON) and the agents' reports/briefs may be written by any command, as long as
+# every delivery path the segment names is strictly inside one of these folders. The root and the CLI's files stay protected.
+WRITABLE_SUBDIRS = ("evidence", "reports", "briefs")
+PROTECTED = {"state.json", "ledger.md", "plan.md", "decisions.md", "board.html", ".state.lock", ".gitattributes", ".gitignore"}
+UNSAFE_PATH = re.compile(r"[$`*?\[{~]")          # a computed or glob path may expand to `..`
+NO_ALLOWANCE_HEADS = {"git", "ln", "turnstile", "turnstile_cli"}  # git writes go through `turnstile pass`; symlinks never
 
 def _segments(flat: str):
     return [s.strip() for s in re.split(r"\n|;|&&|\|\||\|&?", flat) if s.strip()]
+
+HEREDOC = re.compile(r"<<-?\s*[\"']?(\w+)[\"']?")
+
+def _segments_for_writes(flat: str, mention):
+    """Segments for the delivery-write check: a heredoc body is data for its command, so its lines count only when they
+    name the delivery dir themselves (a `bash`/`python3` heredoc is refused on its own head line anyway)."""
+    out, terminators = [], []
+    for line in flat.split("\n"):
+        if terminators:
+            if line.strip() == terminators[0]:
+                terminators.pop(0)
+            elif mention(line):
+                out.extend(_segments(line))
+            continue
+        out.extend(_segments(line))
+        terminators.extend(HEREDOC.findall(line))
+    return out
 
 def _read_only_segment(seg: str, mention, in_delivery: bool) -> bool:
     """True when the segment cannot write into the delivery dir. `mention(text)` tells whether a path names it;
@@ -83,7 +106,9 @@ def _read_only_segment(seg: str, mention, in_delivery: bool) -> bool:
     return head in READ_ONLY
 
 def _delivery_matcher(cwd: str):
-    """Returns mention(text) -> str: the delivery reference found in `text` ('' when none)."""
+    """Returns mention(text) -> str: the delivery reference found in `text` ('' when none). `mention.paths(seg)` lists the
+    paths relative to the delivery dir that the segment's words name ('' for the dir itself); `mention.abs_path` is the
+    resolved delivery dir when it could be found."""
     name, abs_path = "delivery", None
     try:
         from _common import delivery_dir
@@ -99,7 +124,50 @@ def _delivery_matcher(cwd: str):
         if token.search(text):
             return name + "/"
         return ""
+    def paths(seg: str):
+        out = []
+        for w in seg.split():
+            rel = None
+            if abs_path and abs_path in w:
+                rel = w[w.index(abs_path) + len(abs_path):]
+            else:
+                m = token.search(w)
+                if m:
+                    rel = w[m.end():]
+            if rel is not None:
+                out.append(rel.lstrip("/"))
+        return out
+    mention.paths = paths; mention.abs_path = abs_path
     return mention
+
+def _writable_segment(seg: str, mention) -> bool:
+    """True when every delivery path the segment names is strictly inside evidence/, reports/ or briefs/ (after `..`
+    normalisation and, when the dir exists, symlink resolution), none is computed, and the command is not git/ln."""
+    if STATE_GLOB.search(seg):
+        return False
+    words = seg.split()
+    while words and re.match(r"^\w+=", words[0]):
+        words.pop(0)
+    if words and words[0] == "env":
+        words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
+    if not words or words[0].rsplit("/", 1)[-1] in NO_ALLOWANCE_HEADS:
+        return False
+    rels = mention.paths(seg)
+    if not rels:
+        return False
+    for rel in rels:
+        if not rel or UNSAFE_PATH.search(rel):
+            return False
+        norm = posixpath.normpath(rel)
+        parts = norm.split("/")
+        if len(parts) < 2 or parts[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in parts):
+            return False
+        if mention.abs_path:  # a symlink under evidence/ must not lead back to the root or the CLI's files
+            root = os.path.realpath(mention.abs_path)
+            real = os.path.relpath(os.path.realpath(os.path.join(root, norm)), root).split(os.sep)
+            if len(real) < 2 or real[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in real):
+                return False
+    return True
 
 def _file_contents(flat: str, cwd: str):
     """Text of every file a write command points at with -F/--file/--body-file/--input (R2-11); missing files are skipped."""
@@ -129,15 +197,16 @@ def check(cmd: str, cwd: str = ".") -> None:
             block("blocked by rule delivery-git-restore. git checkout/restore/stash/reset must not touch %s: the delivery dir changes only "
                   "through 'turnstile pass'." % mention)
         bad, in_delivery = [], False
-        for seg in _segments(flat):
-            if not _read_only_segment(seg, mention_fn, in_delivery):
+        for seg in _segments_for_writes(flat, mention_fn):
+            if not _read_only_segment(seg, mention_fn, in_delivery) and (in_delivery or not _writable_segment(seg, mention_fn)):
                 bad.append(seg)
             if re.match(r"cd\s", seg) and mention_fn(seg):
                 in_delivery = True
         if bad:
             block("blocked by rule delivery-write. The command mentions %s and '%s' is not read-only (allowed: cat, less, head, tail, grep, jq, "
-                  "git diff/log/show/status, turnstile …). The delivery dir is written only by 'turnstile pass'; reports go through the Write tool."
-                  % (mention, bad[0][:60]))
+                  "git diff/log/show/status, turnstile …) and does not write only inside evidence/, reports/ or briefs/ (literal paths, no "
+                  "`..`, no symlinks, no cd into the delivery dir). The rest of the delivery dir is written only by 'turnstile pass' and, for "
+                  "plan.md/decisions.md, the Write tool." % (mention, bad[0][:60]))
 
 TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "-h", "--help", "--version"}
 
