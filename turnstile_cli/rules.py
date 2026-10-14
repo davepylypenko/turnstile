@@ -224,7 +224,7 @@ STORY_FROM = {
     "PLANNED": [],
     "IN_PROGRESS": ["PLANNED", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"],
     "INTEGRATION_REVIEW": ["IN_PROGRESS", "ENV_TESTING"],
-    "ENV_TESTING": ["INTEGRATION_REVIEW"],
+    "ENV_TESTING": ["INTEGRATION_REVIEW", "ENV_TESTING"],
     "DONE": ["ENV_TESTING"],
 }
 PR_AT_LEAST_READY = ["READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
@@ -262,6 +262,26 @@ def _review_head_bound(story: dict, out: List[str]) -> None:
         out.append("MISSING evidence.integration_review.clean with head")
     elif not same_head(ir.get("head"), dp.get("head")):
         out.append("MISSING evidence.integration_review.head == evidence.deploy.head (%s vs %s)" % (ir.get("head"), dp.get("head")))
+
+def last_env_run(story: dict) -> Optional[dict]:
+    ev = story.get("evidence") or {}
+    runs = ev.get("env_runs") or []
+    return runs[-1] if runs else (ev.get("env_test") or None)
+
+def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) -> None:
+    """Spec §4.2 ENV_TESTING DoD: every fail became a bug. The last run's fail count needs that many bugs of the story
+    created after the previous run (any bug of the story when it is the first run)."""
+    runs = (story.get("evidence") or {}).get("env_runs") or []
+    if not runs:
+        return
+    last, prev_ids = runs[-1], set((runs[-2].get("bug_ids") if len(runs) > 1 else None) or [])
+    n = (last.get("cases") or {}).get("fail") or 0
+    if n <= 0:
+        return
+    mine = [b for b in bugs or [] if b.get("story") == story.get("_id") and b.get("id") not in prev_ids]
+    if len(mine) < n:
+        out.append("MISSING every failed case became a bug: %d fail(s) in the last run, %d bug(s) of %s created after the previous run "
+                   "(turnstile bug add --story %s --title … --source … before recording the run)" % (n, len(mine), story.get("_id"), story.get("_id")))
 
 def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None,
                 bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None,
@@ -302,11 +322,12 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
     if target == "ENV_TESTING":
         _prs_at_least_ready(story, prs, out)
         _review_head_bound(story, out)
+        _fails_became_bugs(story, bugs, out)
         return out
     if target == "DONE":
         _prs_at_least_ready(story, prs, out)
         _review_head_bound(story, out)
-        et = (story.get("evidence") or {}).get("env_test") or {}
+        et = last_env_run(story) or {}
         cases = et.get("cases") or {}
         if not et.get("report"):
             out.append("MISSING evidence.env_test.report")
@@ -316,6 +337,8 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             out.append("MISSING evidence.env_test.cases.fail == 0 (has %s)" % cases.get("fail"))
         if et.get("figma_parity") != "pass":
             out.append("MISSING evidence.env_test.figma_parity == pass (has %s)" % et.get("figma_parity"))
+        if not et.get("full"):
+            out.append("MISSING evidence.env_runs[-1].full (DONE needs one full final run: pass story %s ENV_TESTING … --full)" % sid)
         for b in bugs or []:
             if b.get("story") == sid and b.get("state") != "done":
                 out.append("MISSING bug %s to be done (is %s)" % (b.get("id"), b.get("state")))

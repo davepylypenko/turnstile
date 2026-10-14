@@ -5,7 +5,7 @@ FIX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "state_min.json")
 H = "aaaaaaaa11111111"
 START = {"id": "ah-1", "owner": "lead", "type": "start_story", "story": "S1", "approved_at": "2026-10-13T10:00Z"}
 DONE = {"id": "ah-2", "owner": "lead", "type": "story_done", "story": "S1", "approved_at": "2026-10-13T10:00Z"}
-CLEAN_ENV = {"report": "reports/ENV-S1.md", "cases": {"pass": 3, "fail": 0, "not_testable_here": 0}, "figma_parity": "pass"}
+CLEAN_ENV = {"report": "reports/ENV-S1.md", "cases": {"pass": 3, "fail": 0, "not_testable_here": 0}, "figma_parity": "pass", "full": True}
 
 def story(state, **ev):
     s = copy.deepcopy(FIX["stories"]["S1"]); s["_id"] = "S1"; s["state"] = state; s["evidence"].update(ev); return s

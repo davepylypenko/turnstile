@@ -32,6 +32,7 @@ class Options:
     figma_parity: Optional[str] = None
     companions: Optional[str] = None
     offline: bool = False
+    full: bool = False
     no_commit: bool = False
 
 class IO:
@@ -160,7 +161,9 @@ def _apply_story_evidence(story: dict, o: Options) -> None:
             raise TurnstileError("--cases-pass and --cases-fail are both required when recording env_test (explicit counts from the report)")
         if o.figma_parity is None:
             raise TurnstileError("--figma-parity is required when recording env_test")
-        ev["env_test"] = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "figma_parity": o.figma_parity}
+        run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "figma_parity": o.figma_parity, "full": bool(o.full), "at": _now()}
+        ev.setdefault("env_runs", []).append(run)
+        ev["env_test"] = run
     elif o.report:
         ev["integration_review"] = {"report": o.report, "head": o.head.lower() if o.head else None, "rounds": o.rounds or 1, "clean": not o.not_clean}
 
@@ -311,6 +314,10 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 story = st_mod.story(st, ident)
                 trial = copy.deepcopy(story); trial["_id"] = ident
                 _apply_story_evidence(trial, o)
+                if target == "ENV_TESTING" and story.get("state") == "ENV_TESTING" and o.cases_fail is None:
+                    raise TurnstileError("--report, --cases-pass, --cases-fail and --figma-parity to record a test run (ENV_TESTING re-entry records a run)")
+                if o.cases_fail is not None:  # the bugs that existed when the run was recorded: the next failing run counts only newer ones
+                    trial["evidence"]["env_runs"][-1]["bug_ids"] = sorted(b.get("id") for b in data.get("bugs") or [] if b.get("story") == ident)
                 plan_missing = None
                 if target == "IN_PROGRESS" and story.get("state") == "PLANNED":
                     plan_path = delivery / "plan.md"
@@ -326,7 +333,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if o.reason:
                     story["last_reason"] = o.reason
                 jira_line = None
-                if src == "ENV_TESTING" and target != "DONE":  # the story_done word was for that test run (R2-6)
+                if src == "ENV_TESTING" and target not in ("DONE", "ENV_TESTING"):  # the story_done word was for that test run (R2-6)
                     for a in awaiting:
                         if a.get("type") == "story_done" and a.get("story") == ident and not a.get("consumed_at") and not a.get("voided_at"):
                             a["voided_at"] = _now()

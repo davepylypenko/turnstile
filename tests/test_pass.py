@@ -335,11 +335,11 @@ class PassCmd(unittest.TestCase):
         (self.d / "reports" / "ENV.md").write_text("ok")
         rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", approved="ah-7"), self.io)
         self.assertEqual(rc, 2); self.assertIn("--cases-pass and --cases-fail", out)
-        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, approved="ah-7"), self.io)
+        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True, approved="ah-7"), self.io)
         self.assertEqual(rc, 2); self.assertIn("story_done", out)
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, "ah-7", self.io)
-        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, approved="ah-7"), self.io)
+        rc, out = run_capture(self.d, "story", "S1", "DONE", opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True, approved="ah-7"), self.io)
         self.assertEqual(rc, 0, out)
         data = self.data()
         self.assertEqual(data["stories"]["S1"]["evidence"]["env_test"]["cases"], {"pass": 3, "fail": 0})
@@ -356,7 +356,7 @@ class PassCmd(unittest.TestCase):
                                    "approved_at": "2026-10-13T10:00Z", "approved_via": "lead-terminal"}]
         self.write(data)
         (self.d / "reports" / "ENV.md").write_text("ok"); (self.d / "reports" / "S.md").write_text("clean")
-        done = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0)
+        done = opts(report="reports/ENV.md", figma_parity="pass", cases_pass=3, cases_fail=0, full=True)
         rc = pass_cmd.run(self.d, "story", "S1", "IN_PROGRESS", opts(reason="bug b4 found by the lead"), self.io)
         self.assertEqual(rc, 0)
         self.assertTrue(self.data()["awaiting_human"][0]["voided_at"])

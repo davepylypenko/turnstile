@@ -19,6 +19,7 @@ def build_parser():
                      ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
+    ps.add_argument("--full", action="store_true", help="the recorded env run covered every case of the story (DONE needs a full clean run)")
     ps.add_argument("--offline", action="store_true", help="skip the GitHub head check (loud WARN; READY/ON_HUMAN_REVIEW stay refused)")
 
     js = sub.add_parser("jira-synced", help="record that the Jira transition was performed"); js.add_argument("ident"); js.add_argument("status")
