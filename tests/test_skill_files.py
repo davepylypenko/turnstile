@@ -40,6 +40,11 @@ class SkillFiles(unittest.TestCase):
         for k in ["2026-10-14", "self_resolved", "needs_lead", "turnstile threads", "/replies"]: self.assertIn(k, spec, k)
         readme = (ROOT / "README.md").read_text()
         for k in ["turnstile threads", "self_resolved", "needs_lead", "agent_github", "resolve-human-thread", "issue-comment"]: self.assertIn(k, readme, k)
+        # lead rule 2026-10-14 (re-request): documented wherever the REWORK return is
+        for name, doc in [("lifecycle", text), ("SKILL", skill), ("spec", spec), ("README", readme)]:
+            for k in ["requested_reviewers", "--rerequested", "reviewer_notified", "push-only"]: self.assertIn(k, doc, "%s lacks %s" % (name, k))
+        for k in ["rerequest-not-authors", "rerequest-copilot", "rerequest-replies"]: self.assertIn(k, readme, k)
+        self.assertIn("2026-10-14 (lead, re-request)", spec)
         for s in ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED", "PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]:
             self.assertIn("**" + s + "**", text)
         for k in ["used_at", "rework_since", "human_review: per_pr", "--full", "stories.<S>.branch"]: self.assertIn(k, text, k)

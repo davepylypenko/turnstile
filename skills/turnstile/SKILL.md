@@ -19,8 +19,10 @@ The state is `delivery/state.json` in the knowledge worktree (found through `.tu
 - Send, a reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
   A Slack send also gets a UI confirmation from the lead (the Slack guard answers `ask`), and must go through the real
   send tool so the PostToolUse hook records `used_at` — drafts and scheduled sends never count.
-- A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). Issue comments, review
-  submissions and resolving a human thread are refused for everyone (the repo gate's marker comments excepted).
+- A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). So does the GitHub re-request of
+  the thread authors once every thread has its reply and the head is clean (lead rule 2026-10-14). Issue comments, review
+  submissions, resolving a human thread and every other human reviewer request are refused for everyone (the repo gate's marker
+  comments excepted).
 - A question from the lead is a question: answer and propose, act on a command.
 - Delegate all implementation, review, testing and deployment to the `turnstile:*` agents (`## dispatch`). Never read
   a diff or run a suite yourself; your context is for coordination.
@@ -120,7 +122,16 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
    `reply` entry per thread; show the lead the draft and the approve line; once approved, post exactly that text (yourself or a
    `COMMENTS-<n>-r2` dispatch with `approved_replies=<ah-ids>`). A reviewer's follow-up needs a new classification first.
 3. Gate and Copilot on the new head (no new deep review); `turnstile status` lists what the threads still need.
-4. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate …` — no Slack, no `--approved`: the replies are the notification.
+4. Re-request (lead rule 2026-10-14: "replied to all comments and Copilot passed again → ping the reviewer to look again"): once
+   every thread has its reply and Copilot reviewed the GitHub head with 0 open threads (repos without Copilot: the gate check
+   green on it), `turnstile status` prints the exact `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f
+   'reviewers[]=<login>'` for the thread authors (the reviewers who commented on the threads in this round). The comments-handler
+   (or you) runs it — no lead approval; the guard allows exactly that request and refuses non-authors, an open Copilot thread, a
+   stale head and any other human request. Slack stays lead-approved.
+5. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` — no Slack, no `--approved`: the replies
+   and the re-request are the notification; the pass checks GitHub (`reviewRequests`, request newer than the replies). A push-only
+   rework (no reviewer comment since the PR last went to humans) takes no `--rerequested`: it records `reviewer_notified: false`,
+   the board reads "reviewers not notified", and you tell the lead, who decides whether to ping.
 
 ## Bugs on the board
 

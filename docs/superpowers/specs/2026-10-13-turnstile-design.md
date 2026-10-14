@@ -95,7 +95,9 @@ prs:
       gate:        { name: pdf-review, head: d2583e9b, result: pass, run: <url> }
       copilot:     { head: d2583e9b, open_threads: 0 }          # omitted when repo.copilot=false
       human:       { sent_at: ..., slack_permalink: ..., reviewers: [isachivka], sent_head: d2583e9b,
-                     open_threads: 0, approvals: [], returned_at: ... }   # returned_at: back from REWORK
+                     open_threads: 0, approvals: [], returned_at: ...,     # returned_at: back from REWORK
+                     rerequested: { logins: [isachivka], head: 9f1c2a3b, at: ... },   # thread authors re-requested on GitHub (2026-10-14)
+                     reviewer_notified: true | false }                   # false: push-only rework, nobody pinged (the lead decides)
     threads:                                  # human review threads, classified from GitHub facts by `turnstile threads` (2026-10-14)
       PRRT_kwDOabc: { class: self_resolved | needs_lead, comment_id: "2412345678", comment_ids: [...], reviewer: isachivka,
                       last_reviewer_at: 2026-10-14T09:12:03Z, classified_at: ..., report: reports/COMMENTS-13222.md }
@@ -130,7 +132,7 @@ DEV ──► AI_REVIEW ──► READY ──► ON_HUMAN_REVIEW ──► APPR
 | **AI_REVIEW** | DEV done | **loop until clean on one head**: `deep_review.clean` + `gate.result=pass` + `copilot.open_threads=0` (where enabled), all with `head == pr.head`; CI green | ledger; board (AI-gate column shows heads) |
 | **READY** | AI_REVIEW done | head unchanged; `blocked_by` null or MERGED *for sending* | ledger; board; `awaiting_human: send` for lead |
 | **ON_HUMAN_REVIEW** | lead approved the send; Slack message posted; `human.sent_head == head` | ≥1 approval; 0 unresolved human threads | Jira → On Review; permalink stored; board |
-| **REWORK** | any of: push after send, new human thread, changes requested | fixes pushed; `gate` and `copilot` pass again on the new head (deep_review is **not** repeated after human review); every human thread opened since the send, and every unresolved one, is classified (`self_resolved` / `needs_lead`, from GitHub facts) and has a reply on GitHub newer than the thread's last reviewer comment — `self_resolved`: from the agent's account (`roles.agent_github`), posted at once; `needs_lead`: posted only after the lead approved that thread's `reply` entry (or by the lead in person); no Slack message, no blanket approval (2026-10-14) | ledger; `reply` entry per needs_lead thread; board shows "reviewer not notified" until replies are posted; then → ON_HUMAN_REVIEW (`sent_head` = new head, thread entries consumed) |
+| **REWORK** | any of: push after send, new human thread, changes requested | fixes pushed; `gate` and `copilot` pass again on the new head (deep_review is **not** repeated after human review); every human thread opened since the send, and every unresolved one, is classified (`self_resolved` / `needs_lead`, from GitHub facts) and has a reply on GitHub newer than the thread's last reviewer comment — `self_resolved`: from the agent's account (`roles.agent_github`), posted at once; `needs_lead`: posted only after the lead approved that thread's `reply` entry (or by the lead in person); no Slack message, no blanket approval (2026-10-14); a **thread-driven** rework (a reviewer commented on a thread since the PR last went to humans) then re-requests review on GitHub from exactly those reviewers, after the replies and once Copilot reviewed the new head with 0 open threads (repos without Copilot: the gate check green on it) — `requested_reviewers` POST, no lead approval — and the pass records it with `--rerequested <logins>`, verified against GitHub (`reviewRequests`, a request event newer than the replies and the clean signal); a **push-only** rework re-requests nobody and records `reviewer_notified: false` (the lead decides) | ledger; `reply` entry per needs_lead thread; board shows "reviewer not notified" until replies are posted; then → ON_HUMAN_REVIEW (`sent_head` = new head, thread entries consumed, `evidence.human.rerequested` + `reviewer_notified: true`, or `reviewer_notified: false` and "reviewers not notified" on the board) |
 | **APPROVED** | ON_HUMAN_REVIEW done | lead merged | `awaiting_human: merge` for lead |
 | **MERGED** | squash-merged into the epic/story branch | — | Jira → On Hold; board; re-evaluate `blocked_by` of other PRs; re-evaluate the story DoD |
 
@@ -154,6 +156,12 @@ Rules above the table:
   decision, another team) is `needs_lead` and its reply waits for the lead's word on that thread. A reviewer's comment
   newer than the classification needs a new one. Human threads are resolved by the reviewer or the lead only, never by an
   agent. Copilot threads are resolved only after a fix or a recorded justification.
+- Re-request (lead rule 2026-10-14): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look
+  again". Once every human thread in scope has our latest reply and Copilot reviewed the current head with 0 open threads (repos
+  without Copilot: the repo gate's check is green on it), the agents re-request review on GitHub from the reviewers who commented on
+  the threads in this round (`gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'`). No lead
+  approval is needed for that; Slack stays lead-approved. A push-only rework (no reviewer comment since the PR last went to humans)
+  pings nobody: the return records `reviewer_notified: false`, the board says "reviewers not notified", and the lead decides.
 - One transition = one `turnstile pass` call, which performs Jira, ledger, board and the git commit of the state.
 
 ## 4. Story lifecycle and kick-off analysis
@@ -199,7 +207,7 @@ turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --deep-review reports
 turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --slack <permalink> --reviewers isachivka --approved ah-12
 turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md
 turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"
-turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass   # back from REWORK: no --slack/--approved
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --rerequested isachivka   # back from REWORK: no --slack/--approved; --rerequested only after a thread-driven rework
 ```
 
 Always in this order: validate DoD of the current state and DoR of the target, including `head` equality of all
@@ -216,8 +224,10 @@ draft/ready, merged state; Jira status. Compares with `state.json` and prints a 
 `turnstile pass` for each unambiguous case: push after send → REWORK; a human thread whose last reviewer comment has no newer
 reply → REWORK (2026-10-14: a replied thread stays unresolved until the reviewer resolves it); changes requested on the
 current head → REWORK (one on an older head was answered by the rework's push); approval + 0 threads →
-APPROVED; merged → MERGED; gate red on the current head → evidence void. It changes nothing. Runs at session start and on
-demand (`status`).
+APPROVED; merged → MERGED; gate red on the current head → evidence void; REWORK with every reviewer thread replied and a clean
+head (Copilot's review of it with 0 open threads, else the gate check) → the exact `requested_reviewers` re-request of the thread
+authors until GitHub shows it after the replies, then the `--rerequested` pass; a push-only REWORK → "nobody is re-requested, the
+lead decides" (2026-10-14). It changes nothing. Runs at session start and on demand (`status`).
 
 ### `turnstile threads`
 
@@ -248,9 +258,14 @@ lead approval again).
 
 - PreToolUse `slack_send_message` / `slack_send_message_draft`: blocked unless `awaiting_human` has a `send` entry
   for that PR with `approved_at` set (set by `turnstile approve` after the lead's word). A `reply` entry never unlocks Slack.
-- PreToolUse Bash: block `gh pr merge`, `gh pr ready`, `gh pr edit --add-reviewer`, `requested_reviewers` POST for
-  humans (Copilot bot allowed), `git push --force*`, `git rebase` on epic/story branches, `--no-gpg-sign`, Prometey
-  `ensure` with an empty `service_github_tag`.
+- PreToolUse Bash: block `gh pr merge`, `gh pr ready`, `gh pr edit --add-reviewer`, `gh pr create --reviewer`, GraphQL
+  `requestReviews*`, `requested_reviewers` writes for humans (Copilot bot allowed), `git push --force*`, `git rebase` on
+  epic/story branches, `--no-gpg-sign`, Prometey `ensure` with an empty `service_github_tag`. One exception (2026-10-14): a
+  `gh api` POST to the literal `repos/<org>/<repo>/pulls/<n>/requested_reviewers` route with literal `-f 'reviewers[]=<login>'`
+  fields passes for a REWORK PR of the epic when every classified thread has its reply (as for the pass), the logins are exactly
+  the reviewers who commented on the threads in this round (none for a push-only rework → refused), and Copilot reviewed the
+  GitHub head with 0 open threads (repos without Copilot: the gate check is green on it); team reviewers, JSON bodies and computed
+  logins or routes are refused.
 - PreToolUse Bash, PR conversation (2026-10-14), for every caller: issue comments (`gh pr|issue comment`, `issues/<n>/comments`
   writes and edits — the repo gate's `<!-- pdf-review:… -->` / `<!-- crit-review:… -->` marker comments excepted), review
   submissions (`gh pr review`, `pulls/<n>/reviews…` writes), new or edited review comments (`pulls/<n>/comments` incl.
@@ -271,7 +286,7 @@ Each agent is a file with model, effort, allowed tools and the role's rules bake
 | reviewer | opus / **xhigh** | PR deep review (scope, control arm, tests, invariants, design), then runs the repo gate skill; one-line fixes itself; recursive to clean | merge, replies to humans, Slack |
 | story-reviewer | fable / default | whole-story integration review, recursive to clean; findings routed to ticket PRs | same as reviewer |
 | stack-step | opus / default | ripple fixes up the stack (merge only, signed), re-run gates above, report heads | rebase/force-push, ready, Slack |
-| comments-handler | opus / default | human + Copilot threads: verify → fix or justify → classify human threads (`turnstile threads`) → reply at once to `self_resolved` ones, draft `needs_lead` ones for the lead → Copilot loop; resolves Copilot threads only | resolving human threads, issue comments, reviews, a `needs_lead` reply without the lead's entry, Slack |
+| comments-handler | opus / default | human + Copilot threads: verify → fix or justify → classify human threads (`turnstile threads`) → reply at once to `self_resolved` ones, draft `needs_lead` ones for the lead → Copilot loop → re-request exactly the thread authors on GitHub once every thread has its reply and the head is clean; resolves Copilot threads only | resolving human threads, issue comments, reviews, a `needs_lead` reply without the lead's entry, any other reviewer request (push-only rework, non-authors, `--add-reviewer`), Slack |
 | investigator | opus / default | read-only investigations with a recommendation | any push or comment |
 | tester | opus / default | see §7.1 | code, push, Slack |
 | deployer | sonnet / default | variant/desk delivery via `prometey-variant` and desk workflows with explicit tags; health check after deploy | `ensure` without tag (hook), prod |
@@ -349,6 +364,12 @@ docs/superpowers/specs/                   # this spec and future ones
   threads`); REWORK → ON_HUMAN_REVIEW needs a reply newer than each thread's last reviewer comment, gate + Copilot on the
   new head, and no Slack message or blanket approval. Issue comments, review submissions and resolving human threads stay
   refused for everyone.
+- 2026-10-14 (lead, re-request): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look
+  again". Once every human thread has our latest reply and Copilot reviewed the current head with 0 open threads (repos without
+  Copilot: the gate green on the current head), the agents re-request review on GitHub from the reviewers who commented on those
+  threads in this round, without the lead's approval; the Bash guard allows exactly that `requested_reviewers` POST and nothing
+  else; REWORK → ON_HUMAN_REVIEW needs `--rerequested <logins>` verified against GitHub for a thread-driven rework. A push-only
+  rework pings nobody and records `reviewer_notified: false` (the lead decides). Slack stays lead-approved.
 
 ## 12. Open questions
 

@@ -23,7 +23,8 @@ Every report starts with `# <TYPE> — <subject> — <date>` and a `Status:` lin
 ## Comments
 `reports/COMMENTS-<n>.md` — thread table (id · author · human/Copilot · opened at · class `self_resolved`/`needs_lead` · verdict ·
 commit · reply URL or `draft` · resolved?) · the `turnstile threads` line run · Copilot loop rounds · needs_lead drafts word for word
-with their `ah-<n>` (per `references/slack.md` § Thread replies) · new head · gate state.
+with their `ah-<n>` (per `references/slack.md` § Thread replies) · new head · gate state · the re-request line run (`requested_reviewers`,
+logins, head) or why not yet (a reply or the lead's word missing, Copilot/gate not clean, push-only).
 
 ## Investigation
 `reports/INVESTIGATE-<slug>.md` — question · hypotheses · evidence per hypothesis (file:line / command → output) ·

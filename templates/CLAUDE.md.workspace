@@ -9,7 +9,9 @@ knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first i
 - The lead approves every send, merge, story start, story completion and every reply on a review thread that needs the
   lead (`needs_lead`) by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt. You report what
   awaits the lead and ask; you never run that line, and no agent does. A thread the agents resolved themselves
-  (`self_resolved`, recorded with `turnstile threads`) is answered on GitHub at once, without asking.
+  (`self_resolved`, recorded with `turnstile threads`) is answered on GitHub at once, without asking; once every thread has its
+  reply and Copilot (or the gate) is clean on the head, the thread authors are re-requested on GitHub without asking too. Slack
+  messages always wait for the lead.
 - All implementation, review, testing and deployment is delegated to the `turnstile:*` agents; the orchestrator never
   reads diffs or runs suites itself.
 - Chat with the lead in {{chat_language}}. Code, commits, PRs, tickets and docs in English.

@@ -40,7 +40,9 @@ Kept as is: <code-level reason, file:line or test>                  ← justifie
 ```
 
 The report lists each one as `<thread id> — <reviewer>: <one-line restatement> → <reply text>`. No Slack message goes with
-them: GitHub notifies the reviewer, and a `reply` entry never unlocks a Slack send.
+them: GitHub notifies the reviewer, and a `reply` entry never unlocks a Slack send. Once every thread has its reply and Copilot
+reviewed the head with 0 open threads (repos without Copilot: the gate green), the thread authors are re-requested on GitHub
+(`requested_reviewers`, lead rule 2026-10-14) — still no Slack. A push-only rework pings nobody; the lead decides.
 
 ## Story report to the lead (after `pass story <S> DONE`)
 

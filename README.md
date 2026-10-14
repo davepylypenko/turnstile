@@ -34,7 +34,8 @@ claude plugin install turnstile
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
 - Hooks that block sends, merges, reviewer requests, force pushes, PR comments, review submissions, resolving human
   threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
-  a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead).
+  a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead), and the re-request
+  of a REWORK PR's thread authors passes once every thread has its reply and the head is clean (lead rule 2026-10-14).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
   anything reaches human review.
 
@@ -65,7 +66,8 @@ turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"     
 turnstile threads jsfiller#13222 --self-resolved PRRT_kwDOa --needs-lead PRRT_kwDOc --report reports/COMMENTS-13222.md   # one 'reply' entry per needs_lead thread
 gh api -X POST repos/pdffiller/jsfiller/pulls/13222/comments/2412345678/replies -f body='Fixed in 9f1c2a3b'   # self_resolved: at once
 ! TURNSTILE_LEAD=1 turnstile approve ah-5       # the lead's word on the needs_lead thread; then its reply goes out the same way
-turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass   # no --slack/--approved from REWORK
+gh api -X POST repos/pdffiller/jsfiller/pulls/13222/requested_reviewers -f 'reviewers[]=isachivka'   # all replied + head clean: re-request the thread authors
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --rerequested isachivka   # no --slack/--approved from REWORK
 turnstile pass pr jsfiller#13222 APPROVED --approvals isachivka --open-threads 0
 turnstile pass pr jsfiller#13222 MERGED --merged-sha <sha>
 turnstile pass story S1 IN_PROGRESS --approved ah-1                              # the lead's start_story word; no --reason bypass
@@ -93,7 +95,11 @@ footer (R3-10). From REWORK, ON_HUMAN_REVIEW requires, for every human thread op
 comment and a reply newer than that comment: by `epic.roles.agent_github` (default `lead_github`) for `self_resolved`, after
 the lead approved the thread's `reply` entry for `needs_lead` (a reply from the lead's own login, when it differs from the
 agents', also settles it). `--slack`, `--approved` and `--reviewers` are refused on that pass: the replies notify the
-reviewers, and only `needs_lead` threads wait for the lead.
+reviewers, and only `needs_lead` threads wait for the lead. A thread-driven rework (a reviewer commented on a thread since the
+PR last went to humans) also needs `--rerequested <logins>`: exactly those reviewers, each with a GitHub review request newer than
+our last reply on their threads and than the clean signal on the head (Copilot's review of it, else the gate check's completion),
+still pending in `reviewRequests` or answered by a review of the head. It records `evidence.human.rerequested = {logins, head, at}`
+and `reviewer_notified: true`. A push-only rework takes no `--rerequested` and records `reviewer_notified: false`.
 
 ### Review threads (lead rule 2026-10-14)
 
@@ -107,6 +113,14 @@ or architecture decision, a disagreement on direction, a conflict with a recorde
 per thread, approved by the lead like every other entry, then the reply goes out. Each classification is bound to the
 reviewer's last comment; a newer one needs a new classification (which voids a `reply` entry made for the old state).
 `turnstile threads <repo#n>` without ids lists the threads in scope; `turnstile status` shows what they still need.
+
+"If you replied to all comments on a PR and Copilot passed again, ping the reviewer to look again" (lead rule 2026-10-14, the
+re-request): once every human thread in scope has our latest reply and Copilot reviewed the current head with 0 open threads (repos
+without Copilot: the gate check green on the head), the agents re-request review on GitHub from the reviewers who commented on the
+threads in this round — `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'`, no lead
+approval; Slack stays lead-approved. `turnstile status` prints that exact command while it has not happened for the head, then the
+`--rerequested` pass. A push-only rework (no reviewer comment since the PR last went to humans) pings nobody: the return records
+`reviewer_notified: false`, the board reads "reviewers not notified", and the lead decides.
 
 ### The lead's word (`awaiting_human`)
 
@@ -163,7 +177,7 @@ plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
---approved <ah-id>` (READY → ON_HUMAN_REVIEW only), `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
+--approved <ah-id>` (READY → ON_HUMAN_REVIEW only), `--rerequested a,b` (REWORK → ON_HUMAN_REVIEW only), `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
 `--report --cases-pass N --cases-fail N [--cases-not-testable N] [--failed-cases a,b] --figma-parity pass|fail|not_testable_here --build --head [--full]`
 (a `--full` run's three counts must add up to `stories.<S>.test_cases`). Report paths are
@@ -174,9 +188,10 @@ relative to `delivery/` and must exist.
 `hooks/hooks.json`, PreToolUse plus one PostToolUse, apply to subagents too, and fail closed (a crash, a malformed payload or a missing
 `python3` blocks the call):
 
-- `guard_bash.py` blocks `gh pr merge|ready`, `--add-reviewer`, human `requested_reviewers` requests (only the Copilot
-  bot may be requested; `--input` bodies are refused), REST `pulls/N/merge` writes, GraphQL
-  `mergePullRequest|markPullRequestReadyForReview|requestReviews`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
+- `guard_bash.py` blocks `gh pr merge|ready`, `--add-reviewer`, `gh pr create --reviewer|-r`, human `requested_reviewers`
+  requests (the Copilot bot may be requested; `--input` bodies, team reviewers and computed logins or routes are refused; the
+  one human exception is below), REST `pulls/N/merge` writes, GraphQL
+  `mergePullRequest|markPullRequestReadyForReview|requestReviews*`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
   `git rebase`, `--no-gpg-sign`, `-c commit.gpgsign=false`, an empty Prometey `service_github_tag=`, a
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
   `gh api` call — also when they sit in a file given with `-F`/`--file`/`--body-file`/`--input` (the hook reads it) —
@@ -207,6 +222,12 @@ relative to `delivery/` and must exist.
   for a PR of the epic in REWORK (`reply-unknown-pr`, `reply-not-rework`), a thread classified in `state.json`
   (`reply-unclassified`), with the lead's approved `reply` entry for a `needs_lead` thread (`reply-needs-lead`), and while
   GitHub shows no reviewer comment newer than the classification (`reply-reclassify`; `gh` failing → `reply-unverified`).
+  **Re-request (lead rule 2026-10-14):** `gh api` POST to the literal `repos/<org>/<repo>/pulls/<n>/requested_reviewers` with
+  literal `-f|-F 'reviewers[]=<login>'` fields passes for humans only for a PR of the epic (`human-reviewer-request` otherwise) in
+  REWORK (`rerequest-not-rework`) whose threads all have their replies as the pass requires (`rerequest-replies`), in a round with
+  thread authors (`rerequest-push-only`), for exactly those authors (`rerequest-not-authors`), with Copilot's latest review on
+  the GitHub head and 0 open Copilot threads (`rerequest-copilot`) or, without Copilot, the gate check green on the head
+  (`rerequest-gate`); `gh` failing → `rerequest-unverified`.
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
   refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
   main-thread orchestrator (no `agent_id`) passes and records with `jira-synced`.
