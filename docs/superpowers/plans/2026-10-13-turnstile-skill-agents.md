@@ -2808,3 +2808,15 @@ git tag v0.2.0
 - "Every fail became a bug" counts bugs by id against the previous run's `bug_ids` snapshot, not by `created_at`, because `_now()` has minute resolution.
 - "Replies posted" is verified on GitHub (`reviewThreads.comments.createdAt`, `epic.roles.lead_github`), so the lead posts GitHub replies themself; `comments-handler` only drafts them. The trailer check is on GitHub commit messages and the PR body (the review's alternative to a `commit-msg` hook), which also catches `printf`-escaped spellings.
 - Credentials for the tester are a `--var credentials=…` at dispatch time; the brief file is committed, so the lead decides what goes there (flag for plan 3: a `TURNSTILE_TEST_PASSWORD` env read by the tester would keep it out of git).
+
+## Deviations
+
+Recorded while executing the plan on 2026-10-14 (inline, single implementer; every task committed, suite green, pushed).
+
+1. **Task 1 — `test_init_creates_worktree_delivery_marker_and_claude_md`.** The plan's `_ensure_worktree` probes `git branch --list` before `worktree add`, so the test's `io.calls[0]` assertion could not hold. Kept the probe (a deleted worktree with a surviving branch is re-attached, not re-created with `-b`); the test locates the first `worktree add` call instead.
+2. **Task 1 — test setUp.** The temp dir is `.resolve()`d because `init` resolves the workspace and knowledge paths; on macOS `/var` is a symlink to `/private/var`, which made the path assertions differ. No code change.
+3. **Task 3 — `tests/test_pass.py::test_start_story_entries_are_opened_for_startable_stories`.** The plan listed only `test_rules_story` as unaffected; this test goes through `pass_cmd.run` and now hits the plan gate (the fixture has no approved plan). The gate is spec §4.1, so the test seeds `epic.plan` + an approved `plan` entry and indexes the `start_story` entry at `[1]`.
+4. **Task 7 — fixture.** `tests/fixtures/gh_pr_13222.json` had no `allCommits` block (the core's parse tolerated its absence); the plan's step edits `allCommits.nodes[].commit.message`, so the block was added with one signed node at the head and a clean message.
+5. **Task 12 — tag.** Tagged `v0.2.0-skill` (the caller's instruction) rather than `v0.2.0`.
+6. **Task 12 — README.** "Usage (core)" became "Usage" with the new commands prepended as planned; the `echo delivery > .turnstile` line was kept at the end of the block with a note that `init` writes it.
+7. **Final review (self-review, no subagent per the caller).** One finding fixed: `_facts_mismatches` let an unparsable `rework_since.at` skip the "replies posted" check (fail-open); it now refuses with `MISSING a parsable rework_since.at …` (test `test_unparsable_rework_since_fails_closed`). Deferred minors: `approve`/`status` print `plan None` for plan entries (no pr/story); a brief file written before a failed commit stays on disk (the next pass commits it, `status` reports it); `turnstile bug` without a subcommand prints help and exits 0; `init` overwrites an existing `.turnstile` in the workspace.
