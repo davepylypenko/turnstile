@@ -92,7 +92,8 @@ is deployed to the story's slot (dispatch `deployer`).
    ENV_TESTING --report … --head …`; `turnstile bug set bNN --state testing` after the deploy; `tester` in mode `rerun`
    (`ENV-S-r2`) for the failed cases (recorded without `--full`); `bug set bNN --state done`; then one full run.
 5. `turnstile pass story S DONE --approved <story_done ah-id>` — needs the last run `--full` with 0 fails, parity pass,
-   `env_test.head == deploy.head ==` the current stack top, every bug of the story `done`, every PR ≥ READY.
+   `env_test.head == deploy.head ==` the current stack top, every bug of the story `done`, every PR ≥ READY. Steps 1, 3, 4
+   and 5 ask GitHub for the head of every PR in `deploy.heads` and refuse on any drift (never `--offline` at DONE).
 6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story and the sends of this
    story's units wait for the lead's words (`start_story` / `send` entries — there is no `--reason` way to start a story,
    and a parallel start needs `parallel_with` in the approved plan; then `pass pr … ON_HUMAN_REVIEW --head …

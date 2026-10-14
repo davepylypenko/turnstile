@@ -105,6 +105,9 @@ re-enters itself to record a test run (`--cases-pass/--cases-fail/--failed-cases
 for a complete run; the head must be the deploy head); every failed case needs a bug keyed by story + case id
 (`turnstile bug add --case`); a case that fails again appends to its bug and reopens it when done, never a duplicate.
 DONE needs the last run full and clean on `deploy.head` (= the stack top) and every bug of the story done.
+Every deploy record, ENV_TESTING pass and DONE also asks GitHub for the head of every PR in `deploy.heads` and refuses
+when any differs (a push without `pass pr` leaves `state.json` stale); `--offline` records `deploy.head_verified: false`
+and DONE refuses it.
 
 Agents (`agents/`): implementer (sonnet), reviewer (opus, xhigh), story-reviewer (fable), stack-step, comments-handler,
 investigator, tester (opus, Figma parity), deployer (sonnet); launched as `turnstile:<name>` with a brief from
@@ -165,7 +168,9 @@ relative to `delivery/` and must exist.
   unused `send` (PR `READY`) or `reply` (PR `REWORK`) entry in `awaiting_human` and the channel is that repo's review
   channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside
   `epic.repos`) needs no entry of its own when the send entry lists it in `companions` (`pass pr <main> READY
-  --companions locales#5`); every refusal names the id it is about. It only checks; missing or broken state fails closed.
+  --companions locales#5`); every refusal names the id it is about. For a DONE story it also asks GitHub for the head of
+  every PR in the story's `deploy.heads` and refuses when one moved (a push without `pass pr`); `gh` failing fails closed. It
+  only checks; missing or broken state fails closed.
 - `post_slack.py` (PostToolUse, same matcher) records the send once the tool result carries a `message_ts`: `used_at`,
   `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
   of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's
