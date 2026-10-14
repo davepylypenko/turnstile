@@ -363,6 +363,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 trial = copy.deepcopy(story); trial["_id"] = ident
                 _apply_story_evidence(trial, o)
                 recording = _recording_run(o)
+                if not recording and not o.report and o.build and o.head:  # a deploy: snapshot every open PR head of the story (all repos)
+                    trial["evidence"]["deploy"]["heads"] = rules.open_heads(ident, data["prs"])
                 if target == "ENV_TESTING" and story.get("state") == "ENV_TESTING" and not recording:
                     raise TurnstileError("--report, --cases-pass, --cases-fail, --failed-cases, --figma-parity, --build and --head to record a test run "
                                          "(ENV_TESTING re-entry records a run)")

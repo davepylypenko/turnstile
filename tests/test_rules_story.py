@@ -145,3 +145,28 @@ class StoryRules(unittest.TestCase):
         s = story("DONE")
         self.assertTrue(any("reopen" in m for m in rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"])))
         self.assertEqual(rules.check_story(s, "IN_PROGRESS", {}, FIX["stories"], reason="bug b4 in prod"), [])
+
+
+class DeployHeadsSnapshot(unittest.TestCase):
+    """Round 2: deploy.heads snapshots every open PR of the story at the deploy (all repos); a later change voids it."""
+    def setUp(self):
+        import copy, json, pathlib
+        d = json.loads((pathlib.Path(__file__).parent / "fixtures" / "state_min.json").read_text())
+        self.prs = d["prs"]
+        for p in self.prs.values(): p["state"] = "READY"
+        self.s = copy.deepcopy(d["stories"]["S1"]); self.s["_id"] = "S1"; self.s["state"] = "INTEGRATION_REVIEW"
+        A, B = self.prs["jsfiller#1"]["head"], self.prs["docs-platform#2"]["head"]
+        self.s["evidence"] = {"deploy": {"build": "1", "head": A, "heads": {"jsfiller#1": A, "docs-platform#2": B}},
+                              "integration_review": {"report": "r", "head": A, "clean": True}}
+
+    def test_other_repo_change_after_deploy_is_caught(self):
+        self.assertEqual(rules.check_story(self.s, "ENV_TESTING", self.prs, {"S1": self.s}), [])
+        self.prs["docs-platform#2"]["head"] = "cccccccc33333333"
+        out = rules.check_story(self.s, "ENV_TESTING", self.prs, {"S1": self.s})
+        self.assertTrue(any("docs-platform#2" in m and "deploy.heads" in m for m in out), out)
+
+    def test_send_of_a_done_story_after_a_push_is_refused(self):
+        self.s["state"] = "DONE"; pr = dict(self.prs["jsfiller#1"], state="READY")
+        out = []; rules._story_gates_passed(pr, {"S1": self.s}, out, self.prs); self.assertEqual(out, [])
+        self.prs["jsfiller#1"]["head"] = "dddddddd44444444"
+        out = []; rules._story_gates_passed(pr, {"S1": self.s}, out, self.prs); self.assertTrue(out)

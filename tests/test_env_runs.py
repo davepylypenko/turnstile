@@ -92,6 +92,7 @@ class EnvRuns(unittest.TestCase):
         rc, out = run_capture(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(build="2"), self.io); self.assertEqual(rc, 2)
         rc, out = run_capture(self.d, "story", "S1", "INTEGRATION_REVIEW", opts(build="2", head=H2), self.io); self.assertEqual(rc, 0, out)
         dp = self.data()["stories"]["S1"]["evidence"]["deploy"]; self.assertEqual((dp["build"], dp["head"]), ("2", H2)); self.assertTrue(dp["at"])
+        self.assertEqual(dp["heads"], {})  # round 2: snapshot of every open PR head (all merged in this fixture)
         # the old review no longer matches the deploy: ENV_TESTING needs a review round on H2
         rc, out = run_capture(self.d, "story", "S1", "ENV_TESTING", opts(report="reports/S.md", head=H), self.io)
         self.assertEqual(rc, 2); self.assertIn("integration_review.head == evidence.deploy.head", out)

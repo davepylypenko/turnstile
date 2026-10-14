@@ -307,6 +307,15 @@ class SlackGuard(unittest.TestCase):
         self.ready_with(state="REWORK", type="reply", story_state="IN_PROGRESS")
         self.assertEqual(self.slack(self.MSG).returncode, 0)
 
+    def test_send_refused_when_a_head_changed_after_the_story_deploy(self):
+        # round 2: a DONE story whose deploy.heads no longer match the PR heads (a push after DONE) is not sent
+        self.ready_with()
+        d = self.state(); d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "aaaaaaaa11111111",
+            "heads": {"jsfiller#1": "aaaaaaaa11111111", "docs-platform#2": "bbbbbbbb22222222"}}}; self.write(d)
+        self.assertEqual(self.slack(self.MSG).returncode, 0)
+        d = self.state(); d["prs"]["docs-platform#2"]["head"] = "cccccccc33333333"; self.write(d)
+        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("head changed after its deploy", r.stderr)
+
     def test_schedule_is_refused_draft_is_guarded(self):
         self.ready_with()
         r = self.slack(self.MSG, tool="mcp__plugin_slack_slack__slack_schedule_message"); self.assertEqual(r.returncode, 2)

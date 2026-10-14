@@ -18,7 +18,14 @@ def story_ready(pid: str, prs: dict, stories: dict) -> bool:
     """R3-3: a first send goes out only for a DONE story (or a lead-set human_review: per_pr), as pass requires."""
     sid = prs.get(pid, {}).get("story")
     s = (stories or {}).get(sid) or {}
-    return not sid or s.get("state") == "DONE" or s.get("human_review") == "per_pr"
+    if not sid or s.get("human_review") == "per_pr":
+        return True
+    if s.get("state") != "DONE":
+        return False
+    from _common import plugin_root  # round 2: a push after DONE (deploy.heads / stack top no longer current) is not sent
+    sys.path.insert(0, str(plugin_root())); from turnstile_cli import rules
+    out = []; rules._deploy_is_stack_top(dict(s, _id=sid), prs, out)
+    return not out
 
 def usable(entry: dict, pid: str, prs: dict, stories: dict = None) -> bool:
     return (entry.get("pr") == pid and entry.get("type") in STATE_FOR_TYPE and bool(entry.get("approved_at"))
@@ -52,7 +59,8 @@ def choose(data: dict, ids, channel: str) -> dict:
         used = [a for a in awaiting if a.get("pr") == pid and a.get("type") in STATE_FOR_TYPE and a.get("approved_at") and a.get("used_at")]
         hint = " (%s already used at %s: one send per approval)" % (used[-1]["id"], used[-1]["used_at"]) if used else ""
         if not story_ready(pid, prs, data.get("stories")):
-            hint += " (story %s is not DONE: human review receives only stories that passed their gates)" % prs.get(pid, {}).get("story")
+            hint += (" (story %s is not DONE, or a PR head changed after its deploy: human review receives only stories that passed their "
+                     "gates on the current heads)" % prs.get(pid, {}).get("story"))
         block("no usable (approved, unused) send/reply for %s in awaiting_human (state %s)%s. %s"
               % (pid, prs.get(pid, {}).get("state"), hint, LEAD_HINT))
     return chosen

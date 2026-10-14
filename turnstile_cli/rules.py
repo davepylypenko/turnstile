@@ -126,7 +126,7 @@ def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ide
                    % (ah_id, expected_type, ident, ah_id))
     return e
 
-def _story_gates_passed(pr: dict, stories: Optional[Dict[str, dict]], out: List[str]) -> None:
+def _story_gates_passed(pr: dict, stories: Optional[Dict[str, dict]], out: List[str], prs: Optional[Dict[str, dict]] = None) -> None:
     """Human review receives only stories that passed integration review and env testing (spec §1.4, §4.2). A lead-set
     `human_review: "per_pr"` on the story (recorded in plan.md) exempts a migrated/legacy story."""
     sid = pr.get("story")
@@ -138,6 +138,8 @@ def _story_gates_passed(pr: dict, stories: Optional[Dict[str, dict]], out: List[
     elif s.get("state") != "DONE" and s.get("human_review") != "per_pr":
         out.append("MISSING story %s to be DONE (is %s): human review receives only stories that passed integration review and env testing "
                    "(lead-set human_review: per_pr in plan.md exempts a legacy story)" % (sid, s.get("state")))
+    elif s.get("state") == "DONE" and s.get("human_review") != "per_pr":  # a push after DONE reaches humans untested otherwise
+        _deploy_is_stack_top(dict(s, _id=sid), prs or {}, out)
 
 def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason: Optional[str] = None,
              awaiting: Optional[List[dict]] = None, stories: Optional[Dict[str, dict]] = None) -> List[str]:
@@ -171,7 +173,7 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
         if src == "READY":
-            _story_gates_passed(pr, stories, out)
+            _story_gates_passed(pr, stories, out, prs)
         e = check_approved_entry(h.get("approved"), "reply" if src == "REWORK" else "send", "pr", pr.get("_id"), awaiting, out)
         if e and not e.get("used_at"):
             out.append("MISSING awaiting_human %s used_at (no Slack message went through the guarded tool for it)" % e.get("id"))
@@ -278,10 +280,20 @@ def stack_tops(sid: str, prs: Dict[str, dict]) -> List[tuple]:
     bases = {p.get("base") for p in mine.values()}
     return sorted((pid, p.get("head")) for pid, p in mine.items() if p.get("branch") not in bases)
 
+def open_heads(sid: str, prs: Dict[str, dict]) -> Dict[str, str]:
+    return {pid: p.get("head") for pid, p in prs.items() if p.get("story") == sid and p.get("state") != "MERGED"}
+
 def _deploy_is_stack_top(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
     """2026-10-14 finding 4: evidence.deploy.head must be the current stack top, else fixes made after the deploy are tested
-    by nobody. A multi-repo story has one top per repo; the deploy head must be one of them."""
+    by nobody. Round 2: deploy.heads snapshots every open PR of the story (all repos) at the deploy; any later head change,
+    in any repo, or a PR added since, voids the deploy."""
     sid = story.get("_id"); dp = (story.get("evidence") or {}).get("deploy") or {}
+    snap = dp.get("heads")
+    if isinstance(snap, dict):
+        for pid, h in sorted(open_heads(sid, prs).items()):
+            if not same_head(snap.get(pid), h):
+                out.append("MISSING PR %s head %s to be the one deployed (deploy.heads has %s): redeploy and record it with pass story %s "
+                           "INTEGRATION_REVIEW --build <n> --head <sha>" % (pid, h, snap.get(pid), sid))
     tops = stack_tops(sid, prs)
     if dp.get("head") and tops and not any(same_head(dp.get("head"), h) for _, h in tops):
         out.append("MISSING evidence.deploy.head %s to be the current stack top (%s): redeploy the stack top and record it with "
