@@ -372,7 +372,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
             print(n)
         if jira_line:
             print(jira_line)
-        print("BOARD: publish %s" % (delivery / "board.html"))
+        url = ((data.get("epic") or {}).get("board") or {}).get("artifact_url")
+        print("BOARD: publish %s → %s" % (delivery / "board.html", url or "new artifact (capabilities: db, user; then record the url in state.json at migration or init --board-url)"))
         print("OK " + summary)
         return 0
     except StaleStateError as e:

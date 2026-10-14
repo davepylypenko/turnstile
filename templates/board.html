@@ -19,6 +19,8 @@ th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); 
 .badge { display:inline-block; padding:1px 8px; border-radius:999px; color:#fff; font-size:11px; font-weight:600 }
 .k { font-family: ui-monospace, Menlo, monospace; font-size:12px } .muted { color:var(--muted) } a { color:var(--accent) }
 .tabs button { background:none; border:1px solid var(--line); border-radius:6px; padding:4px 10px; margin-right:6px; color:var(--ink); cursor:pointer } .tabs button.on { border-color:var(--accent); color:var(--accent) }
+select.bug { font:inherit; font-size:12px; padding:2px 6px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink) }
+select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); font-size:11px }
 .hidden { display:none } .legend { color:var(--muted); font-size:12px; margin-top:16px } .legend b { color:var(--ink) }
 </style>
 </head>
@@ -49,7 +51,7 @@ const short = h => h ? String(h).slice(0, 8) : '—';
 function tiles() {
   const prs = Object.values(STATE.prs || {});
   const t = PR_STATES.map(s => ({ n: prs.filter(p => p.state === s).length, l: s }));
-  t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: (STATE.bugs || []).filter(b => b.state !== 'done').length, l: 'Open bugs' },
+  t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: openBugs(), l: 'Open bugs' },
          { n: (STATE.awaiting_human || []).filter(a => !a.approved_at).length, l: 'Awaiting humans' });
   document.getElementById('tiles').innerHTML = t.map(x => '<div class="tile"><b>' + x.n + '</b><span>' + esc(x.l) + '</span></div>').join('');
 }
@@ -82,10 +84,39 @@ function stories() {
       return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
+const BUG_STATES = ['todo', 'ai', 'testing', 'done'];
+let bugOverrides = {}, bugsDb = null, bugsCanWrite = false;
+const bugState = b => (bugOverrides[b.id] && BUG_STATES.includes(bugOverrides[b.id].status)) ? bugOverrides[b.id].status : b.state;
+const openBugs = () => (STATE.bugs || []).filter(b => bugState(b) !== 'done').length;
 function bugs() {
-  document.getElementById('bugs').innerHTML = '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Bug</th><th>Source</th><th>PR</th><th>State</th><th>Note</th></tr></thead><tbody>' +
-    (STATE.bugs || []).map(b => '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
-      (b.pr ? '<a href="' + esc(prUrl(b.pr)) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td>' + badge(b.state) + '</td><td>' + esc(b.note) + '</td></tr>').join('') + '</tbody></table></div>';
+  const counts = {}; (STATE.bugs || []).forEach(b => { const k = bugState(b); counts[k] = (counts[k] || 0) + 1; });
+  document.getElementById('bugs').innerHTML =
+    '<div class="tiles">' + BUG_STATES.map(k => '<div class="tile"><b>' + (counts[k] || 0) + '</b><span>' + k + '</span></div>').join('') + '</div>' +
+    '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Bug</th><th>Source</th><th>PR</th><th>Figma</th><th>State</th><th>Note</th></tr></thead><tbody>' +
+    (STATE.bugs || []).map(b => {
+      const cur = bugState(b);
+      const manual = bugOverrides[b.id] ? '<span class="manual">changed ' + esc(String(bugOverrides[b.id].updatedAt || '').slice(0, 16).replace('T', ' ')) + '</span>' : '';
+      return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
+        (b.pr ? '<a href="' + esc(prUrl(b.pr)) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td class="k">' + esc(b.figma || '—') + '</td>' +
+        '<td>' + badge(cur) + ' <select class="bug" data-bug="' + esc(b.id) + '"' + (bugsCanWrite ? '' : ' disabled title="Status changes are saved by the board owner"') + '>' +
+        BUG_STATES.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join('') + '</select>' + manual + '</td>' +
+        '<td>' + esc(b.note) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  document.querySelectorAll('select[data-bug]').forEach(sel => sel.addEventListener('change', async () => {
+    if (!bugsDb) return;
+    const id = sel.getAttribute('data-bug'), status = sel.value; sel.disabled = true;
+    try { await bugsDb.doc('bugs/' + id).set({ status: status, updatedAt: new Date().toISOString() }); }
+    catch (e) { sel.value = bugState((STATE.bugs || []).find(b => b.id === id) || { state: 'todo' }); }
+    finally { sel.disabled = !bugsCanWrite; }
+  }));
+}
+async function connectBugsDb() {
+  try {
+    const db = await claude.use('db'); if (!db) return; bugsDb = db;
+    const user = await claude.use('user'); const w = user ? await user.can('data.write') : null;
+    bugsCanWrite = (w === null || w === undefined) ? true : !!w; bugs();
+    db.collection('bugs').onSnapshot(snap => { const next = {}; for (const d of snap.docs) { if (d.exists) next[d.id] = d.data(); } bugOverrides = next; bugs(); tiles(); }, () => {});
+  } catch (e) { /* no db in this view */ }
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
@@ -97,9 +128,11 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 }));
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
-    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted.';
+    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted.' +
+    '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.';
 }
-if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend(); }
+if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend();
+  if (window.claude && typeof window.claude.use === 'function') { connectBugsDb(); } else { window.addEventListener('load', () => { if (window.claude && typeof window.claude.use === 'function') connectBugsDb(); }); } }
 </script>
 </body>
 </html>
