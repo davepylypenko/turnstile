@@ -26,6 +26,7 @@ def build_parser():
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
     sub.add_parser("status", help="reconcile + where we are")
+    pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
@@ -51,6 +52,9 @@ def main(argv=None):
             o = Options(**{k.replace("-", "_"): v for k, v in vars(a).items()
                            if k not in ("cmd", "delivery", "kind", "ident", "target")})
             return run(delivery, a.kind, a.ident, a.target, o)
+        if a.cmd == "plan-submitted":
+            from .plan_cmd import run as plan_run
+            return plan_run(delivery, no_commit=a.no_commit)
         if a.cmd == "jira-synced":
             from .pass_cmd import jira_synced
             return jira_synced(delivery, a.ident, a.status)

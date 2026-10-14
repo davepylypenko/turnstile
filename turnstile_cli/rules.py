@@ -90,6 +90,17 @@ def latest_entry(awaiting: Optional[List[dict]], type_: str, key: str, ident: Op
             return a
     return None
 
+def plan_approval_missing(data: dict, plan_digest: Optional[str]) -> Optional[str]:
+    plan = (data.get("epic") or {}).get("plan") or {}
+    if not plan.get("digest"):
+        return "MISSING plan.md submitted and approved (turnstile plan-submitted; the lead approves the printed ah-id)"
+    if plan_digest != plan.get("digest"):
+        return "MISSING plan.md changed since it was submitted; run turnstile plan-submitted and get the lead's approval again"
+    e = latest_entry(data.get("awaiting_human"), "plan", "payload", "plan.md")
+    if e is None or not e.get("approved_at"):
+        return "MISSING lead approval of plan.md (the lead types: ! TURNSTILE_LEAD=1 turnstile approve %s)" % ((e or {}).get("id") or "<ah-id from turnstile status>")
+    return None
+
 def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ident: Optional[str],
                          awaiting: Optional[List[dict]], out: List[str]) -> Optional[dict]:
     """The lead's word for an action: an awaiting_human entry of the right type for this PR/story,
@@ -238,7 +249,8 @@ def _review_head_bound(story: dict, out: List[str]) -> None:
         out.append("MISSING evidence.integration_review.head == evidence.deploy.head (%s vs %s)" % (ir.get("head"), dp.get("head")))
 
 def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None,
-                bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None) -> List[str]:
+                bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None,
+                plan_missing: Optional[str] = None) -> List[str]:
     out: List[str] = []
     if target not in STORY_STATES:
         return ["MISSING valid target state (one of %s)" % ", ".join(STORY_STATES)]
@@ -251,6 +263,8 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             if not reason:
                 out.append("MISSING --reason to reopen a story")
             return out
+        if plan_missing:  # spec §4.1: without the lead's plan approval no story leaves PLANNED; the lead --reason does not clear it
+            out.append(plan_missing)
         override = is_lead_override(reason)
         if reason and not override:
             out.append("MISSING --reason naming the lead's override (contains 'lead'), or an approved start_story entry")

@@ -406,19 +406,23 @@ class PassCmd(unittest.TestCase):
         data = self.data()
         data["stories"]["S2"] = dict(data["stories"]["S1"], state="PLANNED", after=[], title="Next")
         data["stories"]["S3"] = dict(data["stories"]["S1"], state="PLANNED", after=["S2"], title="Later")
+        # a story leaves PLANNED only under a lead-approved plan.md (plan-submitted + approve); seed that here
+        (self.d / "plan.md").write_text("plan"); data["epic"]["plan"] = {"path": "plan.md", "submitted_at": "x", "digest": state.digest("plan")}
+        data["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "plan", "payload": "plan.md", "created_at": "x",
+                                   "approved_at": "2026-10-13T09:00Z", "approved_via": "lead-terminal"}]
         self.write(data)
         rc = pass_cmd.run(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(rc, 0)
-        entries = [(a["type"], a.get("story")) for a in self.data()["awaiting_human"]]
+        entries = [(a["type"], a.get("story")) for a in self.data()["awaiting_human"] if a["type"] != "plan"]
         self.assertEqual(entries, [("start_story", "S2")])
         rc, out = run_capture(self.d, "story", "S2", "IN_PROGRESS", opts(), self.io)
         self.assertEqual(rc, 2); self.assertIn("start_story", out)
-        ah = self.data()["awaiting_human"][0]["id"]
+        ah = self.data()["awaiting_human"][1]["id"]
         with env(TURNSTILE_LEAD="1"):
             pass_cmd.approve(self.d, ah, self.io)
         rc = pass_cmd.run(self.d, "story", "S2", "IN_PROGRESS", opts(approved=ah), self.io)
         self.assertEqual(rc, 0)
-        self.assertTrue(self.data()["awaiting_human"][0]["consumed_at"])
+        self.assertTrue(self.data()["awaiting_human"][1]["consumed_at"])
 
     def test_send_approval_is_bound_to_the_head_it_was_given_for(self):
         self.to_ready()

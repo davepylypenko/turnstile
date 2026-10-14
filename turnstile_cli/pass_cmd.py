@@ -311,8 +311,12 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 story = st_mod.story(st, ident)
                 trial = copy.deepcopy(story); trial["_id"] = ident
                 _apply_story_evidence(trial, o)
+                plan_missing = None
+                if target == "IN_PROGRESS" and story.get("state") == "PLANNED":
+                    plan_path = delivery / "plan.md"
+                    plan_missing = rules.plan_approval_missing(data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
                 missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason,
-                                            bugs=data.get("bugs"), awaiting=awaiting, approved=o.approved)
+                                            bugs=data.get("bugs"), awaiting=awaiting, approved=o.approved, plan_missing=plan_missing)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = story["state"]

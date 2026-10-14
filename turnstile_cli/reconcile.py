@@ -147,6 +147,17 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
         print(json.dumps([p.__dict__ for p in props], indent=2)); return rc
     if status:
         print("== %s" % st.data["epic"]["key"])
+        plan = st.data["epic"].get("plan") or {}
+        plan_path = pathlib.Path(delivery) / "plan.md"
+        e = rules.latest_entry(st.data.get("awaiting_human"), "plan", "payload", "plan.md")
+        if not plan.get("digest"):
+            print("plan: not submitted (turnstile plan-submitted)")
+        elif plan_path.exists() and st_mod.digest(plan_path.read_text()) != plan.get("digest"):
+            print("plan: changed since submission (turnstile plan-submitted)")
+        elif e and e.get("approved_at"):
+            print("plan: approved %s" % e["id"])
+        else:
+            print("plan: awaiting approval %s" % ((e or {}).get("id") or "?"))
         for sid, s in st.data["stories"].items():
             print("story %s [%s] %s — %s" % (sid, s.get("state"), s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():
