@@ -1,5 +1,6 @@
 import re
 from typing import Dict, List, Optional
+from .errors import TurnstileError
 
 PR_STATES = ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
 STORY_STATES = ["PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]
@@ -23,6 +24,12 @@ SLACK_PERMALINK_RX = re.compile(r"^https://[\w-]+\.slack\.com/archives/")
 
 def valid_head(h: Optional[str]) -> bool:
     return bool(h) and bool(HEAD_RX.match(h.lower()))
+
+def require_org(data: dict) -> str:
+    org = ((data.get("epic") or {}).get("github_org") or "").strip()
+    if not org:
+        raise TurnstileError("epic.github_org is not set; add it to state.json (turnstile init sets it)")
+    return org
 
 def same_head(a: Optional[str], b: Optional[str]) -> bool:
     if not a or not b or len(a) < 8 or len(b) < 8:

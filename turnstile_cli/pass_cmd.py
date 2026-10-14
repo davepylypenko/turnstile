@@ -252,7 +252,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
             data = st.data
-            org = data["epic"].get("github_org", "pdffiller")
+            org = rules.require_org(data)
             awaiting = data.setdefault("awaiting_human", [])
             _check_report(delivery, o.deep_review); _check_report(delivery, o.report)
             extra: List[str] = []

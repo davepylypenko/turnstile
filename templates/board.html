@@ -44,7 +44,7 @@ function note(p) {
 }
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = s => '<span class="badge" style="background:' + (COLORS[s] || 'var(--muted)') + '">' + esc(s) + '</span>';
-const prUrl = id => { const [repo, n] = id.split('#'); return 'https://github.com/' + (((STATE || {}).epic || {}).github_org || 'pdffiller') + '/' + repo + '/pull/' + n; };
+const prUrl = id => { const [repo, n] = id.split('#'); const org = ((STATE || {}).epic || {}).github_org; return org ? 'https://github.com/' + org + '/' + repo + '/pull/' + n : '#'; };
 const short = h => h ? String(h).slice(0, 8) : '—';
 function tiles() {
   const prs = Object.values(STATE.prs || {});

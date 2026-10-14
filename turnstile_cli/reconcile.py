@@ -131,7 +131,7 @@ def uncommitted(delivery: pathlib.Path) -> List[str]:
 def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> int:
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     ledger_path = pathlib.Path(delivery) / "ledger.md"
-    org = st.data["epic"].get("github_org", "pdffiller")
+    org = rules.require_org(st.data)
     facts = {}
     unknown = []
     for pid, pr in st.data["prs"].items():
