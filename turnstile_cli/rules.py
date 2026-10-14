@@ -222,7 +222,7 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
 STORY_FROM = {
     "PLANNED": [],
     "IN_PROGRESS": ["PLANNED", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"],
-    "INTEGRATION_REVIEW": ["IN_PROGRESS", "ENV_TESTING"],
+    "INTEGRATION_REVIEW": ["IN_PROGRESS", "ENV_TESTING", "INTEGRATION_REVIEW"],  # re-entry records a redeploy after fixes
     "ENV_TESTING": ["INTEGRATION_REVIEW", "ENV_TESTING"],
     "DONE": ["ENV_TESTING"],
 }
@@ -269,6 +269,32 @@ def _stacked_into_story_branch(story: dict, prs: Dict[str, dict], out: List[str]
         if p.get("base") not in allowed:
             out.append("MISSING PR %s based on the story branch %s or on another PR of the story (base is %s)" % (pid, sb, p.get("base")))
 
+def stack_tops(sid: str, prs: Dict[str, dict]) -> List[tuple]:
+    """(pr id, head) of every open PR of the story that no other open PR of the story is based on: the stack top per repo.
+    Empty when every PR is merged (the story branch is the top; not derivable from state)."""
+    mine = {pid: p for pid, p in prs.items() if p.get("story") == sid and p.get("state") != "MERGED"}
+    bases = {p.get("base") for p in mine.values()}
+    return sorted((pid, p.get("head")) for pid, p in mine.items() if p.get("branch") not in bases)
+
+def _deploy_is_stack_top(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
+    """2026-10-14 finding 4: evidence.deploy.head must be the current stack top, else fixes made after the deploy are tested
+    by nobody. A multi-repo story has one top per repo; the deploy head must be one of them."""
+    sid = story.get("_id"); dp = (story.get("evidence") or {}).get("deploy") or {}
+    tops = stack_tops(sid, prs)
+    if dp.get("head") and tops and not any(same_head(dp.get("head"), h) for _, h in tops):
+        out.append("MISSING evidence.deploy.head %s to be the current stack top (%s): redeploy the stack top and record it with "
+                   "pass story %s INTEGRATION_REVIEW --build <n> --head <sha>" % (dp.get("head"), ", ".join("%s %s" % x for x in tops), sid))
+
+def _run_bound_to_deploy(story: dict, out: List[str], label: str) -> None:
+    ev = story.get("evidence") or {}
+    run, dp = last_env_run(story) or {}, ev.get("deploy") or {}
+    if not run.get("head") or not run.get("build"):
+        out.append("MISSING %s.build and %s.head (every recorded run names the build and head it tested: --build --head)" % (label, label))
+    elif not same_head(run.get("head"), dp.get("head")):
+        out.append("MISSING %s.head == evidence.deploy.head (%s vs %s): the run tested a build the state does not know; record the redeploy "
+                   "first (pass story %s INTEGRATION_REVIEW --build <n> --head <sha>), then a review round, then the run"
+                   % (label, run.get("head"), dp.get("head"), story.get("_id")))
+
 def _review_head_bound(story: dict, out: List[str]) -> None:
     ev = story.get("evidence") or {}
     ir, dp = ev.get("integration_review") or {}, ev.get("deploy") or {}
@@ -283,23 +309,25 @@ def last_env_run(story: dict) -> Optional[dict]:
     return runs[-1] if runs else (ev.get("env_test") or None)
 
 def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) -> None:
-    """Spec §4.2 ENV_TESTING DoD: every fail became a bug. The last run's fail count needs that many bugs of the story
-    created after the previous run (any bug of the story when it is the first run)."""
+    """Spec §4.2 ENV_TESTING DoD, 2026-10-14 finding 5: every failed case of the last run has a bug keyed by story + case id
+    that is not done (new, still open, or reopened by the run record). The count must equal the list."""
     runs = (story.get("evidence") or {}).get("env_runs") or []
     if not runs:
         return
-    last, prev_ids = runs[-1], set((runs[-2].get("bug_ids") if len(runs) > 1 else None) or [])
+    last = runs[-1]; sid = story.get("_id")
     n = (last.get("cases") or {}).get("fail") or 0
-    if n <= 0:
-        return
-    mine = [b for b in bugs or [] if b.get("story") == story.get("_id") and b.get("id") not in prev_ids]
-    if len(mine) < n:
-        out.append("MISSING every failed case became a bug: %d fail(s) in the last run, %d bug(s) of %s created after the previous run "
-                   "(turnstile bug add --story %s --title … --source … before recording the run)" % (n, len(mine), story.get("_id"), story.get("_id")))
+    failed = last.get("failed_cases") or []
+    if n != len(failed):
+        out.append("MISSING --cases-fail %d to equal the number of --failed-cases ids (%d: %s)" % (n, len(failed), ", ".join(failed) or "none"))
+    open_cases = {b.get("case") for b in bugs or [] if b.get("story") == sid and b.get("case") and b.get("state") != "done"}
+    for case in failed:
+        if case not in open_cases:
+            out.append("MISSING a bug for failed case %s of %s (turnstile bug add --story %s --case %s --title … --source …; a done bug of the "
+                       "same case is reopened when the run is recorded)" % (case, sid, sid, case))
 
 def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None,
                 bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None,
-                plan_missing: Optional[str] = None) -> List[str]:
+                plan_missing: Optional[str] = None, recording_run: bool = False) -> List[str]:
     out: List[str] = []
     if target not in STORY_STATES:
         return ["MISSING valid target state (one of %s)" % ", ".join(STORY_STATES)]
@@ -326,15 +354,21 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
             out.append("MISSING evidence.deploy.build (stack top deployed to the story env slot)")
         if not dp.get("head"):
             out.append("MISSING evidence.deploy.head (stack-top sha that was deployed; pass --head)")
+        _deploy_is_stack_top(story, prs, out)
         return out
     if target == "ENV_TESTING":
         _prs_at_least_ready(story, prs, out)
         _review_head_bound(story, out)
+        _deploy_is_stack_top(story, prs, out)
+        if recording_run:
+            _run_bound_to_deploy(story, out, "env_runs[-1]")
         _fails_became_bugs(story, bugs, out)
         return out
     if target == "DONE":
         _prs_at_least_ready(story, prs, out)
         _review_head_bound(story, out)
+        _deploy_is_stack_top(story, prs, out)
+        _run_bound_to_deploy(story, out, "env_test")
         et = last_env_run(story) or {}
         cases = et.get("cases") or {}
         if not et.get("report"):

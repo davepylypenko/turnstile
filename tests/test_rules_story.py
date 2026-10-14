@@ -5,7 +5,8 @@ FIX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "state_min.json")
 H = "aaaaaaaa11111111"
 START = {"id": "ah-1", "owner": "lead", "type": "start_story", "story": "S1", "approved_at": "2026-10-13T10:00Z"}
 DONE = {"id": "ah-2", "owner": "lead", "type": "story_done", "story": "S1", "approved_at": "2026-10-13T10:00Z"}
-CLEAN_ENV = {"report": "reports/ENV-S1.md", "cases": {"pass": 3, "fail": 0, "not_testable_here": 0}, "figma_parity": "pass", "full": True}
+CLEAN_ENV = {"report": "reports/ENV-S1.md", "cases": {"pass": 3, "fail": 0, "not_testable_here": 0}, "figma_parity": "pass", "full": True,
+             "build": "173111", "head": H, "failed_cases": []}
 
 def story(state, **ev):
     s = copy.deepcopy(FIX["stories"]["S1"]); s["_id"] = "S1"; s["state"] = state; s["evidence"].update(ev); return s
@@ -113,6 +114,32 @@ class StoryRules(unittest.TestCase):
         stories = {"S0": {"state": "DONE", "parallel_with": []}, "S1": story("PLANNED")}
         self.assertEqual(rules.check_story(story("PLANNED"), "IN_PROGRESS", {}, stories, awaiting=[START]), [])  # DONE does not block
         self.assertTrue(rules.startable(story("PLANNED"), stories))
+
+    def test_deploy_head_must_be_the_current_stack_top(self):
+        # 2026-10-14 finding 4: the stack top is the head of the story's open PR that no other PR of the story is based on
+        ps = prs("READY", "READY"); ps["docs-platform#2"]["base"] = "feature/MYD-10"; ps["docs-platform#2"]["head"] = "cccccccc33333333"
+        self.assertEqual(rules.stack_tops("S1", ps), [("docs-platform#2", "cccccccc33333333")])
+        s = story("IN_PROGRESS", deploy={"build": "1", "head": H})
+        out = rules.check_story(s, "INTEGRATION_REVIEW", ps, FIX["stories"])
+        self.assertTrue(any("stack top" in m and "docs-platform#2" in m for m in out), out)
+        s["evidence"]["deploy"]["head"] = "cccccccc33333333"
+        self.assertEqual(rules.check_story(s, "INTEGRATION_REVIEW", ps, FIX["stories"]), [])
+        ps["docs-platform#2"]["state"] = "MERGED"  # merged PRs drop out of the stack; nothing left to compare → no check
+        self.assertEqual(rules.stack_tops("S1", ps), [("jsfiller#1", H)])
+        ps["jsfiller#1"]["state"] = "MERGED"; self.assertEqual(rules.stack_tops("S1", ps), [])
+        self.assertEqual(rules.check_story(s, "INTEGRATION_REVIEW", ps, FIX["stories"]), [])
+        # a multi-repo story has one top per repo: the deploy head may be any of them
+        ps = prs("READY", "READY"); self.assertEqual(len(rules.stack_tops("S1", ps)), 2)
+        s = tested(); s["evidence"]["deploy"]["head"] = "bbbbbbbb22222222"; s["evidence"]["integration_review"]["head"] = "bbbbbbbb22222222"
+        s["evidence"]["env_test"].update(head="bbbbbbbb22222222", build="173111")
+        self.assertEqual(rules.check_story(s, "DONE", ps, FIX["stories"], bugs=[], awaiting=[DONE]), [])
+        s["evidence"]["env_test"]["head"] = H
+        out = rules.check_story(s, "DONE", ps, FIX["stories"], bugs=[], awaiting=[DONE])
+        self.assertTrue(any("env_test.head" in m for m in out), out)
+
+    def test_integration_review_reenters_itself(self):
+        s = story("INTEGRATION_REVIEW", deploy={"build": "2", "head": H})
+        self.assertEqual(rules.check_story(s, "INTEGRATION_REVIEW", prs("READY", "MERGED"), FIX["stories"]), [])
 
     def test_reopen_needs_reason(self):
         s = story("DONE")

@@ -45,10 +45,11 @@ turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel --knowledg
 # write delivery/plan.md (skill: references/kickoff.md), then
 turnstile plan-submitted                                   # the lead: ! TURNSTILE_LEAD=1 turnstile approve ah-1
 turnstile brief implementer MYD-18075 --var ticket_key=MYD-18075 --var ...   # then Agent(turnstile:implementer, PROMPT line)
-turnstile bug add --story S1 --title "Share visible on published Create form" --source "tester 2026-10-13" --figma KOew:9098-41434
-turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 30 --cases-fail 1 --figma-parity pass   # a run; fails need bugs
+turnstile bug add --story S1 --case TP-004 --title "Share visible on published Create form" --source "tester 2026-10-13" --figma KOew:9098-41434
+turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 30 --cases-fail 1 --failed-cases TP-004 --figma-parity pass --build 173111 --head <stack-top sha>
 turnstile bug set b01 --state done
-turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --full
+turnstile pass story S1 INTEGRATION_REVIEW --build 173120 --head <new stack-top sha>   # re-entry after fixes: records the redeploy; review again on that head
+turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --build 173120 --head <new stack-top sha> --full
 echo delivery > .turnstile                      # workspace root → delivery dir (init writes it; by hand for an existing delivery dir)
 turnstile status                                # reconcile with GitHub + where we are (exit 1 when gh facts are missing)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
@@ -63,7 +64,7 @@ turnstile pass pr jsfiller#13222 MERGED --merged-sha <sha>
 turnstile pass story S1 IN_PROGRESS --approved ah-1                              # the lead's start_story word; no --reason bypass
 turnstile pass story S1 INTEGRATION_REVIEW --build 173111 --head <stack-top sha>
 turnstile pass story S1 ENV_TESTING --report reports/STORY-S1-review.md --head <stack-top sha> --rounds 2
-turnstile pass story S1 DONE --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --approved ah-9
+turnstile pass story S1 DONE --approved ah-9                                     # last run full, 0 fails, parity pass, env_test.head == deploy.head == stack top
 turnstile render-board
 ```
 
@@ -96,9 +97,13 @@ opened by `plan-submitted`; no story leaves PLANNED until the newest one is appr
 ### Stories
 
 `stories.<S>.branch` is the story branch; INTEGRATION_REVIEW requires every PR of the story to be based on it or on
-another PR of the story (a stack), or MERGED. ENV_TESTING re-enters itself to record a test run
-(`--cases-pass/--cases-fail/--figma-parity`, `--full` for a complete run); a run with N fails needs N bugs of the story
-added since the previous run (`turnstile bug add`); DONE needs the last run full and clean and every bug of the story done.
+another PR of the story (a stack), or MERGED, and `evidence.deploy.head` to be the current stack top (the open PR no
+other PR of the story is based on; one top per repo for a multi-repo story). After fixes INTEGRATION_REVIEW re-enters
+itself with `--build --head` to record the redeploy; ENV_TESTING then needs a review round on that head. ENV_TESTING
+re-enters itself to record a test run (`--cases-pass/--cases-fail/--failed-cases/--figma-parity --build --head`, `--full`
+for a complete run; the head must be the deploy head); every failed case needs a bug keyed by story + case id
+(`turnstile bug add --case`); a case that fails again appends to its bug and reopens it when done, never a duplicate.
+DONE needs the last run full and clean on `deploy.head` (= the stack top) and every bug of the story done.
 
 Agents (`agents/`): implementer (sonnet), reviewer (opus, xhigh), story-reviewer (fable), stack-step, comments-handler,
 investigator, tester (opus, Figma parity), deployer (sonnet); launched as `turnstile:<name>` with a brief from
@@ -131,8 +136,8 @@ the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders)
 `--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
 --approved <ah-id>`, `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
-`--report --cases-pass N --cases-fail N --figma-parity pass|fail`. Report paths are relative to `delivery/` and must
-exist.
+`--report --cases-pass N --cases-fail N [--failed-cases a,b] --figma-parity pass|fail --build --head [--full]`. Report paths are
+relative to `delivery/` and must exist.
 
 ### Hooks
 

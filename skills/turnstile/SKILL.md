@@ -72,19 +72,24 @@ READY with a paired PR outside the epic (locales): `--companions locales#5` so o
 
 Pre-condition: every PR of `S` is ≥ `READY`, each based on the story branch or on the PR below it, and the stack top
 is deployed to the story's slot (dispatch `deployer`).
-1. `turnstile pass story S INTEGRATION_REVIEW --build <build> --head <stack-top sha>`.
+1. `turnstile pass story S INTEGRATION_REVIEW --build <build> --head <stack-top sha>` (the head must be the current stack
+   top: the open PR of the story no other PR is based on).
 2. dispatch `story-reviewer` (`STORY-S-review`); findings → `implementer` briefs on the ticket PRs → `stack-step` →
-   their gates re-run (`pass pr … AI_REVIEW --head <new> --ci success`, `reviewer`, `pass pr … READY …`); loop until
-   the report says `clean: true`.
+   their gates re-run (`pass pr … AI_REVIEW --head <new> --ci success`, `reviewer`, `pass pr … READY …`); the fixes
+   moved the stack top, so dispatch `deployer` and re-enter `pass story S INTEGRATION_REVIEW --build <new> --head <new>`;
+   a new review round (`STORY-S-review-r2`) on that head; loop until the report says `clean: true`.
 3. `turnstile pass story S ENV_TESTING --report reports/STORY-S-review.md --head <stack top> --rounds <r>` (opens the
-   lead's `story_done` entry).
-4. dispatch `tester` (`ENV-S`, mode `full`). For every fail first `turnstile bug add --story S --title … --source
-   "tester <date>" --figma <node>`, then record the run: `turnstile pass story S ENV_TESTING --report reports/ENV-S.md
-   --cases-pass <n> --cases-fail <n> --figma-parity pass|fail --full` (a run with fails needs that many new bugs).
-   Fixes via `implementer`; `turnstile bug set bNN --state testing` after the deploy; `tester` in mode `rerun` for the
-   failed cases (recorded without `--full`); `bug set bNN --state done`; then one full run.
+   lead's `story_done` entry; refused when the review head is not the deploy head).
+4. dispatch `tester` (`ENV-S`, mode `full`). For every failed case first `turnstile bug add --story S --case <id> --title …
+   --source "tester <date>" --figma <node>` (one bug per story + case; a case that already has a bug needs none: the run
+   record appends to it and reopens a done one), then record the run: `turnstile pass story S ENV_TESTING --report
+   reports/ENV-S.md --cases-pass <n> --cases-fail <n> --failed-cases <id,…> --figma-parity pass|fail --build <build>
+   --head <stack top> --full` (the head must be `deploy.head`). Fixes via `implementer` → gates → `stack-step` →
+   `deployer` → `pass story S INTEGRATION_REVIEW --build --head` (records the redeploy) → review round → `pass story S
+   ENV_TESTING --report … --head …`; `turnstile bug set bNN --state testing` after the deploy; `tester` in mode `rerun`
+   (`ENV-S-r2`) for the failed cases (recorded without `--full`); `bug set bNN --state done`; then one full run.
 5. `turnstile pass story S DONE --approved <story_done ah-id>` — needs the last run `--full` with 0 fails, parity pass,
-   every bug of the story `done`, every PR ≥ READY.
+   `env_test.head == deploy.head ==` the current stack top, every bug of the story `done`, every PR ≥ READY.
 6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story and the sends of this
    story's units wait for the lead's words (`start_story` / `send` entries — there is no `--reason` way to start a story,
    and a parallel start needs `parallel_with` in the approved plan; then `pass pr … ON_HUMAN_REVIEW --head …

@@ -20,7 +20,8 @@ def _commit(delivery: pathlib.Path, st, summary: str, io) -> int:
     _side_effects(delivery, st, [summary], io, False)
     print("OK " + summary); return 0
 
-def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None, figma: Optional[str] = None, note: str = "", io=None) -> int:
+def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None, figma: Optional[str] = None, note: str = "",
+        case: Optional[str] = None, io=None) -> int:
     from .pass_cmd import IO, _now
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -32,10 +33,16 @@ def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None,
                 raise TurnstileError("--title is required")
             _check_pr(pr)
             bugs = st.data.setdefault("bugs", [])
-            bug = {"id": next_id(bugs), "story": story, "title": title.strip(), "source": source, "pr": pr, "figma": figma,
-                   "state": "todo", "note": note or "", "created_at": _now()}
+            if case:  # 2026-10-14 finding 5: one bug per story + case; a persisting fail reopens it instead of duplicating
+                dup = next((b for b in bugs if b.get("story") == story and b.get("case") == case), None)
+                if dup:
+                    raise TurnstileError("bug %s already covers case %s of %s (state %s): reopen it with 'turnstile bug set %s --state todo', or record the "
+                                         "run and it is reopened automatically" % (dup["id"], case, story, dup.get("state"), dup["id"]))
+            now = _now()
+            bug = {"id": next_id(bugs), "story": story, "case": case, "title": title.strip(), "source": source, "pr": pr, "figma": figma,
+                   "state": "todo", "note": note or "", "runs": [], "created_at": now, "updated_at": now}
             bugs.append(bug)
-            return _commit(delivery, st, "bug %s added (%s): %s" % (bug["id"], story, bug["title"]), io)
+            return _commit(delivery, st, "bug %s added (%s%s): %s" % (bug["id"], story, ", case " + case if case else "", bug["title"]), io)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 
@@ -60,6 +67,9 @@ def set_(delivery, bug_id: str, state: Optional[str] = None, pr: Optional[str] =
                 bug["pr"] = pr; changes.append("pr %s" % pr)
             if note is not None:
                 bug["note"] = note; changes.append("note")
+            if changes:
+                from .pass_cmd import _now
+                bug["updated_at"] = _now()
             return _commit(delivery, st, "bug %s %s" % (bug_id, ", ".join(changes) or "unchanged"), io)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2

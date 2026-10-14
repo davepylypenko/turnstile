@@ -29,10 +29,10 @@ loop rounds · draft replies (per `references/slack.md`) for the lead to post ·
 answer · recommendation + cost if wrong · not verified.
 
 ## Env test
-`reports/ENV-<S>.md` — environment (variant, desk, builds, routing proof: `x-server-name`, static host) · mode (`full` /
+`reports/ENV-<S>.md` — environment (variant, desk, build number and stack-top head tested, routing proof: `x-server-name`, static host) · mode (`full` /
 `rerun` + cases) · case table (case · verdict · evidence path · note) · parity table (screen/state · Figma node · max
-deviation px / colour · verdict) · fails as `turnstile bug add --story <S> --title "…" --source "tester <date>" --figma
-<node>` lines · `not_testable_here` reasons · totals (pass / fail / not_testable_here).
+deviation px / colour · verdict) · fails as `turnstile bug add --story <S> --case <case id> --title "…" --source "tester <date>"
+--figma <node>` lines · `not_testable_here` reasons · totals (pass / fail / not_testable_here) · the failed case ids on one line.
 
 ## Deploy
 `reports/DEPLOY-<slug>-<date>.md` — table repo → ref → workflow run → build / image tag → health check result ·

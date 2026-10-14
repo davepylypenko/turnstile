@@ -16,6 +16,7 @@ def build_parser():
                      ("--reason", {}), ("--merged-sha", {}), ("--report", {}), ("--build", {}),
                      ("--cases-pass", {"type": int}), ("--cases-fail", {"type": int}),
                      ("--figma-parity", {"choices": ["pass", "fail"]}),
+                     ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
                      ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
@@ -30,6 +31,7 @@ def build_parser():
     bg = sub.add_parser("bug", help="record or update a bug found by the tester or the lead"); bsub = bg.add_subparsers(dest="bug_cmd")
     ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
+    ba.add_argument("--case", help="test-case id the bug covers (one bug per story + case; a persisting fail reopens it)")
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
     br = sub.add_parser("brief", help="render an agent brief from its template (the dispatch helper)"); br.add_argument("agent"); br.add_argument("name")
     br.add_argument("--var", action="append", default=[], dest="vars"); br.add_argument("--force", action="store_true"); br.add_argument("--no-commit", action="store_true")
@@ -65,7 +67,7 @@ def main(argv=None):
         if a.cmd == "bug":
             from . import bug_cmd
             if a.bug_cmd == "add":
-                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note)
+                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case)
             if a.bug_cmd == "set":
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
             parser.parse_args(["bug", "--help"]); return 2

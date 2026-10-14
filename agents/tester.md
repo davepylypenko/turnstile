@@ -28,7 +28,7 @@ Code changes, pushes, Slack, Jira, PR comments, using the user's visible browser
 
 ## Report
 
-`reports/ENV-<story>.md` per `references/reports.md` § Env test: header (environment, builds, routing proof, mode), case table (case → verdict → evidence path), parity table (screen → node → max deviation → verdict), fails as `turnstile bug add` lines, `not_testable_here` reasons, totals. Recorded with `turnstile pass story <S> ENV_TESTING --report reports/ENV-<S>.md --cases-pass <n> --cases-fail <n> --figma-parity pass|fail [--full]`.
+`reports/ENV-<story>.md` per `references/reports.md` § Env test: header (environment, builds, routing proof, mode), case table (case → verdict → evidence path), parity table (screen → node → max deviation → verdict), fails as `turnstile bug add` lines, `not_testable_here` reasons, totals. Recorded with `turnstile pass story <S> ENV_TESTING --report reports/ENV-<S>.md --cases-pass <n> --cases-fail <n> [--failed-cases TP-1,TP-3] --figma-parity pass|fail --build <build> --head <stack-top sha> [--full]` — so the header names the build and the stack-top head you tested, and every fail names its case id.
 
 ## Common rules
 

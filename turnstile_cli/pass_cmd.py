@@ -30,6 +30,7 @@ class Options:
     cases_pass: Optional[int] = None
     cases_fail: Optional[int] = None
     figma_parity: Optional[str] = None
+    failed_cases: Optional[str] = None
     companions: Optional[str] = None
     offline: bool = False
     full: bool = False
@@ -169,21 +170,49 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
     return _facts_mismatches(pr, target, facts, repo_cfg, lead_login)
 
+def _recording_run(o: Options) -> bool:
+    return any(x is not None for x in (o.figma_parity, o.cases_pass, o.cases_fail, o.failed_cases))
+
+def _check_head(o: Options) -> Optional[str]:
+    if o.head and not rules.valid_head(o.head):
+        raise TurnstileError("--head must be 8–40 hex characters (got %r)" % o.head)
+    return o.head.lower() if o.head else None
+
 def _apply_story_evidence(story: dict, o: Options) -> None:
+    """One of three records per call: an env run (case counts + the build/head it tested), an integration-review round
+    (--report --head --rounds), or a deploy (--build --head, the stack top on the story's slot)."""
     ev = story.setdefault("evidence", {})
-    if o.build:
-        ev["deploy"] = {"build": o.build, "head": o.head.lower() if o.head else None, "at": _now()}
-    env_flags = (o.figma_parity, o.cases_pass, o.cases_fail)
-    if any(x is not None for x in env_flags):
+    head = _check_head(o)
+    if _recording_run(o):
         if o.cases_pass is None or o.cases_fail is None:
             raise TurnstileError("--cases-pass and --cases-fail are both required when recording env_test (explicit counts from the report)")
         if o.figma_parity is None:
             raise TurnstileError("--figma-parity is required when recording env_test")
-        run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "figma_parity": o.figma_parity, "full": bool(o.full), "at": _now()}
+        if not o.build or not head:
+            raise TurnstileError("--build and --head are required when recording a test run (the build and stack-top head the tester ran against)")
+        if o.cases_fail > 0 and not o.failed_cases:
+            raise TurnstileError("--failed-cases <id,id,…> is required when --cases-fail > 0 (bugs are keyed by story + case id)")
+        failed = [x.strip() for x in (o.failed_cases or "").split(",") if x.strip()]
+        run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail}, "failed_cases": failed, "figma_parity": o.figma_parity,
+               "full": bool(o.full), "build": o.build, "head": head, "at": _now()}
         ev.setdefault("env_runs", []).append(run)
         ev["env_test"] = run
     elif o.report:
-        ev["integration_review"] = {"report": o.report, "head": o.head.lower() if o.head else None, "rounds": o.rounds or 1, "clean": not o.not_clean}
+        ev["integration_review"] = {"report": o.report, "head": head, "rounds": o.rounds or 1, "clean": not o.not_clean}
+    elif o.build or head:
+        if not o.build or not head:
+            raise TurnstileError("--build and --head go together when recording a deploy (the build number and the stack-top sha on the slot)")
+        ev["deploy"] = {"build": o.build, "head": head, "at": _now()}
+
+def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> None:
+    """2026-10-14 finding 5: a failing case whose bug exists (keyed story + case) gets the run appended; a done bug is reopened."""
+    for case in run.get("failed_cases") or []:
+        for b in data.get("bugs") or []:
+            if b.get("story") == sid and b.get("case") == case:
+                b.setdefault("runs", []).append({"build": run.get("build"), "head": run.get("head"), "report": run.get("report"), "at": run.get("at")})
+                if b.get("state") == "done":
+                    b["state"] = "todo"; b["updated_at"] = _now()
+                    extra.append("bug %s reopened (case %s failed again on build %s, head %s)" % (b.get("id"), case, run.get("build"), run.get("head")))
 
 def _recompute_next_actions(data: dict) -> None:
     for pid, pr in data["prs"].items():
@@ -333,16 +362,20 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 story = st_mod.story(st, ident)
                 trial = copy.deepcopy(story); trial["_id"] = ident
                 _apply_story_evidence(trial, o)
-                if target == "ENV_TESTING" and story.get("state") == "ENV_TESTING" and o.cases_fail is None:
-                    raise TurnstileError("--report, --cases-pass, --cases-fail and --figma-parity to record a test run (ENV_TESTING re-entry records a run)")
-                if o.cases_fail is not None:  # the bugs that existed when the run was recorded: the next failing run counts only newer ones
-                    trial["evidence"]["env_runs"][-1]["bug_ids"] = sorted(b.get("id") for b in data.get("bugs") or [] if b.get("story") == ident)
+                recording = _recording_run(o)
+                if target == "ENV_TESTING" and story.get("state") == "ENV_TESTING" and not recording:
+                    raise TurnstileError("--report, --cases-pass, --cases-fail, --failed-cases, --figma-parity, --build and --head to record a test run "
+                                         "(ENV_TESTING re-entry records a run)")
+                if target == "INTEGRATION_REVIEW" and story.get("state") == "INTEGRATION_REVIEW" and not (o.build and o.head):
+                    raise TurnstileError("--build and --head to record the redeploy (INTEGRATION_REVIEW re-entry records the new stack top on the slot)")
+                if recording:
+                    _reopen_bugs_for_run(data, ident, trial["evidence"]["env_runs"][-1], extra)
                 plan_missing = None
                 if target == "IN_PROGRESS" and story.get("state") == "PLANNED":
                     plan_path = delivery / "plan.md"
                     plan_missing = rules.plan_approval_missing(data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
-                missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason,
-                                            bugs=data.get("bugs"), awaiting=awaiting, approved=o.approved, plan_missing=plan_missing)
+                missing = rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason, bugs=data.get("bugs"), awaiting=awaiting,
+                                            approved=o.approved, plan_missing=plan_missing, recording_run=recording)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = story["state"]
