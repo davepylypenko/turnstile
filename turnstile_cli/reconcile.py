@@ -68,6 +68,32 @@ def _threads_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: gi
     if miss:
         out.append(Proposal(pid, "threads", "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss), None))
 
+def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: github.PrFacts, repo: dict) -> None:
+    """REWORK, lead rule 2026-10-14: once every reviewer thread has its reply and the head is clean (Copilot reviewed it with 0 open
+    threads, else the gate check is green), propose the GitHub re-request of the thread authors until GitHub shows it for the head;
+    a push-only rework is named for the lead (nobody is pinged)."""
+    epic = data.get("epic") or {}
+    roles, awaiting, org = epic.get("roles"), data.get("awaiting_human"), epic.get("github_org") or ""
+    if threads.replies_missing(dict(pr, _id=pid), pid, f.threads, roles, awaiting, org):
+        return  # the threads proposal says what is missing first
+    authors = threads.round_authors(pr, f.threads, roles, awaiting)
+    if not authors:
+        out.append(Proposal(pid, "push_only", "push-only rework (no reviewer comment since the PR last went to humans): nobody is re-requested; "
+                            "the return to ON_HUMAN_REVIEW records reviewer_notified false and the board shows 'reviewers not notified' — the lead decides", None))
+        return
+    why, _ = threads.clean_on_head(f, repo)
+    if why:
+        out.append(Proposal(pid, "rerequest", "every reviewer thread has its reply; re-request %s once %s on head %s (now: %s)"
+                            % (", ".join(authors), threads.signal(repo), f.head[:12], why), None))
+        return
+    if threads.request_problems(pr, f, roles, awaiting, repo, authors):
+        out.append(Proposal(pid, "rerequest", "every reviewer thread has its reply and %s on head %s: re-request review from the thread authors %s "
+                            "(no lead approval; lead rule 2026-10-14)" % (threads.signal(repo), f.head[:12], ", ".join(authors)),
+                            threads.request_route(org, pid, authors)))
+        return
+    out.append(Proposal(pid, "rerequest_done", "review re-requested on GitHub from %s after the replies on head %s: pass ON_HUMAN_REVIEW --head %s "
+                        "--ci success --gate … --rerequested %s" % (", ".join(authors), f.head[:12], f.head[:12], ",".join(authors)), None))
+
 def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
     out: List[Proposal] = []
     for pid, pr in data["prs"].items():
@@ -98,11 +124,13 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             elif st == "REWORK":
                 out.append(Proposal(pid, "head_changed", msg + "; record it with the ON_HUMAN_REVIEW pass (--head %s) once gate/copilot are green" % f.head[:12], None))
                 _threads_proposal(out, data, pid, pr, f)
+                _rerequest_proposal(out, data, pid, dict(pr, head=f.head), f, repo)
             else:
                 out.append(Proposal(pid, "head_changed", msg + " (DEV: pushes are expected; pass AI_REVIEW with --head when CI is green)", None))
             continue
         if st == "REWORK":
             _threads_proposal(out, data, pid, pr, f)
+            _rerequest_proposal(out, data, pid, pr, f, repo)
         waiting = _threads_waiting_for_us(data, f)
         if st in ("ON_HUMAN_REVIEW", "APPROVED") and waiting > 0:
             reason = "%d human thread(s)" % waiting

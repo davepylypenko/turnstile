@@ -32,6 +32,9 @@ class Board(unittest.TestCase):
         tpl = board.TEMPLATE.read_text()
         for s in ("need the lead", "a.thread", "self-resolved threads"):
             self.assertIn(s, tpl, s)
+        # lead rule 2026-10-14 (re-request): a push-only return to humans pings nobody and says so; a thread-driven one names the re-request
+        for s in ("h.reviewer_notified === false", "reviewers not notified (push-only rework: the lead decides)", "'re-requested ' + ", "re-request the thread authors"):
+            self.assertIn(s, tpl, s)
         for s in ("Jira mapping", "reviewer not notified", "role=\"tablist\"", "aria-selected", "PLANNED:'var(--planned)'", "todo:'var(--todo)'",
                   "(e.env_test.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563"):
             self.assertIn(s, tpl, s)

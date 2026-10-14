@@ -18,7 +18,8 @@ def build_parser():
                      ("--figma-parity", {"choices": ["pass", "fail", "not_testable_here"]}),
                      ("--cases-not-testable", {"type": int, "help": "cases with verdict not_testable_here in the recorded run (default 0)"}),
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
-                     ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"})]:
+                     ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"}),
+                     ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
     ps.add_argument("--full", action="store_true", help="the recorded env run covered every case of the story (DONE needs a full clean run)")

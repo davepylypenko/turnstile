@@ -172,12 +172,16 @@ class ReworkBackToHumans(unittest.TestCase):
         self.io.facts["jsfiller#1"]["threads"] = self.io.facts["jsfiller#1"]["threads"][:1] + self.io.facts["jsfiller#1"]["threads"][2:]
     def back(self, **kw):
         return run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", gate="pdf-review:pass", **kw), self.io)
+    def rerequested(self, at):
+        self.io.facts["jsfiller#1"].update(review_requests=["isachivka"], review_requested_at={"isachivka": at})
     def test_self_resolved_replies_return_the_pr_without_slack_or_approval(self):
         rc, out = self.back(); self.assertEqual(rc, 2); self.assertIn("PRRT_a", out)
         self.t.go(self_ids="PRRT_a")
         rc, out = self.back(); self.assertEqual(rc, 2); self.assertIn("agentlogin", out)
         self.io.facts["jsfiller#1"]["threads"][0]["comments"].append(cm("agentlogin", "2026-10-13T13:00:00Z", 102))
-        rc, out = self.back(); self.assertEqual(rc, 0, out)
+        rc, out = self.back(); self.assertEqual(rc, 2); self.assertIn("requested_reviewers", out)  # 2026-10-14: then the thread author is re-requested
+        self.rerequested("2026-10-13T13:05:00Z")
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 0, out)
         h = self.t.data()["prs"]["jsfiller#1"]["evidence"]["human"]
         self.assertEqual(h["sent_head"], H2); self.assertEqual(h["sent_at"], "2026-10-13T10:02Z"); self.assertTrue(h["returned_at"])
     def test_slack_and_approved_flags_are_refused_on_the_way_back(self):
@@ -191,7 +195,8 @@ class ReworkBackToHumans(unittest.TestCase):
             self.assertEqual(pass_cmd.approve(self.d, ah, self.io), 0)
         approved_at = next(a for a in self.t.replies() if a["id"] == ah)["approved_at"]
         self.io.facts["jsfiller#1"]["threads"][0]["comments"].append(cm("agentlogin", approved_at.replace("Z", ":30Z"), 103))
-        rc, out = self.back(); self.assertEqual(rc, 0, out)
+        self.rerequested("2099-01-01T00:00:00Z")
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 0, out)
         self.assertTrue(next(a for a in self.t.replies() if a["id"] == ah)["consumed_at"])
     def test_rework_opens_no_blanket_reply_entry(self):
         data = self.t.data(); data["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; data["prs"]["jsfiller#1"]["head"] = H

@@ -157,6 +157,150 @@ def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str,
                 "turnstile threads %s before replying — a pushback may need the lead." % (tid, lr, rec.get("class"), rec.get("last_reviewer_at"), pid))
     return None
 
+# ---- re-request (lead rule 2026-10-14): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look
+# again". Once every human thread in scope has our reply and Copilot reviewed the current head with 0 open threads (repos without
+# Copilot: the gate check green on the head), the agents re-request review on GitHub from the reviewers who commented on the threads
+# in this review round — no lead approval; Slack stays lead-approved. A rework without such comments (push-only) pings nobody.
+
+def round_since(pr: dict, awaiting: Optional[List[dict]]) -> Optional[datetime.datetime]:
+    """When the PR last went to humans: the send, or its last return from REWORK (`evidence.human.returned_at`)."""
+    h = (pr.get("evidence") or {}).get("human") or {}
+    times = [x for x in (send_since(pr, awaiting), github.ts(h.get("returned_at"))) if x]
+    return max(times) if times else None
+
+def _round_comments(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]]):
+    """(thread, reviewer comment) for every reviewer comment of this review round on a human thread in scope."""
+    agent, lead = logins(roles)
+    ours = {agent, lead} - {""}
+    since, start = send_since(pr, awaiting), round_since(pr, awaiting)
+    for t in facts_threads or []:
+        if in_scope(t, since, ours):
+            for c in reviewer_comments(t, ours):
+                if start is None or _ts(c.get("at")) >= start:
+                    yield t, c
+
+def round_authors(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]]) -> List[str]:
+    """The thread authors to re-request: every reviewer who commented on a human thread in scope during this review round. Empty for
+    a push-only rework."""
+    out: Dict[str, str] = {}
+    for _, c in _round_comments(pr, facts_threads, roles, awaiting):
+        out.setdefault(c["login"].lower(), c["login"])
+    return sorted(out.values(), key=str.lower)
+
+def _replied_at(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]], login: str) -> Optional[datetime.datetime]:
+    """Our last reply on the threads this reviewer commented on in this round."""
+    agent, lead = logins(roles)
+    ours = {agent, lead} - {""}
+    times = [_ts(c.get("at")) for t, rc in _round_comments(pr, facts_threads, roles, awaiting) if rc["login"].lower() == login.lower()
+             for c in t.get("comments") or [] if c.get("login") in ours]
+    return max(times) if times else None
+
+def request_route(org: str, pid: str, people: List[str]) -> str:
+    repo, n = pid.split("#", 1)
+    return "gh api -X POST repos/%s/%s/pulls/%s/requested_reviewers %s" % (org or "<org>", repo, n, " ".join("-f 'reviewers[]=%s'" % x for x in people))
+
+def gate_context(repo_cfg: dict) -> Optional[str]:
+    return repo_cfg["gate_check"] if "gate_check" in repo_cfg else repo_cfg.get("gate")
+
+def signal(repo_cfg: dict) -> str:
+    return "Copilot reviewed it with 0 open threads" if repo_cfg.get("copilot") else "the gate check %s is green" % (gate_context(repo_cfg) or "<none>")
+
+def clean_on_head(f, repo_cfg: dict) -> Tuple[Optional[str], Optional[datetime.datetime]]:
+    """(why not, when it became clean): Copilot's latest review is on the GitHub head and no Copilot thread is open (repos with
+    Copilot), else the repo gate's check context is green on the head. A repo with neither cannot be verified (the lead re-requests)."""
+    if repo_cfg.get("copilot"):
+        if not rules.same_head(f.copilot_review_head, f.head):
+            return ("Copilot has not reviewed the current head %s (its latest review is on %s): re-request Copilot and close its threads first"
+                    % (f.head[:12], (f.copilot_review_head or "none")[:12])), None
+        if f.copilot_threads_open:
+            return "%d open Copilot thread(s) on head %s: fix or justify and resolve them first" % (f.copilot_threads_open, f.head[:12]), None
+        return None, github.ts(f.copilot_review_at)
+    gc = gate_context(repo_cfg)
+    if not gc:
+        return "the repo has no Copilot and no gate check on GitHub, so a clean head cannot be verified (the lead re-requests)", None
+    if f.checks.get(gc) != "success":
+        return "the gate check %s is %s on head %s" % (gc, f.checks.get(gc) or "absent", f.head[:12]), None
+    return None, github.ts(f.check_times.get(gc))
+
+def request_problems(pr: dict, f, roles: Optional[dict], awaiting: Optional[List[dict]], repo_cfg: dict, people: List[str]) -> List[str]:
+    """What GitHub does not show for each re-requested reviewer: a review request newer than our last reply on their threads and
+    than the clean signal on the head, still pending in reviewRequests or already answered by a review of the head."""
+    out: List[str] = []
+    why, clean_at = clean_on_head(f, repo_cfg)
+    if why:
+        out.append(why)
+    pending = {x.lower() for x in f.review_requests or []}
+    req_at = {k.lower(): v for k, v in (f.review_requested_at or {}).items()}
+    reviewed = {k.lower(): v for k, v in (f.review_heads or {}).items()}
+    for login in people:
+        at = github.ts(req_at.get(login.lower()))
+        if at is None:
+            out.append("no review request for %s on GitHub" % login); continue
+        replied = _replied_at(pr, f.threads, roles, awaiting, login)
+        late = [(x, what) for x, what in ((replied, "our last reply on their threads"),
+                                          (clean_at, "Copilot's review of head %s" % f.head[:12] if repo_cfg.get("copilot") else
+                                           "the gate check %s on head %s" % (gate_context(repo_cfg), f.head[:12]))) if x and at < x]
+        if late:
+            x, what = max(late)
+            out.append("the review request for %s (%s) predates %s (%s)" % (login, req_at.get(login.lower()), what, x.strftime("%Y-%m-%dT%H:%M:%SZ")))
+        elif login.lower() not in pending and not rules.same_head(reviewed.get(login.lower()), f.head):
+            out.append("%s is not in GitHub reviewRequests and has not reviewed head %s" % (login, f.head[:12]))
+    return out
+
+def rerequest_missing(pr: dict, pid: str, f, roles: Optional[dict], awaiting: Optional[List[dict]], org: str, repo_cfg: dict) -> List[str]:
+    """REWORK → ON_HUMAN_REVIEW: a thread-driven rework needs `evidence.human.rerequested` for the head, naming exactly the thread
+    authors, and GitHub showing those requests; a push-only rework takes no --rerequested (reviewer_notified: false)."""
+    authors = round_authors(pr, f.threads, roles, awaiting)
+    h = (pr.get("evidence") or {}).get("human") or {}
+    rr = h.get("rerequested") if rules.same_head((h.get("rerequested") or {}).get("head"), pr.get("head")) else None
+    if not authors:
+        if rr and rr.get("logins"):
+            return ["MISSING thread authors to re-request: push-only rework (no reviewer comment on the PR's threads since it last went to "
+                    "humans), so nobody is pinged — drop --rerequested %s; the pass records reviewer_notified false and the lead decides"
+                    % ",".join(rr["logins"])]
+        return []
+    hint = ("once every thread has its reply and %s on head %s, re-request review from the thread authors: %s — then pass again with "
+            "--rerequested %s" % (signal(repo_cfg), (pr.get("head") or "")[:12], request_route(org, pid, authors), ",".join(authors)))
+    if rr is None:
+        return ["MISSING evidence.human.rerequested for head %s (thread-driven rework, lead rule 2026-10-14): %s" % (pr.get("head"), hint)]
+    if {x.lower() for x in rr.get("logins") or []} != {a.lower() for a in authors}:
+        return ["MISSING --rerequested to be exactly the thread authors %s (has %s): %s" % (", ".join(authors), ", ".join(rr.get("logins") or []), hint)]
+    return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, roles, awaiting, repo_cfg, authors)]
+
+def rerequest_refusal(data: dict, org: str, repo: str, number: str, people: List[str], live_facts: Callable[[str], object]) -> Optional[str]:
+    """The Bash guard's verdict on a `requested_reviewers` POST that names humans: None to allow, else the refusal. State first (an
+    epic PR in REWORK), then GitHub (every thread answered, a review round with thread authors, exactly those logins, a clean head)."""
+    epic = data.get("epic") or {}
+    pid = "%s#%s" % (repo, number)
+    pr = (data.get("prs") or {}).get(pid)
+    if (org or "").lower() != (epic.get("github_org") or "").lower() or pr is None:
+        return ("blocked by rule human-reviewer-request. %s/%s#%s is not a PR of this epic: human reviewers are requested by the lead (only "
+                "the re-request of a REWORK PR's thread authors passes here)." % (org, repo, number))
+    if pr.get("state") != "REWORK":
+        return ("blocked by rule rerequest-not-rework. %s is %s: the agents re-request the thread authors only for a REWORK PR, after the "
+                "replies; any other review request is the lead's." % (pid, pr.get("state")))
+    try:
+        f = live_facts(pid)
+    except Exception as e:
+        return "blocked by rule rerequest-unverified. Cannot read %s on GitHub (%s); failing closed." % (pid, e)
+    roles, awaiting = epic.get("roles"), data.get("awaiting_human")
+    miss = replies_missing(dict(pr, _id=pid), pid, f.threads, roles, awaiting, org)
+    if miss:
+        return ("blocked by rule rerequest-replies. Every reviewer thread needs its reply before the reviewers are pinged: %s"
+                % "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss))
+    authors = round_authors(pr, f.threads, roles, awaiting)
+    if not authors:
+        return ("blocked by rule rerequest-push-only. No reviewer commented on %s's threads since it last went to humans: a push-only rework "
+                "pings nobody (the return records reviewer_notified false); the lead decides." % pid)
+    if sorted({p.lower() for p in people}) != sorted({a.lower() for a in authors}):
+        return ("blocked by rule rerequest-not-authors. Re-request exactly the thread authors of this round, %s (asked: %s): %s"
+                % (", ".join(authors), ", ".join(people), request_route(org, pid, authors)))
+    why, _ = clean_on_head(f, (epic.get("repos") or {}).get(repo) or {})
+    if why:
+        rule = "rerequest-copilot" if ((epic.get("repos") or {}).get(repo) or {}).get("copilot") else "rerequest-gate"
+        return "blocked by rule %s. %s; the reviewers are re-requested on a clean head only." % (rule, why)
+    return None
+
 def _ids(text: Optional[str]) -> List[str]:
     return [x.strip() for x in (text or "").split(",") if x.strip()]
 

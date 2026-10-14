@@ -226,10 +226,13 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
     if s == "READY":
         return "wait for the lead's word to send" + (" (blocked by %s)" % pr["blocked_by"] if pr.get("blocked_by") else "")
     if s == "ON_HUMAN_REVIEW":
+        if ((pr.get("evidence") or {}).get("human") or {}).get("reviewer_notified") is False:
+            return "wait for human approval; reviewers not notified (push-only rework): the lead decides whether to ping them"
         return "wait for human approval; reconcile for threads/pushes"
     if s == "REWORK":
         return ("fix and push; classify the reviewer threads (turnstile threads); reply to self_resolved ones at once; the lead approves each "
-                "needs_lead reply; gate/copilot on the new head; then pass ON_HUMAN_REVIEW")
+                "needs_lead reply; gate/copilot on the new head; re-request the thread authors on GitHub (turnstile status prints it); then "
+                "pass ON_HUMAN_REVIEW --rerequested <logins> (push-only rework: without it)")
     if s == "APPROVED":
         return "wait for the lead to merge"
     return "done"

@@ -1,4 +1,4 @@
-import os, pathlib, posixpath, re, sys
+import os, pathlib, posixpath, re, shlex, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, block, agent_role, plugin_root, load_state
 
@@ -13,7 +13,7 @@ RULES = [
     ("merge", GH + PR + r"merge\b"),
     ("ready", GH + PR + r"ready\b"),
     ("add-reviewer", r"--add-reviewer\b"),
-    ("graphql-merge-or-ready", r"\b(?:markPullRequestReadyForReview|mergePullRequest|requestReviews|ready_for_review)\b"),
+    ("graphql-merge-or-ready", r"\b(?:markPullRequestReadyForReview|mergePullRequest|requestReviews\w*|ready_for_review)\b"),
     ("force-push", GIT + r"push\b[^\n;&|]*(\s[\"']?--force(-with-lease)?\b|\s-[a-z]*f[a-z]*\b|\s\+\S)"),
     ("rebase", GIT + r"rebase\b|" + GIT + r"pull\b[^\n;&|]*\s(?:--rebase\b|-r\b)|pull\.rebase\s+true\b"),
     ("unsigned", r"--no-gpg-sign\b|commit\.gpgsign\s*=\s*false"),
@@ -268,12 +268,48 @@ def _file_contents(flat: str, cwd: str):
         except OSError:
             continue
 
+SHELL_OPS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;", "\n"}
+
+def _pr_create_reviewer(joined: str, stripped: str) -> None:
+    """`gh pr create --reviewer|-r <login>` requests a human review (2026-10-14 review): the lead's, like --add-reviewer. Parsed with
+    shell quoting so a title or body that mentions `-r` passes; an unparsable command falls back to the quote-stripped text."""
+    try:
+        lex = shlex.shlex(joined, posix=True, punctuation_chars=True); lex.whitespace_split = True
+        words = list(lex)
+    except ValueError:
+        if re.search(GH + PR + r"create\b[^\n;&|]*\s(?:--reviewer\b|-[dfwe]*r)", stripped):
+            block("blocked by rule pr-create-reviewer. `gh pr create --reviewer` requests a human review: the lead requests reviewers.")
+        return
+    i = 0
+    while i < len(words):
+        if words[i].rsplit("/", 1)[-1] != "gh":
+            i += 1; continue
+        j = i + 1
+        while j < len(words) and words[j] in ("-R", "--repo"):
+            j += 2
+        while j < len(words) and words[j].startswith(("-R=", "--repo=")):
+            j += 1
+        if words[j:j + 1] == ["pr"]:
+            k = j + 1
+            while k < len(words) and (words[k] in ("-R", "--repo") or words[k].startswith(("-R=", "--repo="))):
+                k += 1 if "=" in words[k] else 2
+            if words[k:k + 1] == ["create"]:
+                for w in words[k + 1:]:
+                    if w in SHELL_OPS:
+                        break
+                    if w == "--reviewer" or w.startswith("--reviewer=") or re.match(r"^-[dfwe]*r", w):
+                        block("blocked by rule pr-create-reviewer. `gh pr create --reviewer` requests a human review: the lead requests reviewers "
+                              "(the agents only re-request a REWORK PR's thread authors through requested_reviewers).")
+        i = j
+
 def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
     for flat in (joined, stripped, re.sub(r"\s+", " ", stripped)):
         _check(flat, role)
     _review_writes(stripped, cwd)
+    _reviewer_requests(re.sub(r"[ \t]+", " ", stripped), cwd)
+    _pr_create_reviewer(joined, stripped)
     if WRITE_CTX.search(stripped):
         for name, text in _file_contents(stripped, cwd):
             for rule, rx in CONTENT_RULES:
@@ -355,11 +391,6 @@ def _check(flat: str, role: str = "") -> None:
         for name, rx in CONTENT_RULES:
             if re.search(rx, flat, re.I):
                 block("blocked by rule %s. Commits carry no trailer and PR bodies no generated-with footer." % name)
-    if "requested_reviewers" in flat:
-        values = re.findall(r"reviewers\[\]=[\"']?([^\"'\s&]+)", flat)
-        writing = bool(values) or re.search(WRITE_FLAGS, flat) is not None
-        if writing and ("--input" in flat or not values or any(v != COPILOT for v in values)):
-            block("blocked by rule human-reviewer-request. The lead requests human reviewers (only %s may be requested here)." % COPILOT)
 
 # Lead rule 2026-10-14: PR conversation writes. Issue comments, review submissions and review comments (and their edits) are refused
 # for every caller — the repo gate's own marker comments excepted. A reply to a reviewer thread goes only through the REST replies
@@ -492,6 +523,52 @@ def _review_writes(flat: str, cwd: str) -> None:
                           "(in_reply_to included); " + REPLY_HINT + ".")
                 if method == "DELETE" or not _gate_comment(flat, cwd):
                     _issue_comment_refused()
+
+# Lead rule 2026-10-14 (re-request): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look again".
+# A `requested_reviewers` write that names humans passes only as `gh api` with literal `-f|-F reviewers[]=<login>` fields on a literal
+# route of a REWORK PR of the epic, when every classified thread has its reply, Copilot reviewed the GitHub head with 0 open threads
+# (repos without Copilot: the gate check is green on it) and the logins are exactly the reviewers who commented on the threads in this
+# round (threads.rerequest_refusal). Team reviewers, JSON bodies, computed logins or routes and every other way of requesting a human
+# (`--add-reviewer`, `gh pr create --reviewer`, GraphQL `requestReviews*`) stay the lead's. A request for the Copilot bot alone passes.
+REQ_ROUTE = re.compile(r"(?:^|[\s/=])/?repos/([^/\s]+)/([^/\s]+)/pulls/([^/\s]+)/requested_reviewers(?=[\s?#]|$)")
+REQ_VALUES = re.compile(r"(?:^|\s)(?:-[fF]|--field|--raw-field)(?:\s+|=)(team_)?reviewers\[\]=(\S*)")
+HUMAN_REQUEST = ("blocked by rule human-reviewer-request. The lead requests human reviewers; the agents may only request the Copilot bot (%s) and "
+                 "re-request the thread authors of a REWORK PR as `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f "
+                 "'reviewers[]=<login>'` (literal route and logins, no team, no JSON body)." % COPILOT)
+
+def _rerequest_verdict(org: str, repo: str, number: str, people, cwd: str):
+    try:
+        data = load_state(cwd)
+    except Exception as e:
+        return "blocked by rule rerequest-unverified. A re-request is checked against the delivery state, which cannot be read (%s); failing closed." % e
+    github, threads = _turnstile_modules()
+    epic_org = (data.get("epic") or {}).get("github_org") or ""
+    return threads.rerequest_refusal(data, org, repo, number, people, lambda pid: github.fetch(pid, epic_org))
+
+def _reviewer_requests(flat: str, cwd: str) -> None:
+    if "requested_reviewers" not in flat:
+        return
+    for seg in _segments(flat):
+        if "requested_reviewers" not in seg:
+            continue
+        values = REQ_VALUES.findall(seg)
+        loose = re.findall(r"reviewers\[\]=", seg)
+        if not values and not loose and _method(seg) == "GET" and not re.search(WRITE_FLAGS, seg):
+            continue  # a read of the requested reviewers
+        if "--input" in seg or not values or len(loose) != len(values) or any(team for team, _ in values) \
+                or any(not v or COMPUTED.search(v) or not re.match(r"^[\w.\[\]-]+$", v) for _, v in values):
+            block(HUMAN_REQUEST)
+        people = [v for _, v in values]
+        if all(v == COPILOT for v in people):
+            continue
+        if not GH_API.search(seg) or _method(seg) not in ("POST",):
+            block(HUMAN_REQUEST)
+        m = REQ_ROUTE.search(seg)
+        if not m or any(COMPUTED.search(x) or not re.match(r"^[\w.-]+$", x) for x in m.groups()) or not m.group(3).isdigit():
+            block(HUMAN_REQUEST)
+        why = _rerequest_verdict(m.group(1), m.group(2), m.group(3), people, cwd)
+        if why:
+            block(why)
 
 def main():
     p = read_payload()

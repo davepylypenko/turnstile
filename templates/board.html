@@ -44,6 +44,8 @@ function note(p) {
     const nl = Object.values(p.threads || {}).filter(t => t && t.class === 'needs_lead').length;
     if (nl) out.push(nl + ' thread(s) need the lead');
   }
+  if (p.state === 'ON_HUMAN_REVIEW' && h.reviewer_notified === false) out.push('reviewers not notified (push-only rework: the lead decides)');
+  if (p.state === 'ON_HUMAN_REVIEW' && h.reviewer_notified === true && h.rerequested) out.push('re-requested ' + (h.rerequested.logins || []).join(', ') + ' on ' + short(h.rerequested.head));
   if (p.state === 'READY' && p.blocked_by) out.push('waits for ' + p.blocked_by);
   if (p.last_reason) out.push(p.last_reason);
   return out.join(' · ');
@@ -143,7 +145,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 }));
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
-    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry.' +
+    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry; once every thread has its reply and Copilot (or the gate) is clean on the head, the agents re-request the thread authors on GitHub. A push-only rework pings nobody: its row reads "reviewers not notified" and the lead decides.' +
     '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.';
 }
 if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend();

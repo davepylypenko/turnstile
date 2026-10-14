@@ -660,3 +660,99 @@ class ReviewWrites(unittest.TestCase):
 
     def test_tester_role_still_cannot_reply(self):
         r = self.bash(self.REPLY % "101", agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
+
+class ReRequestGuard(unittest.TestCase):
+    """Lead rule 2026-10-14 (re-request): a `requested_reviewers` POST for humans passes only for a REWORK PR of the epic whose classified
+    threads all have their replies, with Copilot's review of the current head and 0 open Copilot threads (repos without Copilot: the gate
+    check green on the head), and only for exactly the reviewers who commented on the threads in this round. Every other human request
+    (`--add-reviewer`, GraphQL, teams, JSON bodies, computed logins) stays refused."""
+    T1 = "2026-10-13T11:00:00Z"
+    REQ = "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=%s'"
+    def setUp(self):
+        self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
+        shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
+        data = json.loads((d / "state.json").read_text()); data["epic"]["roles"]["agent_github"] = "agentlogin"
+        pr = data["prs"]["jsfiller#1"]; pr["state"] = "REWORK"
+        pr["evidence"]["human"] = {"head": "aaaaaaaa11111111", "sent_head": "aaaaaaaa11111111", "sent_at": "2026-10-13T10:02Z", "approved": "ah-1",
+                                   "slack_permalink": "https://x.slack.com/archives/C1/p1"}
+        pr["threads"] = {"PRRT_s": {"class": "self_resolved", "classified_at": "2026-10-13T11:02:00Z", "comment_id": "101", "comment_ids": ["101"],
+                                    "reviewer": "isachivka", "last_reviewer_at": self.T1}}
+        data["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T09:30Z",
+                                   "used_at": "2026-10-13T10:00Z", "consumed_at": "2026-10-13T10:01Z"}]
+        self.write(data)
+        payload = json.loads((ROOT / "tests" / "fixtures" / "gh_pr_13222.json").read_text())
+        payload["reviewThreads"] = {"nodes": [gql_thread("PRRT_s", [(101, "isachivka", self.T1), (102, "agentlogin", "2026-10-13T11:05:00Z")]),
+                                              gql_thread("PRRT_cop", [(301, "copilot-pull-request-reviewer", self.T1)], resolved=True)]}
+        self.responses = {"prs": {"jsfiller#1": payload}, "nodes": {}}
+        self.bin = pathlib.Path(tempfile.mkdtemp()); (self.bin / "gh").write_text(CANNED_GH); (self.bin / "gh").chmod(0o755); self.save()
+    def save(self):
+        (self.bin / "responses.json").write_text(json.dumps(self.responses))
+    def state(self):
+        return json.loads((self.ws / "delivery" / "state.json").read_text())
+    def write(self, data):
+        (self.ws / "delivery" / "state.json").write_text(json.dumps(data))
+    def payload(self):
+        return self.responses["prs"]["jsfiller#1"]
+    def bash(self, cmd, gh=True):
+        path = os.pathsep.join(([str(self.bin)] if gh else []) + ["/usr/bin", "/bin"])
+        return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}, self.ws, env={"PATH": path})
+    def assertBlocked(self, cmds, rule):
+        for cmd in cmds:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn(rule, r.stderr, cmd)
+    def assertAllowed(self, cmds):
+        for cmd in cmds:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
+    def copilot(self, oid=None, open_thread=False):
+        d = self.state(); d["epic"]["repos"]["jsfiller"]["copilot"] = True; self.write(d)
+        p = self.payload()
+        if oid:
+            p["latestReviews"]["nodes"].append({"author": {"__typename": "Bot", "login": "copilot-pull-request-reviewer"}, "state": "COMMENTED",
+                                                "commit": {"oid": oid}, "submittedAt": "2026-10-13T11:10:00Z"})
+        p["reviewThreads"]["nodes"][1]["isResolved"] = not open_thread; self.save()
+
+    def test_the_thread_authors_are_re_requested_once_replies_and_the_gate_are_clean(self):
+        self.assertAllowed([self.REQ % "isachivka", "gh api --method POST /repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=isachivka",
+                            "gh api repos/pdffiller/jsfiller/pulls/1/requested_reviewers -F 'reviewers[]=ISACHIVKA'"])
+    def test_copilot_only_requests_still_pass_and_reads_are_free(self):
+        self.assertAllowed([self.REQ % COPILOT, "gh api repos/pdffiller/jsfiller/pulls/1/requested_reviewers"])
+    def test_non_authors_teams_bodies_and_computed_logins_are_refused(self):
+        self.assertBlocked([self.REQ % "lMakDen", self.REQ % "isachivka" + " -f 'reviewers[]=lMakDen'", self.REQ % "isachivka" + " -f 'reviewers[]=%s'" % COPILOT],
+                           "rerequest-not-authors")
+        self.assertBlocked([self.REQ % "isachivka" + " -f 'team_reviewers[]=front'", "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'team_reviewers[]=front'",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers --input body.json",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=$WHO",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/$N/requested_reviewers -f 'reviewers[]=isachivka'"], "human-reviewer-request")
+        self.assertBlocked(["gh pr edit 1 --add-reviewer isachivka"], "add-reviewer")
+        self.assertBlocked(["gh api graphql -f query='mutation{requestReviews(input:{pullRequestId:\"x\",userIds:[\"y\"]}){clientMutationId}}'",
+                            "gh api graphql -f query='mutation{requestReviewsByLogin(input:{pullRequestId:\"x\",userLogins:[\"isachivka\"]}){clientMutationId}}'"], "graphql")
+        self.assertBlocked(["gh pr create --title x --body y --reviewer isachivka", "gh pr create -t x -b y -r isachivka", "gh pr create --draft -r=isachivka -t x",
+                            "gh -R pdffiller/jsfiller pr create --reviewer=isachivka,lMakDen -t x", "gh pr edit 1 --add-reviewer=isachivka"], "reviewer")
+        self.assertAllowed(["gh pr create --title x --body y --draft --base epic -R pdffiller/jsfiller", "gh pr create -t 'fix: -r flag' -b y --draft",
+                            "gh pr view 1 --json reviewRequests --jq '.reviewRequests[].login'"])
+    def test_refused_until_every_thread_has_its_reply(self):
+        self.payload()["reviewThreads"]["nodes"][0]["comments"]["nodes"].pop(); self.save()
+        self.assertBlocked([self.REQ % "isachivka"], "rerequest-replies")
+        self.payload()["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
+            {"databaseId": 102, "author": {"__typename": "User", "login": "agentlogin"}, "createdAt": "2026-10-13T11:05:00Z"})
+        self.payload()["reviewThreads"]["nodes"].append(gql_thread("PRRT_n", [(401, "lMakDen", "2026-10-13T11:30:00Z")])); self.save()
+        r = self.bash(self.REQ % "isachivka"); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-replies", r.stderr); self.assertIn("PRRT_n", r.stderr)
+    def test_refused_with_a_red_gate(self):
+        ctx = self.payload()["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"]
+        next(c for c in ctx if c.get("name") == "pdf-review")["conclusion"] = "FAILURE"; self.save()
+        self.assertBlocked([self.REQ % "isachivka"], "rerequest-gate")
+    def test_with_copilot_its_review_of_the_current_head_and_no_open_thread(self):
+        head = self.payload()["headRefOid"]
+        self.copilot(); self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")                       # Copilot never reviewed
+        self.copilot(oid="0000000011111111aaa0288e05b49fa4583d8812"); self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")  # stale head
+        self.payload()["latestReviews"]["nodes"].pop(); self.copilot(oid=head, open_thread=True)
+        self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")                                          # an open Copilot thread
+        self.copilot(open_thread=False); self.assertAllowed([self.REQ % "isachivka"])
+    def test_push_only_off_state_foreign_and_unverifiable_requests_are_refused(self):
+        d = self.state(); d["prs"]["jsfiller#1"]["evidence"]["human"]["returned_at"] = "2026-10-13T12:00:00Z"; self.write(d)
+        self.assertBlocked([self.REQ % "isachivka"], "rerequest-push-only")
+        d = self.state(); del d["prs"]["jsfiller#1"]["evidence"]["human"]["returned_at"]; d["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; self.write(d)
+        self.assertBlocked([self.REQ % "isachivka"], "rerequest-not-rework")
+        d["prs"]["jsfiller#1"]["state"] = "REWORK"; self.write(d)
+        self.assertBlocked(["gh api -X POST repos/pdffiller/other/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
+                            "gh api -X POST repos/someone/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'"], "human-reviewer-request")
+        r = self.bash(self.REQ % "isachivka", gh=False); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-unverified", r.stderr)

@@ -9,10 +9,12 @@ BOT_LOGINS = {BOT, "Snyk-Agent", "application-pdffiller"}
 QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
   isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision body
   allCommits: commits(last:100){totalCount nodes{commit{oid message signature{isValid}}}}
-  latestReviews(first:30){nodes{author{__typename login} state commit{oid}}}
+  latestReviews(first:30){nodes{author{__typename login} state commit{oid} submittedAt}}
+  reviewRequests(first:50){nodes{requestedReviewer{__typename ... on User{login}}}}
+  timelineItems(last:50, itemTypes:[REVIEW_REQUESTED_EVENT]){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login}}}}}
   reviewThreads(first:100){nodes{id isResolved comments(first:100){totalCount nodes{databaseId author{__typename login} createdAt}}}}
   commits(last:1){nodes{commit{oid signature{isValid} statusCheckRollup{state contexts(first:100){totalCount nodes{
-    ... on CheckRun{name conclusion status} ... on StatusContext{context state}}}}}}} } } }"""
+    ... on CheckRun{name conclusion status completedAt} ... on StatusContext{context state createdAt}}}}}}} } } }"""
 TRAILER_RX = re.compile(r"Co-Authored-By|Generated with \[Claude Code\]", re.I)
 FOOTER_RX = re.compile(r"Generated with \[Claude Code\]", re.I)
 
@@ -43,6 +45,14 @@ class PrFacts:
     threads: List[dict] = field(default_factory=list)
     trailered: List[str] = field(default_factory=list)  # commits whose message carries a trailer or the generated-with footer
     body_footer: bool = False
+    # re-request rule (2026-10-14): who is requested now, when each user was last requested, every human's latest review head,
+    # Copilot's latest review (head + time) and when each check context last completed
+    review_requests: List[str] = field(default_factory=list)
+    review_requested_at: Dict[str, str] = field(default_factory=dict)
+    review_heads: Dict[str, str] = field(default_factory=dict)
+    copilot_review_head: Optional[str] = None
+    copilot_review_at: Optional[str] = None
+    check_times: Dict[str, str] = field(default_factory=dict)
 
     def ci_without(self, names) -> str:
         """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
@@ -86,27 +96,34 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
     rollup = last.get("statusCheckRollup") or {}
     ci = {"success": "success", "failure": "failure", "error": "failure", "pending": "pending", "expected": "pending"}.get(_low(rollup.get("state")), "unknown")
     checks: Dict[str, str] = {}
+    check_times: Dict[str, str] = {}
     contexts = rollup.get("contexts") or {}
     nodes = contexts.get("nodes") or []
     for c in nodes:
         if "name" in c:
-            name, value = c["name"], c.get("conclusion") or c.get("status")
+            name, value, at = c["name"], c.get("conclusion") or c.get("status"), c.get("completedAt")
         elif "context" in c:
-            name, value = c["context"], c.get("state")
+            name, value, at = c["context"], c.get("state"), c.get("createdAt")
         else:
             continue
         v = _norm(value)
         if RANK[v] >= RANK.get(checks.get(name, "skipped"), 0):
             checks[name] = v
+        if at and (ts(at) or datetime.datetime.min) > (ts(check_times.get(name)) or datetime.datetime.min):
+            check_times[name] = at
     total = contexts.get("totalCount")
     checks_complete = total is None or total <= len(nodes)
     head = pr.get("headRefOid") or ""
-    approvals, changes, changes_heads = [], [], {}
+    approvals, changes, changes_heads, review_heads = [], [], {}, {}
+    copilot_head = copilot_at = None
     for r in (pr.get("latestReviews") or {}).get("nodes") or []:
-        if is_bot(r.get("author")):
-            continue
         login = (r.get("author") or {}).get("login", "")
         oid = (r.get("commit") or {}).get("oid")
+        if login == BOT:
+            copilot_head, copilot_at = oid, r.get("submittedAt")
+        if is_bot(r.get("author")):
+            continue
+        review_heads[login] = oid or ""
         if r.get("state") == "APPROVED" and same_head(oid, head):
             approvals.append(login)
         if r.get("state") == "CHANGES_REQUESTED":
@@ -136,7 +153,15 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
                 if not ((n.get("commit") or {}).get("signature") or {}).get("isValid")]
     trailered = [((n.get("commit") or {}).get("oid") or "")[:8] for n in (pr.get("allCommits") or {}).get("nodes") or []
                  if TRAILER_RX.search((n.get("commit") or {}).get("message") or "")]
-    return PrFacts(threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
+    requests = sorted({(n.get("requestedReviewer") or {}).get("login") for n in (pr.get("reviewRequests") or {}).get("nodes") or []
+                       if (n.get("requestedReviewer") or {}).get("__typename") == "User" and (n.get("requestedReviewer") or {}).get("login")})
+    requested_at: Dict[str, str] = {}
+    for n in (pr.get("timelineItems") or {}).get("nodes") or []:
+        who = n.get("requestedReviewer") or {}
+        if who.get("__typename") == "User" and who.get("login") and (ts(n.get("createdAt")) or datetime.datetime.min) > (ts(requested_at.get(who["login"])) or datetime.datetime.min):
+            requested_at[who["login"]] = n.get("createdAt")
+    return PrFacts(review_requests=requests, review_requested_at=requested_at, review_heads=review_heads, copilot_review_head=copilot_head,
+                   copilot_review_at=copilot_at, check_times=check_times, threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
                    base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
                    checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes), changes_requested_heads=changes_heads,

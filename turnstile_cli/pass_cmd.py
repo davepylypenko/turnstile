@@ -33,6 +33,7 @@ class Options:
     figma_parity: Optional[str] = None
     failed_cases: Optional[str] = None
     companions: Optional[str] = None
+    rerequested: Optional[str] = None
     offline: bool = False
     full: bool = False
     no_commit: bool = False
@@ -97,6 +98,8 @@ def _apply_pr_evidence(pr: dict, o: Options) -> None:
             human["open_threads"] = o.open_threads
     if o.merged_sha:
         pr["merged_sha"] = o.merged_sha
+    if o.rerequested:  # REWORK → ON_HUMAN_REVIEW: the thread authors the agent re-requested on GitHub (verified against the facts)
+        ev.setdefault("human", {})["rerequested"] = {"logins": [x.strip() for x in o.rerequested.split(",") if x.strip()], "head": h, "at": _now_s()}
 
 def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Optional[dict] = None) -> List[str]:
     """R2-5: self-reported evidence must equal what GitHub says for the PR's head. Pure; shared with the reconcile dry run."""
@@ -137,6 +140,10 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Option
         epic = (data or {}).get("epic") or {}
         out.extend(threads.replies_missing(pr, pr.get("_id") or "", facts.threads, epic.get("roles"), (data or {}).get("awaiting_human"),
                                            epic.get("github_org") or ""))
+        # lead rule 2026-10-14 (re-request): a thread-driven rework re-requests the thread authors on GitHub after the replies and the
+        # clean head; a push-only rework pings nobody
+        out.extend(threads.rerequest_missing(pr, pr.get("_id") or "", facts, epic.get("roles"), (data or {}).get("awaiting_human"),
+                                             epic.get("github_org") or "", repo_cfg))
     if target == "APPROVED":
         human = ev.get("human") or {}
         for login in human.get("approvals") or []:
@@ -169,6 +176,10 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     if not rules.same_head(facts.head, h):
         raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
+    rr = (ev.get("human") or {}).get("rerequested")
+    if rr and target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK":  # GitHub's spelling of the logins
+        authors = {a.lower(): a for a in threads.round_authors(pr, facts.threads, (data or {}).get("epic", {}).get("roles"), (data or {}).get("awaiting_human"))}
+        rr["logins"] = sorted({authors.get(x.lower(), x) for x in rr.get("logins") or []}, key=str.lower)
     return _facts_mismatches(pr, target, facts, repo_cfg, data)
 
 def _verify_story_heads(story: dict, sid: str, data: dict, o: Options, io: IO, notes: List[str]) -> List[str]:
@@ -340,9 +351,14 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
             if kind == "pr":
                 pr = st_mod.pr(st, ident)
                 repo = st_mod.repo_cfg(st, ident)
-                if target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK" and (o.slack or o.approved or o.reviewers):
-                    raise TurnstileError("REWORK → ON_HUMAN_REVIEW takes no --slack/--approved/--reviewers: the replies on the reviewers' threads are "
-                                         "the notification, and only a needs_lead thread waits for the lead (its own reply entry; 2026-10-14)")
+                back = target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK"
+                if back and (o.slack or o.approved or o.reviewers):
+                    raise TurnstileError("REWORK → ON_HUMAN_REVIEW takes no --slack/--approved/--reviewers: the replies on the reviewers' threads and "
+                                         "the GitHub re-request of the thread authors are the notification, and only a needs_lead thread waits for "
+                                         "the lead (its own reply entry; 2026-10-14)")
+                if o.rerequested and not back:
+                    raise TurnstileError("--rerequested records the re-request of the thread authors on REWORK → ON_HUMAN_REVIEW only (%s is %s, target %s)"
+                                         % (ident, pr.get("state"), target))
                 trial = copy.deepcopy(pr); trial["_id"] = ident
                 _apply_pr_evidence(trial, o)
                 missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes, data=data)
@@ -362,9 +378,16 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     jira_line = "JIRA: %s → %s" % (pr["ticket"], jira_target)
                 if target == "ON_HUMAN_REVIEW" and src == "READY":
                     rules.find_entry(awaiting, o.approved)["consumed_at"] = _now()
-                if target == "ON_HUMAN_REVIEW" and src == "REWORK":  # back to the same reviewers: the replies notified them on GitHub
+                if target == "ON_HUMAN_REVIEW" and src == "REWORK":  # back to the same reviewers: the replies + the re-request notified them
                     human = pr.setdefault("evidence", {}).setdefault("human", {})
-                    human["sent_head"] = pr.get("head"); human["returned_at"] = _now()
+                    human["sent_head"] = pr.get("head"); human["returned_at"] = _now_s()
+                    rr = human.get("rerequested")
+                    if rr and rules.same_head(rr.get("head"), pr.get("head")):
+                        human["reviewer_notified"] = True
+                        extra.append("re-requested review from %s on head %s (thread-driven rework; reviewer notified)" % (", ".join(rr.get("logins") or []), pr.get("head")))
+                    else:  # push-only rework (lead rule 2026-10-14): nobody is pinged; the board shows it and the lead decides
+                        human.pop("rerequested", None); human["reviewer_notified"] = False
+                        extra.append("reviewers not notified: push-only rework of %s (no reviewer comment since it last went to humans); the lead decides" % ident)
                     for a in awaiting:
                         if a.get("type") == "reply" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
                             if a.get("approved_at"):
