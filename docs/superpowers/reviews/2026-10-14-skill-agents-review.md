@@ -131,3 +131,36 @@ a header; an isolated headless browser.
 
 Findings 3–5 should land in the same round. Without them the story gate either stalls or reports DONE on a stale stack.
 Everything else can travel with plan 3. Item 7 belongs to the vendoring part of plan 3 anyway.
+
+## Resolution (2026-10-14, after the review)
+
+Lead decisions applied: (1) evidence writes allowed under `evidence/`, `reports/`, `briefs/` for any command and the Write
+tool, the rest of the delivery dir stays protected, `figma.png` is saved through Write from the Figma MCP result; (2) no
+`--reason` bypass for PLANNED→IN_PROGRESS, `parallel_with` is the only pre-authorisation of a parallel start; (3)
+INTEGRATION_REVIEW re-entry records a redeploy, runs record `{build, head}`, DONE needs `env_test.head == deploy.head ==`
+stack top, a persisting fail reopens its bug (key story + case); (4) a db bug status older than the state.json bug loses;
+(5) Figma tools resolved per environment through `references/tools/figma.md`. Suite: 209 → **231 tests, `OK`** on Python 3.9.6.
+
+| # | Finding | Commit | Note |
+|---|---|---|---|
+| 1 | Tester cannot write evidence | `0acec8d` | `guard_bash.py` `_writable_segment` (literal paths, `..` normalised, symlinks resolved, no `git`/`ln`, no `cd`); `guard_state_edit.py` resolves the path and allows the three folders + `plan.md`/`decisions.md`; tests for allowed vs blocked incl. `../` and symlink tricks; `references/evidence.md` and `agents/tester.md` updated |
+| 2 | Story start self-approvable with `--reason` | `7b33047` | `is_lead_override` removed; `after` must be DONE; an active story blocks unless `parallel_with` (either direction); `startable()` applies the same checks before opening `start_story` entries |
+| 3 | Story gate stalls after integration-review fixes | `a2fe332` | `INTEGRATION_REVIEW` ∈ `STORY_FROM["INTEGRATION_REVIEW"]`; re-entry requires `--build --head` and re-records `evidence.deploy = {build, head, at}`; ENV_TESTING entry still needs `integration_review.head == deploy.head` |
+| 4 | Env runs not bound to a build/head | `a2fe332` | `rules.stack_tops()` (open PRs no other PR of the story is based on; one per repo); `evidence.deploy.head` must be a current top at INTEGRATION_REVIEW / ENV_TESTING / DONE; a run records `{build, head, failed_cases}` and is refused when `head != deploy.head`; DONE requires `env_test.head == deploy.head`. Builds are recorded, not compared (a same-head redeploy needs no new review round) |
+| 5 | Duplicate bugs for a persisting fail | `a2fe332` | `bug add --case`; `--failed-cases` on the run record (count must match); an open bug for story + case satisfies the fail; `_reopen_bugs_for_run` appends `runs` and sets a done bug back to `todo` with a ledger line; `bug add` refuses a duplicate case |
+| 6 | Board overrides never expire | `6ec8538` | override renders only while `updatedAt` is newer than the bug's `updated_at`/`created_at` (stamped by `bug add`/`set` and by a reopen) |
+| 7 | Tester tied to one Figma connector | `b7cc9c2` | `references/tools/figma.md` (suffix mapping, resolution steps, BLOCKED message); tester inherits tools with `disallowedTools`; `skill_dir` builtin in briefs |
+| 8 | Plan approval not bound to the digest | `63df4e9` | `plan_approval_missing` compares the entry's `digest` |
+| 9 | Re-plan retargets a started story | `63df4e9` | `merge_stories` refuses a `branch` change past PLANNED, returns WARN lines for tickets/repos (printed and in the ledger) |
+| 10 | "Awaiting humans" overcounts | `6ec8538` | filter `!approved_at && !voided_at && !consumed_at` |
+| 11 | Hard-coded chat language | `63df4e9` | `init --chat-language` (default English) → `epic.chat_language` and the workspace `CLAUDE.md` |
+| 12 | Epic branch from a stale base; half-initialised delivery | `63df4e9` | `git fetch origin <base>` then `origin/<base>` (local fallback with WARN); a failure after `state.json` removes what init created and says to re-run |
+| 13 | Second review round overwrites the first | `63df4e9` (SKILL.md), `a2fe332` (story-gate) | round suffix `-r2`; `--force` only for a never-dispatched brief |
+| 14 | Live checks | — | **still owed** before plan 3: `ask` under `bypassPermissions`, a background subagent's send, `!` lines skipping hooks, one dry run per agent, repo gate skills without the `Agent` tool |
+| 15 | `turnstile bug` exits 0 without a subcommand | `63df4e9` | help to stderr, exit 2 |
+| 16 | `plan None` in approve/status | `63df4e9` | the entry's `payload` is printed |
+| 17 | Snapshot destroys an open dropdown | `6ec8538` | re-render deferred until the focused `select.bug` blurs |
+
+Known limitation recorded with finding 4: a multi-repo story has one stack top per repo and a single `deploy.head`; the
+check accepts any top, so a head change in the other repo after the deploy is not caught by the CLI (the story-reviewer's
+report names every head).
