@@ -285,3 +285,62 @@ agent; for the **tester** additionally confirm that its frontmatter hooks fire (
 `blocked by rule tester-push`) and that `${CLAUDE_PLUGIN_ROOT}` expands in an agent-scoped hook command — if either fails,
 record R2-12 as prose-only. 5. The tester dry run must produce a real `figma.png` through one of the three paths in
 `references/tools/figma.md`. 6–7 as above; 7 is now moot (R2-7 landed), `turnstile reconcile` before a send stays good practice.
+
+## Round 3 (2026-10-14)
+
+Scope: `b8983a3..1d8701a` (tag `v0.2.1-skill`) against `## Round 2 resolution` and the core invariants. Method: the real hooks run on
+JSON payloads, in a layout that matches plan 3: `.turnstile` at the workspace root, the knowledge worktree a **linked git worktree**
+(`.git` is a file) inside the workspace, and a sibling product repo. The Round 2 tests put `.turnstile` inside the worktree. Claude
+Code 2.1.296 was read from the installed binary. Suite: 257 → **258 tests, `OK`** on Python 3.9.6. Fix `12beb53` is SSH-signed, has
+no trailer and is pushed to `main`.
+
+### Resolutions verified
+
+| # | Verdict | Evidence |
+|---|---|---|
+| R2-6 | Closed | `curl -o …/evidence/<S>/<case>/figma.png` passes. `curl -o …/evidence/S1/TP-1/../../state.json` and `wget -O …/../ledger.md` are refused. `curl -o /tmp/x` passes: it is outside the delivery dir, so not a delivery write. `--figma-parity not_testable_here` is recorded, and DONE refuses it (`figma_parity == pass (has not_testable_here)`). |
+| R2-7 | Closed, with one gap fixed (R3-3) | The canned `gh` reporting a moved head refuses the send and names the PR. Without `gh` the send fails closed. |
+| R2-8 | **Was open; fixed (R3-1)** | |
+| R2-9, R2-10, R2-13 | Closed | Read in code and tests. |
+| R2-11 | Closed | `brief` refuses every agent but `investigator` before plan approval. The test now covers all seven (it listed four). |
+| R2-12 | **The mechanism was dead; replaced (R3-2)** | |
+
+### Fixes applied in this round (`12beb53`)
+
+- **R3-1 (major, R2-8 bypasses).** Tree-wide resets of the knowledge worktree passed in these forms:
+  - `cd ../kn && git checkout -- .` and `cd /abs/kn && git restore .`, from a sibling repo or from outside the workspace. A `cd` inside the same command was not tracked.
+  - `(git checkout -- .)` and `(cd kn; git reset --hard)`.
+  - `sh -c '…'`, `bash -c '…'`, `command git …`.
+  - `git --work-tree=../kn …` and `GIT_WORK_TREE=../kn git …`.
+  - `git read-tree -u --reset HEAD~1`, `git checkout-index -a -f`, `git revert HEAD`. These roll `state.json` back as well.
+
+  Now `_git_call` unwraps parentheses, `command`/`exec`/`sh|bash|zsh -c` and env prefixes, and treats `--work-tree` and `GIT_WORK_TREE` like `-C`. The segment loop follows `cd`/`pushd`. `TREE_SUBS` adds `read-tree`, `checkout-index` and `revert`; for `read-tree` and `revert`, a non-path argument is treated as a ref. Test: `TreeResetRealLayout` (11 blocked, 4 allowed, in the plan-3 layout).
+- **R3-2 (major, R2-12).** Claude Code 2.1.x **ignores `hooks`, `mcpServers` and `permissionMode` in plugin agent frontmatter.** The plugin agent loader skips the keys in `K5t=["permissionMode","hooks","mcpServers"]` and warns "Plugin agent file … sets hooks, which is ignored for plugin agents. Use .claude/agents/ for this level of control." So the tester's frontmatter hooks never ran, and `TURNSTILE_ROLE` was never set.
+  - The fallback works without them. Since 2.1.x, the common hook input carries `agent_id` and `agent_type` for every tool call inside a subagent (absent on the main thread). A plugin agent's type is `<plugin>:<name>`, here `turnstile:tester`. The plugin-level `guard_bash` and `guard_role` already read it through `_common.agent_role`.
+  - Probes with `{agent_id, agent_type: "turnstile:tester"}` are refused: `git push`, `git -C . push`, `command git push`, `sh -c 'git push'`, `git commit`, `gh pr comment|create`, and `gh api` POST/PATCH/graphql.
+  - Removed: the dead `hooks:` block in `agents/tester.md`. Prose and README now name the payload mechanism. The test now asserts that no agent carries `hooks`, `mcpServers` or `permissionMode`.
+  - `guard_role` now refuses Jira writes from **any** subagent (`agent_id` present). Before, a `general-purpose` subagent passed.
+- **R3-3 (minor).** The Slack guard asked GitHub only when the DONE story's deploy had a `heads` snapshot. A DONE story without one (a migrated story, or a deploy recorded before Round 2) was sent unchecked. A live check without `heads` now refuses. The Slack tests answer through a canned `gh` outside the workspace.
+
+### Residual (accepted, regex-guard limits)
+
+These remain open:
+- Computed words, e.g. `x=push; git $x`, `x=checkout; git $x -- .`.
+- `git worktree remove --force`.
+- `git apply -R` / `git am` in the knowledge worktree.
+- `git merge` / `git pull` / `git cherry-pick`. These add history and do not restore an old state.
+
+The CLI's commit-per-pass history makes any rollback visible in `git log`, and `turnstile reconcile` compares state with GitHub.
+
+### Verdict for plan 3
+
+**Ready for the migration: yes, with conditions.** Plan 3 must not start before the live checks below are done.
+
+Live checks still owed:
+1. `ask` under `bypassPermissions`.
+2. A send from a background subagent is denied.
+3. `!` lines skip PreToolUse.
+4. One dry run per agent. For the tester, `git push` must report `tester-push`. This now proves that the payload carries `agent_type: turnstile:tester`, not that frontmatter hooks run.
+5. A real `figma.png`.
+
+Migration step 6 (re-record each migrated story's deploy through `INTEGRATION_REVIEW --build --head`) is now **required for sends**, not only for DONE (R3-3).
