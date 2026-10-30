@@ -35,6 +35,9 @@ def build_parser():
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
     ba.add_argument("--case", help="test-case id the bug covers (one bug per story + case; a persisting fail reopens it)")
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
+    prp = sub.add_parser("pr", help="register a PR of the epic (DEV) from its GitHub facts"); psub = prp.add_subparsers(dest="pr_cmd"); p.pr_parser = prp
+    pa = psub.add_parser("add"); pa.add_argument("ident"); pa.add_argument("--story", required=True); pa.add_argument("--ticket", required=True)
+    pa.add_argument("--no-commit", action="store_true")
     th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
     th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
     th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
@@ -61,6 +64,8 @@ def main(argv=None):
         parser.print_help(); return 0
     if a.cmd == "bug" and a.bug_cmd is None:
         parser.bug_parser.print_help(sys.stderr); return 2
+    if a.cmd == "pr" and a.pr_cmd is None:
+        parser.pr_parser.print_help(sys.stderr); return 2
     try:
         if a.cmd == "init":
             from .init_cmd import run as init_run, InitOptions
@@ -81,6 +86,9 @@ def main(argv=None):
             if a.bug_cmd == "set":
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
             return 2
+        if a.cmd == "pr":
+            from .pr_cmd import add as pr_add
+            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit)
         if a.cmd == "threads":
             from .threads import run as threads_run
             return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit)

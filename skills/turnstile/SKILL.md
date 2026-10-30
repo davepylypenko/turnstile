@@ -46,6 +46,8 @@ On `OK` it prints `JIRA: <ticket> → <status>` (perform it through the Atlassia
 and that `url`; a first publish loads the `artifact-capabilities` skill, declares `db` + `user`, and the url is recorded
 at `init --board-url` or by the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate.
 READY with a paired PR outside the epic (locales): `--companions locales#5` so one Slack message may mention both.
+A PR the implementer opened enters the state as `DEV` with `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch
+and base from GitHub; refused when the base is not the story branch or another PR of the story, or the brief is missing).
 
 ## init (once per epic)
 

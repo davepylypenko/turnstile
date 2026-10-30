@@ -7,7 +7,7 @@ from .rules import same_head
 BOT = "copilot-pull-request-reviewer"
 BOT_LOGINS = {BOT, "Snyk-Agent", "application-pdffiller"}
 QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ pullRequest(number:$n){
-  isDraft merged mergeCommit{oid} headRefOid baseRefName reviewDecision body
+  isDraft merged mergeCommit{oid} headRefOid headRefName baseRefName reviewDecision body
   allCommits: commits(last:100){totalCount nodes{commit{oid message signature{isValid}}}}
   latestReviews(first:30){nodes{author{__typename login} state commit{oid} submittedAt}}
   reviewRequests(first:50){nodes{requestedReviewer{__typename ... on User{login}}}}
@@ -39,6 +39,7 @@ class PrFacts:
     copilot_threads_open: int = 0
     head_signed: Optional[bool] = None
     base: Optional[str] = None
+    branch: Optional[str] = None
     unsigned: List[str] = field(default_factory=list)  # every commit of the PR without a valid signature (spec §3 DEV DoD)
     # {id, resolved, human, opened_at, author, comment_id (REST id of the top-level comment), comment_ids, truncated,
     #  comments: [{id, login, at, bot}], replies: [{login, at}] (comments after the first)}
@@ -162,7 +163,7 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
             requested_at[who["login"]] = n.get("createdAt")
     return PrFacts(review_requests=requests, review_requested_at=requested_at, review_heads=review_heads, copilot_review_head=copilot_head,
                    copilot_review_at=copilot_at, check_times=check_times, threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
-                   base=pr.get("baseRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
+                   base=pr.get("baseRefName"), branch=pr.get("headRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
                    checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes), changes_requested_heads=changes_heads,
                    human_threads_open=human_open, copilot_threads_open=copilot_open,
