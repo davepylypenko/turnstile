@@ -9,14 +9,66 @@ prose rules erode under pressure. Stages blur ("AI review" quietly becomes "huma
 and context is lost between sessions. Turnstile moves the rules out of prose and into a state file, a transition
 command, role-scoped agents and hooks that physically block forbidden actions.
 
+## Prerequisites
+
+- Claude Code **2.1.275 or later** (one-step marketplace install; verified on 2.1.314).
+- Python **3.9+**, standard library only (the CLI, the hooks and the tests import nothing else).
+- `gh` CLI **authenticated** (`gh auth status`): every `pass pr`, `pr add`, `threads` and `reconcile` reads the PR from GitHub.
+- git with **SSH commit signing** on (`gpg.format=ssh`, `commit.gpgsign=true`, a signing key): the Bash guard refuses
+  `--no-gpg-sign`, and `pass` refuses a PR with an unsigned commit. `gpg.ssh.allowedSignersFile` is not needed.
+- A **knowledge repository** (any git clone with an `origin`) that will hold `delivery/` on an epic branch.
+- Optional, only if sends are to be guarded: Slack through an MCP whose tools match `mcp__*slack_send_message*` /
+  `slack_schedule_message` (the `slack` plugin of the official marketplace does); Jira through an MCP exposing
+  `transitionJiraIssue` / `editJiraIssue` / `createJiraIssue` / `addCommentToJiraIssue` (the Atlassian connector does).
+
 ## Install
 
 ```
-claude plugin marketplace add davepylypenko/turnstile
-claude plugin install turnstile
+claude plugin install turnstile --marketplace davepylypenko/turnstile       # adds the marketplace and installs the plugin
+sh ~/.claude/plugins/marketplaces/turnstile/scripts/install-cli.sh          # writes the `turnstile` shim into ~/.local/bin
+turnstile --version                                                         # turnstile 0.3.0 (add ~/.local/bin to PATH if the script says so)
+claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # optional: ✔ Validation passed
 ```
 
-(Without a marketplace entry: clone the repo and start Claude Code with `--plugin-dir <path>`.)
+Two-step equivalent of the first line: `claude plugin marketplace add davepylypenko/turnstile && claude plugin install turnstile@turnstile`.
+The shim resolves the installed plugin at every run (from `installed_plugins.json`, else the newest plugin cache entry),
+so `claude plugin update turnstile@turnstile` needs no reinstall; without the shim the CLI is
+`~/.claude/plugins/cache/turnstile/turnstile/<version>/scripts/turnstile`, and the skill names it as
+`${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`. Development from a clone: `claude --plugin-dir <clone>` and
+`TURNSTILE_HOME=<clone>` for the shim.
+
+## Getting started (a new lead's first hour)
+
+1. Install (above), then open Claude Code in an empty workspace folder — the plugin's hooks and the `turnstile` skill load.
+2. Create the epic from a terminal (or a `!`-prefixed prompt line). `--knowledge` is a clone of the knowledge repo
+   **outside** the workspace; `init` adds a worktree of it inside the workspace on `epic/<key>`, cut from `origin/main`:
+
+   ```
+   turnstile init --epic MYD-1 --workitem my-epic --knowledge ../knowledge \
+     --lead you@example.com --lead-github <your login> --github-org <org> \
+     --repo '{"name":"app","base":"main","epic_branch":"epic/myd-1","slack":"C0123456789","gate":"pr-review","gate_check":null}' \
+     --chat-language English
+   ```
+
+   It prints `WORKTREE`, `DELIVERY`, `CLAUDE_MD` and `NEXT`, writes `.turnstile` (workspace → delivery dir) and a workspace
+   `CLAUDE.md` for the orchestrator (with the CLI path), and commits the `delivery/` skeleton.
+3. Write `delivery/plan.md` (`skills/turnstile/references/kickoff.md`; in Claude Code the orchestrator does this from the
+   decomposition). The `turnstile-stories` JSON block needs at least `title`, `tickets`, `repos` and `branch` per story.
+   Then `turnstile plan-submitted` → `APPROVAL: the lead types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`.
+4. Approve it by typing `! TURNSTILE_LEAD=1 turnstile approve ah-1` in the Claude Code prompt (never through the model).
+   `turnstile status` now lists `ah-2 lead start_story S1`; approve that the same way when the story may start, then
+   the orchestrator records `turnstile pass story S1 IN_PROGRESS --approved ah-2`.
+5. First ticket: `turnstile brief implementer MYD-2 --var ticket_key=MYD-2 --var repo=app --var ...` (it prints
+   `MISSING placeholder <name> (pass --var <name>=...)` for every variable still missing, then `AGENT:` and `PROMPT:`); the
+   orchestrator launches `Agent(subagent_type: "turnstile:implementer", prompt: <the PROMPT line>)` — `/turnstile` in
+   Claude Code drives steps 3–7 for you.
+6. The implementer reports a draft PR: `turnstile pr add app#12 --story S1 --ticket MYD-2` records it as `DEV` (head,
+   branch and base from GitHub; refused when the base is not the story branch); with CI green,
+   `turnstile pass pr app#12 AI_REVIEW --head <sha> --ci success`. On `MISSING …` nothing was written.
+7. `turnstile status` (reconcile against GitHub + what awaits the lead) and `turnstile render-board` (`delivery/board.html`;
+   publish it as a claude.ai artifact and pass its url to `init --board-url` so every `pass` prints `BOARD: publish …`).
+
+Verified end to end on 2026-10-30 (`docs/superpowers/reviews/2026-10-30-onboarding-check.md`).
 
 ## What you get
 
@@ -32,6 +84,8 @@ claude plugin install turnstile
 - Skill `turnstile` (`skills/turnstile/SKILL.md`): `init`, `status`, `pass`, `dispatch <agent> <brief>`, `story-gate <S>`,
   `plan`; references for DoR/DoD, kick-off, briefs, PR body, Slack, reports, evidence and env recipes.
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
+  Tester credentials never touch a file: the tester reads `TURNSTILE_TEST_PASSWORD` or the keychain item
+  `turnstile-test-password` at login (`skills/turnstile/references/env/pdffiller-dev.md` § Credentials).
 - Hooks that block sends, merges, reviewer requests, force pushes, PR comments, review submissions, resolving human
   threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
   a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead), and the re-request
@@ -57,6 +111,7 @@ turnstile pass story S1 INTEGRATION_REVIEW --build 173120 --head <new stack-top 
 turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --build 173120 --head <new stack-top sha> --full
 echo delivery > .turnstile                      # workspace root → delivery dir (init writes it; by hand for an existing delivery dir)
 turnstile status                                # reconcile with GitHub + where we are (exit 1 when gh facts are missing)
+turnstile pr add jsfiller#13222 --story S1 --ticket MYD-18075   # a new draft PR enters as DEV (head, branch, base from GitHub)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
 ! TURNSTILE_LEAD=1 turnstile approve ah-3       # the lead types this in the Claude Code prompt; agents never do
@@ -171,7 +226,7 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
