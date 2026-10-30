@@ -10,6 +10,8 @@ The state is `delivery/state.json` in the knowledge worktree (found through `.tu
 (ledger, board, commit, Jira instruction) happen inside it — never "later". Read once per session:
 `references/lifecycle.md` (DoR/DoD per state with the exact `turnstile pass` call). Templates: `references/pr-body.md`,
 `references/slack.md`, `references/reports.md`, `references/evidence.md`; env recipes in `references/env/`.
+The CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`; `turnstile …` below means that path, or the bare name when the lead
+installed the PATH shim (`scripts/install-cli.sh`). The Bash guard treats both spellings alike.
 
 ## Rules that never bend
 

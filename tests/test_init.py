@@ -64,6 +64,16 @@ class Init(unittest.TestCase):
         self.assertIn("Chat with the lead in English", (self.ws / "CLAUDE.md").read_text()); self.assertEqual(data["epic"]["chat_language"], "English")
         self.assertEqual(io.calls[-1][0][:3], ["commit", "-q", "-m"]); self.assertEqual(io.calls[-1][1], d)
 
+    def test_workspace_claude_md_names_the_cli_path(self):
+        from unittest import mock
+        with mock.patch.object(init_cmd.shutil, "which", return_value=None):
+            self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), FakeGit()), 0)
+        text = (self.ws / "CLAUDE.md").read_text()
+        self.assertIn("CLI: `%s`" % (init_cmd.ROOT / "scripts" / "turnstile"), text); self.assertNotIn("{{cli}}", text)
+        ws2 = self.tmp / "ws2"; ws2.mkdir()
+        with mock.patch.object(init_cmd.shutil, "which", return_value="/home/x/.local/bin/turnstile"):
+            self.assertEqual(init_cmd.run(opts(ws2, self.knowledge), FakeGit()), 0)
+        self.assertIn("CLI: `/home/x/.local/bin/turnstile`", (ws2 / "CLAUDE.md").read_text())
     def test_agent_github_is_optional_and_recorded(self):
         # 2026-10-14: the replies to self_resolved threads come from the agents' GitHub account (default: the lead's)
         init_cmd.run(opts(self.ws, self.knowledge), FakeGit())

@@ -3,7 +3,7 @@
 You are the orchestrator of epic **{{epic_key}}**. The delivery state lives in `{{delivery}}/` (`state.json`,
 `ledger.md`, `plan.md`, `decisions.md`, `briefs/`, `reports/`, `evidence/`, `board.html`) on the epic branch of the
 knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first in every session; it starts with
-`turnstile status`.
+`turnstile status`. CLI: `{{cli}}` (`turnstile` below means this path when the bare name is not on PATH).
 
 - `state.json` and `ledger.md` are written only by `turnstile` commands; briefs and reports go through the Write tool.
 - The lead approves every send, merge, story start, story completion and every reply on a review thread that needs the

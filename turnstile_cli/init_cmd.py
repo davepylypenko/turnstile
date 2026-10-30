@@ -126,7 +126,7 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
             ledger.append(delivery, "init %s (%s) on %s" % (o.epic, o.workitem, branch))
             rel = os.path.relpath(str(delivery), str(ws))
             (ws / ".turnstile").write_text(rel + "\n"); created.append(ws / ".turnstile")
-            text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", o.epic).replace("{{delivery}}", rel).replace("{{chat_language}}", o.chat_language)
+            text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", o.epic).replace("{{delivery}}", rel).replace("{{chat_language}}", o.chat_language).replace("{{cli}}", shutil.which("turnstile") or str(ROOT / "scripts" / "turnstile"))
             target = ws / "CLAUDE.md"
             if target.exists():
                 target = ws / "CLAUDE.md.turnstile"
