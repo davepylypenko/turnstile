@@ -60,3 +60,9 @@ class SkillFiles(unittest.TestCase):
                        "never as a request header", "x-server-name", "isolated headless", "+tester"]:
             self.assertIn(needle, text, needle)
         self.assertNotIn("qwe123", text); self.assertNotIn("airslate", text)
+    def test_tester_brief_and_recipe_name_the_password_sources_not_the_password(self):
+        brief = (REFS / "briefs" / "tester.md").read_text(); recipe = (REFS / "env" / "pdffiller-dev.md").read_text(); skill = (SKILL / "SKILL.md").read_text()
+        self.assertIn("{{test_user}}", brief); self.assertIn("TURNSTILE_TEST_PASSWORD", brief); self.assertNotIn("Credentials: in your launch prompt", brief)
+        self.assertIn("## Credentials", recipe); self.assertIn("TURNSTILE_TEST_PASSWORD", recipe); self.assertIn("security add-generic-password", recipe)
+        self.assertNotIn("test credentials to the prompt", skill); self.assertIn("TURNSTILE_TEST_PASSWORD", skill)
+        for t in (brief, recipe, skill): self.assertNotIn("qwe123", t); self.assertNotIn("airslate", t)

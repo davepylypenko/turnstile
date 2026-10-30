@@ -69,8 +69,10 @@ READY with a paired PR outside the epic (locales): `--companions locales#5` so o
    suffix — `REVIEW-<n>-r2`, `STORY-<S>-review-r2`, `ENV-<S>-r2` — so the first round's brief and report survive; `--force`
    overwrites them and is for a brief that was never dispatched.
 2. Launch with the Agent tool: `subagent_type: "turnstile:<agent>"`, prompt = the `PROMPT:` line the command printed.
-   For `tester` append the lead's test credentials to the prompt only (briefs are committed); the tester resolves its Figma
-   tools per `references/tools/figma.md` and comes back `BLOCKED` when the environment has none. Models: implementer and
+   For `tester` pass `--var test_user=<address>`; the password is never in the prompt or the brief — the tester reads
+   `TURNSTILE_TEST_PASSWORD` or the keychain item `turnstile-test-password` itself at login (`references/env/pdffiller-dev.md`
+   § Credentials); the tester resolves its Figma tools per `references/tools/figma.md` and comes back `BLOCKED` when the
+   environment has none. Models: implementer and
    deployer sonnet, reviewer opus xhigh, story-reviewer fable, the rest opus. One agent per task; parallel agents only across different
    repos or stories.
 3. On return read the ≤ 8-line reply (the report is in `reports/`), record the facts with `turnstile pass` / `bug`,

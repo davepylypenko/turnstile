@@ -71,3 +71,6 @@ class Run(unittest.TestCase):
         self.approve_plan(); (self.d / "plan.md").write_text("# plan\nedited\n")  # an edited plan voids the approval
         rc, out = self.run_brief("tester", "T", self.all_vars("tester")); self.assertEqual(rc, 2); self.assertIn("changed", out)
         self.approve_plan(); self.assertEqual(self.run_brief("tester", "T", self.all_vars("tester"))[0], 0)
+    def test_tester_brief_requires_test_user(self):
+        rc, out = self.run_brief("tester", "ENV-S1", [v for v in self.all_vars("tester") if not v.startswith("test_user=")])
+        self.assertEqual(rc, 2); self.assertIn("MISSING placeholder test_user", out)

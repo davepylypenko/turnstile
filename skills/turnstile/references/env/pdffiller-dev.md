@@ -3,10 +3,15 @@
 Domain: `https://www.pdffillers.com`. All cookies are set on `.pdffillers.com`.
 
 ## Users
-Pattern `<mailbox>+tester<N>@<company domain>` with the shared dev password the lead supplies in the brief (never in
-git). Parallel sessions on one user log each other out: register `+tester1`, `+tester2`, … for each parallel agent.
+Pattern `<mailbox>+tester<N>@<company domain>` with the shared dev password (`## Credentials`; never in git). Parallel sessions on one user log each other out: register `+tester1`, `+tester2`, … for each parallel agent.
 Login answers "we can't recognize you" → set the user agent to `pdffiller-autotests` for the login request only, then
 restore the default.
+
+## Credentials
+The shared dev password is never in git, in a brief or in a prompt. The tester reads it at login from, in order:
+1. `TURNSTILE_TEST_PASSWORD` — the lead exports it in the shell that starts Claude Code (`export TURNSTILE_TEST_PASSWORD=…; claude …`); subagents inherit the environment.
+2. The macOS keychain: the lead stores it once with `security add-generic-password -s turnstile-test-password -a "<test user address>" -w` (prompts for the secret; `-U` updates), and the tester reads it with `security find-generic-password -s turnstile-test-password -a "<test user address>" -w`.
+Neither present → the tester replies `BLOCKED` before the first login.
 
 ## Routing
 - Editor build on a desk: cookie `jsfillerEnv=deskNN` (`path=/`). Desk builds reset every morning — redeliver first.

@@ -87,3 +87,10 @@ class Agents(unittest.TestCase):
             for key in ("hooks:", "mcpServers:", "permissionMode:"):
                 self.assertNotIn(key, fm, f.name)
         self.assertIn("agent_type: turnstile:tester", (AGENTS / "tester.md").read_text().split("## Cannot")[1])
+    def test_tester_credentials_are_env_or_keychain_never_prompt_or_file(self):
+        text = (AGENTS / "tester.md").read_text()
+        for needle in ["TURNSTILE_TEST_PASSWORD", "security find-generic-password", "turnstile-test-password",
+                       "BLOCKED: no test password", "never written to a file"]:
+            self.assertIn(needle, text, needle)
+        self.assertNotIn("append the lead's test credentials", text)
+        self.assertNotIn("qwe123", text); self.assertNotIn("airslate", text)
