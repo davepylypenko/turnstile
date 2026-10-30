@@ -32,7 +32,9 @@ claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # op
 
 Two-step equivalent of the first line: `claude plugin marketplace add davepylypenko/turnstile && claude plugin install turnstile@turnstile`.
 The shim resolves the installed plugin at every run (from `installed_plugins.json`, else the newest plugin cache entry),
-so `claude plugin update turnstile@turnstile` needs no reinstall; without the shim the CLI is
+so `claude plugin update turnstile@turnstile` needs no reinstall. That update acts on a changed `version` in `plugin.json`
+only; to pick up a same-version push: `claude plugin uninstall turnstile@turnstile && claude plugin install turnstile@turnstile`.
+Without the shim the CLI is
 `~/.claude/plugins/cache/turnstile/turnstile/<version>/scripts/turnstile`, and the skill names it as
 `${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`. Development from a clone: `claude --plugin-dir <clone>` and
 `TURNSTILE_HOME=<clone>` for the shim.
