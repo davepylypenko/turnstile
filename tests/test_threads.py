@@ -154,8 +154,16 @@ class ThreadsCmd(unittest.TestCase):
         self.io.facts["jsfiller#1"]["threads"][1]["comments"].append(cm("lMakDen", "2026-10-13T12:30:00Z", 203))
         self.go(lead_ids="PRRT_b"); r = self.replies()
         self.assertEqual(len(r), 2); self.assertTrue(r[0].get("voided_at")); self.assertEqual(r[1]["last_reviewer_at"], "2026-10-13T12:30:00Z")
+        self.io.facts["jsfiller#1"]["threads"][1]["comments"].append(cm("lMakDen", "2026-10-13T12:45:00Z", 204))  # a new reviewer word: a new call
         self.go(self_ids="PRRT_b"); self.assertTrue(all(a.get("voided_at") for a in self.replies()))
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_b"]["class"], "self_resolved")
+    def test_a_needs_lead_thread_cannot_be_downgraded_by_an_agent(self):
+        # 2026-10-14 review: re-classifying needs_lead → self_resolved on the same reviewer comment voided the lead's entry and unlocked the reply
+        self.go(lead_ids="PRRT_b"); ah = self.replies()[0]["id"]; commits = len(self.io.commits)
+        rc, out = self.go(self_ids="PRRT_b"); self.assertEqual(rc, 2, out); self.assertIn("needs_lead", out); self.assertIn(ah, out)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_b"]["class"], "needs_lead")
+        self.assertFalse(self.replies()[0].get("voided_at")); self.assertEqual(len(self.io.commits), commits)
+        rc, out = self.go(self_ids="202"); self.assertEqual(rc, 2, out)  # by a REST comment id too
     def test_without_ids_it_lists_and_writes_nothing(self):
         rc, out = self.go(); self.assertEqual(rc, 0, out)
         self.assertIn("PRRT_a", out); self.assertIn("unclassified", out); self.assertNotIn("PRRT_c", out)

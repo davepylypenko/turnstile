@@ -357,6 +357,14 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                         raise TurnstileError("%s of %s has no reviewer comment (only %s): nothing to classify" % (ident, pid, ", ".join(sorted(ours))))
                     if t["id"] in picked and picked[t["id"]][0] != cls:
                         raise TurnstileError("thread %s listed as both --self-resolved and --needs-lead (via %s)" % (t["id"], ident))
+                    prev = (pr.get("threads") or {}).get(t["id"]) or {}
+                    if cls == SELF and prev.get("class") == LEAD and prev.get("last_reviewer_at") == last_reviewer_at(t, ours):
+                        # 2026-10-14 review: a downgrade voided the lead's entry and unlocked the reply; only a newer reviewer comment
+                        # reopens the call — until then the lead approves the thread's reply entry or answers in person
+                        pending = open_replies(awaiting, pid, t["id"])
+                        raise TurnstileError("thread %s is needs_lead as of the reviewer's comment at %s: an agent cannot re-classify it self_resolved; "
+                                             "the lead settles it (%s, or answers on the thread in person)"
+                                             % (t["id"], prev.get("last_reviewer_at"), LEAD_HINT % (pending[-1]["id"] if pending else "<ah-id>")))
                     picked[t["id"]] = (cls, t)
             now = _now_s(); recs = pr.setdefault("threads", {}); extra: List[str] = []; asks: List[str] = []; replies_now: List[str] = []
             for tid, (cls, t) in picked.items():

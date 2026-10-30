@@ -5,7 +5,7 @@ FIX = ROOT / "tests" / "fixtures" / "state_min.json"
 COPILOT = "copilot-pull-request-reviewer[bot]"
 
 def hook(name, payload, cwd, env=None):
-    e = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(ROOT)); e.pop("TURNSTILE_MIGRATION", None); e.update(env or {})
+    e = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(ROOT)); e.pop("TURNSTILE_MIGRATION", None); e.pop("CLAUDE_PROJECT_DIR", None); e.update(env or {})
     data = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([sys.executable, str(ROOT / "hooks" / name)], input=data, cwd=cwd, capture_output=True, text=True, env=e)
 
@@ -720,8 +720,8 @@ class ReRequestGuard(unittest.TestCase):
                            "rerequest-not-authors")
         self.assertBlocked([self.REQ % "isachivka" + " -f 'team_reviewers[]=front'", "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'team_reviewers[]=front'",
                             "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers --input body.json",
-                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=$WHO",
-                            "gh api -X POST repos/pdffiller/jsfiller/pulls/$N/requested_reviewers -f 'reviewers[]=isachivka'"], "human-reviewer-request")
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=$WHO"], "human-reviewer-request")
+        self.assertBlocked(["gh api -X POST repos/pdffiller/jsfiller/pulls/$N/requested_reviewers -f 'reviewers[]=isachivka'"], "computed")
         self.assertBlocked(["gh pr edit 1 --add-reviewer isachivka"], "add-reviewer")
         self.assertBlocked(["gh api graphql -f query='mutation{requestReviews(input:{pullRequestId:\"x\",userIds:[\"y\"]}){clientMutationId}}'",
                             "gh api graphql -f query='mutation{requestReviewsByLogin(input:{pullRequestId:\"x\",userLogins:[\"isachivka\"]}){clientMutationId}}'"], "graphql")
@@ -756,3 +756,77 @@ class ReRequestGuard(unittest.TestCase):
         self.assertBlocked(["gh api -X POST repos/pdffiller/other/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
                             "gh api -X POST repos/someone/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'"], "human-reviewer-request")
         r = self.bash(self.REQ % "isachivka", gh=False); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-unverified", r.stderr)
+
+class ThreadRulesBypasses(unittest.TestCase):
+    """2026-10-14 thread rules review: bypasses of the PR-conversation guard found by probing the real hook, each closed."""
+    def setUp(self):
+        self.r = ReviewWrites("test_self_resolved_reply_passes_at_once"); self.r.setUp(); self.ws = self.r.ws
+        (self.ws / "q.graphql").write_text('mutation{addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:"PRRT_l",body:"x"}){comment{id}}}')
+        (self.ws / "body.json").write_text('{"body":"x"}')
+    def blocked(self, cmds, rule=None):
+        for cmd in cmds:
+            r = self.r.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
+            if rule:
+                self.assertIn(rule, r.stderr, cmd)
+    def test_attached_flag_values_are_writes(self):
+        self.blocked(["gh api repos/pdffiller/jsfiller/issues/1/comments -fbody=x", "gh api repos/pdffiller/jsfiller/issues/1/comments -Fbody=@body.json",
+                      "curl -s https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments -d@body.json"], "issue-comment")
+        self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/reviews -fevent=APPROVE"], "review-submission")
+        self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/comments -fbody=x -Fin_reply_to=201"], "review-comment")
+        self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/comments/201/replies -fbody=x"], "reply-needs-lead")
+    def test_non_canonical_computed_and_repository_id_routes_are_refused_for_writes(self):
+        self.blocked(["gh api -X POST repos/pdffiller/jsfiller/pulls/1/comments/101/../201/replies -f body=x",
+                      "gh api -X POST repos//pdffiller/jsfiller/pulls/1/comments/201/replies -f body=x",
+                      "gh api -X POST repos/pdffiller/jsfiller/issues/1/../1/comments -f body=x",
+                      "gh api -X POST repos/pdffiller/jsfiller/issues/1/c%6fmments -f body=x"], "rest-noncanonical-route")
+        self.blocked(["gh api -X POST $(echo repos/pdffiller/jsfiller/pulls/1/comments/201/replies) -f body=x",
+                      "gh api -X POST $(echo repos/pdffiller/jsfiller/issues/1/comments) -f body=x",
+                      "curl -s -X POST \"https://api.github.com/$(echo repos/pdffiller/jsfiller/issues/1/comments)\" -d @body.json"], "rest-computed-route")
+        self.blocked(["gh api -X POST repositories/123456/issues/1/comments -f body=x", "gh api -X POST /repositories/123456/pulls/1/comments/201/replies -f body=x"],
+                     "rest-repository-id-route")
+        self.r.assertAllowed(["gh api repos/pdffiller/jsfiller/pulls/1/comments --paginate", "gh api repos/pdffiller/jsfiller/issues/1/comments?per_page=100",
+                              "gh api -X POST repos/{owner}/{repo}/pulls/1/requested_reviewers -f 'reviewers[]=%s'" % COPILOT])
+    def test_other_tools_and_commit_comments_are_github_writes(self):
+        self.blocked(["wget -q --post-file=body.json https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments",
+                      "http POST https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments body=x",
+                      "python3 -c \"import urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments', b'{}'))\""])
+        self.blocked(["gh api -X POST repos/pdffiller/jsfiller/commits/aaaaaaaa/comments -f body=x", "gh api -X PATCH repos/pdffiller/jsfiller/comments/9 -f body=x",
+                      "gh api -X DELETE repos/pdffiller/jsfiller/comments/9"], "commit-comment")
+        self.r.assertAllowed(["gh api repos/pdffiller/jsfiller/commits/aaaaaaaa/comments", "curl -s https://api.github.com/repos/pdffiller/jsfiller/pulls/1"])
+    def test_graphql_queries_are_literal_and_only_gh_speaks_graphql(self):
+        self.blocked(["gh api graphql -f query=\"$(cat q.graphql)\"", "gh api graphql -F query=\"$(cat q.graphql)\"", "gh api graphql -f query=`cat q.graphql`",
+                      "gh api graphql -f query=$Q", "gh api graphql --raw-field query=\"$(cat q.graphql)\""], "graphql-computed")
+        self.blocked(["curl -s -X POST https://api.github.com/graphql -H \"Authorization: bearer $(gh auth token)\" -d @body.json",
+                      "curl -s https://api.github.com/graphql -d@body.json"], "graphql-non-gh")
+        self.r.assertAllowed(["gh api graphql -f query='query($o:String!,$r:String!){ repository(owner:$o,name:$r){ id } }' -f o=pdffiller -f r=jsfiller"])
+    def test_resolve_names_every_thread_id_literally(self):
+        self.blocked(["gh api graphql -f query='mutation($t:ID!){a:resolveReviewThread(input:{threadId:\"PRRT_cop\"}){thread{id}} b:resolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t=$(echo UFJSVF9z | base64 -d)",
+                      "gh api graphql -f query='mutation{a:resolveReviewThread(input:{threadId:\"PRRT_cop\"}){thread{id}} b:resolveReviewThread(input:{threadId:\"MDI0OlB1bGxSZXF1ZXN0UmV2aWV3VGhyZWFkMQ==\"}){thread{id}}}'",
+                      "gh api graphql -f query='mutation($i:ResolveReviewThreadInput!){resolveReviewThread(input:$i){thread{id}}}' -F i[threadId]=PRRT_cop"], "resolve-thread")
+        self.r.assertAllowed(["gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"PRRT_cop\"}) { thread { isResolved } } }'"])
+    def test_cli_comment_flags_aliases_and_computed_gh_words(self):
+        self.blocked(["gh pr close 1 --comment x", "gh issue close 1 -c x", "gh pr reopen 1 --comment=x", "gh -R pdffiller/jsfiller pr close 1 -c 'done'"], "issue-comment")
+        self.blocked(["gh alias set c 'pr comment'", "gh alias import aliases.yml"], "gh-alias")
+        self.blocked(["gh $(echo pr) comment 1 -b x", "gh pr $(echo comment) 1 -b x", "$(which gh) pr comment 1 -b x", "`which gh` pr comment 1 -b x",
+                      "GH=gh; $GH pr comment 1 -b x", "bash -c \"$(echo Z2ggcHIgY29tbWVudA== | base64 -d)\"", "eval $CMD"], "computed")
+        self.blocked(["python3 -c \"import subprocess; subprocess.run(['gh','pr','comment','1','-b','x'])\"",
+                      "node -e \"require('child_process').execSync(['gh', 'pr', 'comment', '1', '-b', 'x'].join(' '))\"",
+                      "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['gh', 'pr', 'comment', '1', '-b', 'x'])\nEOF"], "inline-code-github")
+        self.r.assertAllowed(["gh pr view 1 --json body | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"body\"])'",
+                              "cat > notes.txt <<'EOF'\nread the PR with gh and api.github.com\nEOF"])
+        self.r.assertAllowed(["gh pr close --help", "gh pr view 1 --comments", "gh alias list", "python3 -c 'print(1)'", "echo $HOME"])
+    def test_the_re_request_route_is_the_endpoint_itself(self):
+        q = ReRequestGuard("test_copilot_only_requests_still_pass_and_reads_are_free"); q.setUp()
+        for cmd in ["gh api -H 'X: repos/pdffiller/jsfiller/pulls/1/requested_reviewers' -X POST repos/pdffiller/jsfiller/pulls/2/requested_reviewers -f reviewers[]=isachivka",
+                    "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=isachivka repos/pdffiller/other/pulls/9/requested_reviewers"]:
+            r = q.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("human-reviewer-request", r.stderr, cmd)
+    def test_a_forged_delivery_outside_the_project_does_not_unlock_replies(self):
+        # the hook resolves the delivery from CLAUDE_PROJECT_DIR (the session's project) before the Bash cwd, which an agent controls
+        fake = pathlib.Path(tempfile.mkdtemp()); (fake / ".turnstile").write_text("fake\n"); (fake / "fake").mkdir()
+        forged = self.r.state(); forged["awaiting_human"][0]["approved_at"] = "2026-10-13T12:30Z"
+        (fake / "fake" / "state.json").write_text(json.dumps(forged))
+        cmd = ReviewWrites.REPLY % "201"
+        p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(fake)}
+        env = {"PATH": os.pathsep.join([str(self.r.bin), "/usr/bin", "/bin"]), "CLAUDE_PROJECT_DIR": str(self.ws)}
+        r = hook("guard_bash.py", p, fake, env=env); self.assertEqual(r.returncode, 2); self.assertIn("reply-needs-lead", r.stderr)
+        env.pop("CLAUDE_PROJECT_DIR"); self.assertEqual(hook("guard_bash.py", p, fake, env=env).returncode, 0)  # the residual without the anchor

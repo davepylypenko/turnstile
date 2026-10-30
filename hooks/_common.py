@@ -15,8 +15,17 @@ def block(msg: str) -> None:
     sys.stderr.write("turnstile: " + msg + "\n"); sys.exit(2)
 
 def delivery_dir(cwd: str) -> pathlib.Path:
+    """The epic's delivery dir. 2026-10-14 review: resolved from the session's project dir (`CLAUDE_PROJECT_DIR`, set by Claude Code
+    for hooks; an agent cannot change it) before the Bash cwd, which an agent controls — else a `.turnstile` + forged state.json in
+    a scratch dir would unlock thread replies and re-requests. Falls back to the cwd when the project holds no `.turnstile`."""
     sys.path.insert(0, str(plugin_root()))
     from turnstile_cli import paths
+    anchor = os.environ.get("CLAUDE_PROJECT_DIR")
+    if anchor:
+        try:
+            return paths.find_delivery(pathlib.Path(anchor), None)
+        except Exception:
+            pass
     return paths.find_delivery(pathlib.Path(cwd or "."), None)
 
 def load_state(cwd: str):

@@ -1,4 +1,4 @@
-import os, pathlib, posixpath, re, shlex, sys
+import os, pathlib, posixpath, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, block, agent_role, plugin_root, load_state
 
@@ -7,7 +7,7 @@ GIT = r"\bgit(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+)|--?[\w.-]+(?:=\S+)?))*\
 GH = r"\bgh(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+"
 PR = r"pr(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+"
 COPILOT = "copilot-pull-request-reviewer[bot]"
-WRITE_FLAGS = r"(?:-X\s*(?:POST|PUT|PATCH)|--method[\s=]+(?:POST|PUT|PATCH)|\s-[fF]\s|--field|--raw-field|--input|\s-d\s)"
+WRITE_FLAGS = r"(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--method[\s=]+(?:POST|PUT|PATCH|DELETE)|\s-[fFd](?!-)|--field|--raw-field|--input|--data)"
 
 RULES = [
     ("merge", GH + PR + r"merge\b"),
@@ -268,40 +268,6 @@ def _file_contents(flat: str, cwd: str):
         except OSError:
             continue
 
-SHELL_OPS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;", "\n"}
-
-def _pr_create_reviewer(joined: str, stripped: str) -> None:
-    """`gh pr create --reviewer|-r <login>` requests a human review (2026-10-14 review): the lead's, like --add-reviewer. Parsed with
-    shell quoting so a title or body that mentions `-r` passes; an unparsable command falls back to the quote-stripped text."""
-    try:
-        lex = shlex.shlex(joined, posix=True, punctuation_chars=True); lex.whitespace_split = True
-        words = list(lex)
-    except ValueError:
-        if re.search(GH + PR + r"create\b[^\n;&|]*\s(?:--reviewer\b|-[dfwe]*r)", stripped):
-            block("blocked by rule pr-create-reviewer. `gh pr create --reviewer` requests a human review: the lead requests reviewers.")
-        return
-    i = 0
-    while i < len(words):
-        if words[i].rsplit("/", 1)[-1] != "gh":
-            i += 1; continue
-        j = i + 1
-        while j < len(words) and words[j] in ("-R", "--repo"):
-            j += 2
-        while j < len(words) and words[j].startswith(("-R=", "--repo=")):
-            j += 1
-        if words[j:j + 1] == ["pr"]:
-            k = j + 1
-            while k < len(words) and (words[k] in ("-R", "--repo") or words[k].startswith(("-R=", "--repo="))):
-                k += 1 if "=" in words[k] else 2
-            if words[k:k + 1] == ["create"]:
-                for w in words[k + 1:]:
-                    if w in SHELL_OPS:
-                        break
-                    if w == "--reviewer" or w.startswith("--reviewer=") or re.match(r"^-[dfwe]*r", w):
-                        block("blocked by rule pr-create-reviewer. `gh pr create --reviewer` requests a human review: the lead requests reviewers "
-                              "(the agents only re-request a REWORK PR's thread authors through requested_reviewers).")
-        i = j
-
 def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
@@ -309,7 +275,8 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
         _check(flat, role)
     _review_writes(stripped, cwd)
     _reviewer_requests(re.sub(r"[ \t]+", " ", stripped), cwd)
-    _pr_create_reviewer(joined, stripped)
+    _cli_words(joined)
+    _interpreter_heredocs(joined)
     if WRITE_CTX.search(stripped):
         for name, text in _file_contents(stripped, cwd):
             for rule, rx in CONTENT_RULES:
@@ -405,9 +372,12 @@ GQL_REVIEW_WRITES = re.compile(r"\b(?:addPullRequestReview(?:Comment|Thread|Thre
                                r"|(?:un)?minimizeComment)\b")
 GQL_RESOLVE = re.compile(r"\b(?:un)?resolveReviewThread\b")
 THREAD_ID = re.compile(r"\bPRRT_[A-Za-z0-9_-]+")
-ROUTE = re.compile(r"(?:^|[\s/=])/?repos/([^/\s]+)/([^/\s]+)/(pulls|issues)/([^\s?#]*)")
+ROUTE = re.compile(r"(?:^|[\s/=])/?repos/([^/\s]+)/([^/\s]+)/(pulls|issues|commits|comments)(?:/([^\s?#]*))?")
+REPO_ID_ROUTE = re.compile(r"(?:^|[\s/=])/?repositories/[^/\s]+/")
 METHOD = re.compile(r"(?:^|\s)(?:-X|--method|--request)(?:\s*|=)([A-Za-z]+)")
-PARAMS = re.compile(r"(?:^|\s)(?:-[fFd]|--field|--raw-field|--input|--data(?:-raw|-binary|-urlencode)?|--json)(?:\s|=|$)")
+# a body or a field makes a write; short flags may carry their value attached (`-fbody=x`, `-d@file`), so no boundary after them
+PARAMS = re.compile(r"(?:^|\s)(?:-[fFdT](?!-)|--field|--raw-field|--input|--data|--json|--form|--upload-file|--post-data|--post-file|--body-data|--body-file)")
+SHELL_COMPUTED = re.compile(r"[$`()]")
 COMPUTED = re.compile(r"[$`{}*]")
 API_FLAGS_WITH_ARG = {"-X", "--method", "-H", "--header", "-f", "-F", "--field", "--raw-field", "--input", "-q", "--jq", "-t", "--template",
                       "--cache", "-p", "--preview", "--hostname", "-R", "--repo"}
@@ -418,7 +388,11 @@ def _method(seg: str) -> str:
     m = METHOD.search(seg)
     if m:
         return m.group(1).upper()
-    return "POST" if PARAMS.search(seg) else "GET"  # gh api: parameters without -X make a POST
+    if PARAMS.search(seg):
+        return "POST"  # gh api: parameters without -X make a POST; curl: a body does
+    if "api.github.com" in seg and not GH_API.search(seg) and not re.search(r"(?:^|\s)(?:\S*/)?curl\s", seg):
+        return "POST"  # wget, httpie, an interpreter: the guard cannot read their method, so it assumes a write (2026-10-14 review)
+    return "GET"
 
 def _api_endpoint(seg: str):
     m = GH_API.search(seg)
@@ -432,6 +406,10 @@ def _api_endpoint(seg: str):
     return None
 
 def _route_kind(kind: str, parts):
+    if kind == "commits":  # commit comments show in the PR conversation too (2026-10-14 review)
+        return "commit-comment" if len(parts) >= 2 and parts[1] == "comments" else None
+    if kind == "comments":  # repos/<o>/<r>/comments/<id>: a commit comment's edit or deletion
+        return "commit-comment" if parts else None
     if kind == "pulls":
         if len(parts) >= 4 and parts[1] == "comments" and parts[3] == "replies":
             return "reply"
@@ -469,6 +447,11 @@ def _reply_verdict(org: str, repo: str, number: str, comment_id: str, cwd: str):
     return threads.reply_refusal(data, org, repo, number, comment_id, lambda pid: github.fetch(pid, epic_org).threads)
 
 def _resolve_check(flat: str) -> None:
+    calls = len(GQL_RESOLVE.findall(flat))
+    tids = re.findall(r"threadId\s*:\s*([^\s,})]+)", flat)
+    if len(tids) < calls or any(not re.match(r"^PRRT_[A-Za-z0-9_-]+$", t) for t in tids):
+        block("blocked by rule resolve-thread. Every resolveReviewThread names its threadId in the query as a literal PRRT_… id (no variable, no "
+              "input object, no legacy node id), so the guard can ask GitHub who opened each thread; only bot (Copilot) threads are resolved here.")
     ids = sorted(set(THREAD_ID.findall(flat)))
     if not ids:
         block("blocked by rule resolve-thread. Name the review thread id literally (PRRT_…): only bot (Copilot) threads are resolved here, after a "
@@ -490,6 +473,10 @@ def _review_writes(flat: str, cwd: str) -> None:
         _issue_comment_refused()
     if not (GH_API.search(flat) or "api.github.com" in flat):
         return
+    for seg in _segments(flat):  # 2026-10-14 review: GraphQL only through `gh api graphql`, whose query the guard reads
+        if "api.github.com/graphql" in seg and not GH_API.search(seg):
+            block("blocked by rule graphql-non-gh. GraphQL goes through `gh api graphql -f query='…'` with a literal query; curl, wget or an "
+                  "interpreter posting to api.github.com/graphql carries a body the guard cannot read.")
     if re.search(r"\bgraphql\b", flat):
         m = GQL_REVIEW_WRITES.search(flat)
         if m:
@@ -504,6 +491,16 @@ def _review_writes(flat: str, cwd: str) -> None:
         ep = _api_endpoint(seg)
         if method != "GET" and not routes and ep and COMPUTED.search(ep):
             block("blocked by rule rest-computed-route. A REST write to a computed endpoint (%s) cannot be checked: name the route literally." % ep)
+        if method != "GET":  # 2026-10-14 review: the route the guard reads must be the route GitHub serves
+            if REPO_ID_ROUTE.search(seg):
+                block("blocked by rule rest-repository-id-route. A REST write through /repositories/<id>/… hides the repo; name repos/<org>/<repo>/… literally.")
+            for w in seg.split():
+                if "repos/" in w or "api.github.com" in w:
+                    path = re.sub(r"^\S*?https?://", "", w)
+                    if SHELL_COMPUTED.search(w):
+                        block("blocked by rule rest-computed-route. A REST write names its route literally (%s is computed)." % w[:80])
+                    if "//" in path or "%" in path or re.search(r"(?:^|/)\.\.?(?:/|$)", path):
+                        block("blocked by rule rest-noncanonical-route. A REST write names its route canonically: no `//`, `.`, `..` or %%-escapes (%s)." % w[:80])
         for m in routes:
             org, repo, kind, rest = m.groups()
             parts = [x for x in rest.split("/") if x]
@@ -516,6 +513,9 @@ def _review_writes(flat: str, cwd: str) -> None:
                 if why:
                     block(why)
             elif rk and method != "GET":
+                if rk == "commit-comment":
+                    block("blocked by rule commit-comment. Commit comments, their edits and deletions are refused for every caller (they show in "
+                          "the PR conversation); " + REPLY_HINT + ".")
                 if rk == "review":
                     block("blocked by rule review-submission. Review submissions are refused for every caller; " + REPLY_HINT + ".")
                 if rk == "review-comment":
@@ -563,12 +563,159 @@ def _reviewer_requests(flat: str, cwd: str) -> None:
             continue
         if not GH_API.search(seg) or _method(seg) not in ("POST",):
             block(HUMAN_REQUEST)
-        m = REQ_ROUTE.search(seg)
-        if not m or any(COMPUTED.search(x) or not re.match(r"^[\w.-]+$", x) for x in m.groups()) or not m.group(3).isdigit():
-            block(HUMAN_REQUEST)
+        found = {x.groups() for x in REQ_ROUTE.finditer(seg)}
+        m = REQ_ROUTE.search(" " + (_api_endpoint(seg) or ""))
+        if not m or len(found) != 1 or m.groups() not in found or any(COMPUTED.search(x) or not re.match(r"^[\w.-]+$", x) for x in m.groups()) \
+                or not m.group(3).isdigit():
+            block(HUMAN_REQUEST)  # 2026-10-14 review: one literal route, and it is the endpoint (a decoy in a header names another PR)
         why = _rerequest_verdict(m.group(1), m.group(2), m.group(3), people, cwd)
         if why:
             block(why)
+
+# 2026-10-14 review: a quote-aware word scan of the raw command for what the quote-stripped regexes cannot see — a gh word the
+# shell computes (`gh $(echo pr) comment`, `$(which gh) pr …`), `gh pr create --reviewer`, `gh pr|issue close|reopen --comment`,
+# `gh alias set|import` (an alias hides the subcommand), a shell running computed text, inline interpreter code that drives gh or the
+# GitHub API, and a GraphQL query the shell computes.
+OPS = set(";&|()<>\n")
+WRAPPERS = {"command", "exec", "env", "xargs", "nohup", "time", "sudo", "nice", "timeout"}
+INTERPRETERS = {"python", "python3", "node", "deno", "bun", "perl", "ruby", "php", "osascript"}
+CODE_FLAGS = {"-c", "-e", "-E", "-p", "-r", "--eval", "--print", "-ne", "-pe"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+GH_REF = re.compile(r"(?<![\w-])gh(?![\w-])|api\.github\.com")
+
+def _words(text: str):
+    """[(word, computed, op)]: shell words with `computed` set when part of the word is a $-expansion or a backtick outside single
+    quotes ($(…) and `…` stay inside the word), and operators (; & | ( ) < > newline) as their own entries. Never raises."""
+    out, cur, comp, started, q, i, n = [], [], False, False, None, 0, len(text)
+    def flush():
+        nonlocal cur, comp, started
+        if started:
+            out.append(("".join(cur), comp, False))
+        cur, comp, started = [], False, False
+    def sub(j, close):  # copy $( … ) / ` … ` into the word
+        depth, k = 1, j
+        while k < n and depth:
+            if close == ")" and text[k] == "(":
+                depth += 1
+            elif text[k] == close:
+                depth -= 1
+            k += 1
+        return k
+    while i < n:
+        c = text[i]
+        if q == "'":
+            if c == "'":
+                q = None
+            else:
+                cur.append(c)
+            i += 1; continue
+        if c == "$" and i + 1 < n and text[i + 1] == "(":
+            k = sub(i + 2, ")"); cur.append(text[i:k]); comp = started = True; i = k; continue
+        if c == "`":
+            k = sub(i + 1, "`"); cur.append(text[i:k]); comp = started = True; i = k; continue
+        if q == '"':
+            if c == '"':
+                q = None
+            elif c == "\\" and i + 1 < n:
+                cur.append(text[i + 1]); i += 1
+            else:
+                comp = comp or c == "$"; cur.append(c)
+            i += 1; continue
+        if c in " \t":
+            flush()
+        elif c in OPS:
+            flush(); out.append((c, False, True))
+        elif c in "'\"":
+            q = c; started = True
+        elif c == "\\" and i + 1 < n:
+            cur.append(text[i + 1]); started = True; i += 1
+        else:
+            comp = comp or c == "$"; cur.append(c); started = True
+        i += 1
+    flush()
+    return out
+
+def _commands(words):
+    """Each simple command as [(word, computed)], wrappers and VAR=value prefixes dropped from the front."""
+    cmd = []
+    for w, comp, op in words + [("\n", False, True)]:
+        if op:
+            while cmd and (re.match(r"^\w+=", cmd[0][0]) or cmd[0][0].rsplit("/", 1)[-1] in WRAPPERS or (cmd[0][0].startswith("-") and len(cmd) > 1)):
+                cmd.pop(0)
+            if cmd:
+                yield cmd
+            cmd = []
+        else:
+            cmd.append((w, comp))
+
+def _skip_repo(cmd, j):
+    while j < len(cmd) and (cmd[j][0] in ("-R", "--repo") or cmd[j][0].startswith(("-R=", "--repo="))):
+        j += 1 if "=" in cmd[j][0] else 2
+    return j
+
+def _cli_words(joined: str) -> None:
+    for cmd in _commands(_words(joined)):
+        head, comp = cmd[0]
+        name = head.rsplit("/", 1)[-1]
+        nxt = cmd[1][0] if len(cmd) > 1 else ""
+        if comp and nxt in ("pr", "issue", "api", "alias", "repo", "release", "extension"):
+            block("blocked by rule gh-computed. The command word is computed (%s) before `%s`: name the gh binary literally so the guard can read the call." % (head[:40], nxt))
+        if name in ("eval",) and any(c for _, c in cmd[1:]) or name in SHELLS and any(w == "-c" for w, _ in cmd[1:2]) and any(c for _, c in cmd[2:3]):
+            block("blocked by rule shell-computed. A shell that runs computed text (eval / sh -c \"$(…)\") runs code the guard does not see.")
+        if name in INTERPRETERS:
+            for k, (w, _) in enumerate(cmd[1:], 1):
+                if (w in CODE_FLAGS or re.match(r"^-[A-Za-z]*[ce]$", w)) and k + 1 < len(cmd) and GH_REF.search(cmd[k + 1][0]):
+                    block("blocked by rule inline-code-github. Inline %s code that runs gh or calls the GitHub API is refused: the guard cannot read "
+                          "its requests; run gh directly." % name)
+        if name != "gh":
+            continue
+        j = _skip_repo(cmd, 1)
+        if j >= len(cmd):
+            continue
+        sub, sub_comp = cmd[j]
+        if sub_comp:
+            block("blocked by rule gh-computed. The gh subcommand is computed (%s): name it literally." % sub[:40])
+        if sub == "alias" and j + 1 < len(cmd) and cmd[j + 1][0] in ("set", "import"):
+            block("blocked by rule gh-alias. gh aliases hide the subcommand they run from the guard; call gh directly.")
+        if sub == "api":
+            if any(w == "graphql" or w.endswith("/graphql") for w, _ in cmd[j + 1:]):
+                for w, c in cmd[j + 1:]:
+                    if "query=" in w and c:
+                        block("blocked by rule graphql-computed. The GraphQL query is computed by the shell ($(…), `…` or $VAR): pass it literally in "
+                              "single quotes (-f query='…') so the guard can read the mutation.")
+            continue
+        if sub not in ("pr", "issue"):
+            continue
+        k = _skip_repo(cmd, j + 1)
+        if k >= len(cmd):
+            continue
+        action, action_comp = cmd[k]
+        if action_comp:
+            block("blocked by rule gh-computed. The gh %s action is computed (%s): name it literally." % (sub, action[:40]))
+        rest = [w for w, _ in cmd[k + 1:]]
+        if sub == "pr" and action == "create" and any(w == "--reviewer" or w.startswith("--reviewer=") or re.match(r"^-[dfwe]*r", w) for w in rest):
+            block("blocked by rule pr-create-reviewer. `gh pr create --reviewer` requests a human review: the lead requests reviewers (the agents "
+                  "only re-request a REWORK PR's thread authors through requested_reviewers).")
+        if action in ("close", "reopen") and any(w in ("-c", "--comment") or w.startswith(("-c=", "--comment=")) or re.match(r"^-d+c", w) for w in rest):
+            block("blocked by rule issue-comment. `gh %s %s --comment` posts a PR conversation comment; comments are refused for every caller; %s."
+                  % (sub, action, REPLY_HINT))
+
+def _interpreter_heredocs(joined: str) -> None:
+    """An interpreter fed a heredoc (python3 - <<'EOF' …) runs that body: refused when the body drives gh or the GitHub API."""
+    lines, i = joined.split("\n"), 0
+    while i < len(lines):
+        m = re.search(r"<<-?\s*[\"']?(\w+)[\"']?", lines[i])
+        if m:
+            head = (lines[i].strip().split() or [""])[0].rsplit("/", 1)[-1]
+            body = []
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip() == m.group(1):
+                    break
+                body.append(lines[j])
+            if (head in INTERPRETERS or head in SHELLS) and GH_REF.search("\n".join(body)):
+                block("blocked by rule inline-code-github. A %s heredoc that runs gh or calls the GitHub API is refused: run gh directly." % head)
+            i += len(body) + 1
+        i += 1
 
 def main():
     p = read_payload()
