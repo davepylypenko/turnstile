@@ -24,6 +24,32 @@ class SkillFiles(unittest.TestCase):
             self.assertIn(cli, text, cli)
         self.assertNotIn("you run `turnstile approve", text.lower())
         self.assertIn("-r2", text)  # 2026-10-14 minor 13: a second round gets a new brief name, never --force over the first
+    def test_token_discipline_section_and_models_from_the_agent_line(self):
+        # lead rules 2026-10-19 / 2026-10-26
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
+        self.assertIn("## Token discipline", text)
+        for doc in (text, readme):
+            for needle in ["2026-10-19", "2026-10-26", "Monitor", "never a cron", "still waiting", "once per head", "P1/P2",
+                           "one at a time", "different repositories", "never reads diffs or runs suites" if doc is readme else "never read a diff",
+                           "epic.models", "--models", "AGENT:"]:
+                self.assertIn(needle, doc, needle)
+            self.assertNotIn("xhigh, story-reviewer fable", doc); self.assertNotIn("the rest opus", doc)
+        self.assertIn("model=opus effort=medium", text); self.assertNotIn("reviewer opus xhigh", text)
+        self.assertNotIn("reviewer (opus, xhigh)", readme); self.assertIn("story-reviewer (opus, high)", readme)
+    def test_preferences_section_three_layers_and_review_skill_semantics(self):
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
+        self.assertIn("## preferences", text); self.assertIn("### Per-person overrides", readme)
+        for doc in (text, readme):
+            for needle in ["~/.config/turnstile/config.json", "TURNSTILE_USER_CONFIG", "turnstile config list", "config set review_skill=/my-review",
+                           "epic.review_skill", "epic.story_review_skill", "--epic", "--deep-review", "gate_check", "never in git"]:
+                self.assertIn(needle, doc, needle)
+        self.assertIn("one** batched", text); self.assertIn("Never ask what the user file already answers".lower(), text.lower()); self.assertIn("reviewer on sonnet", text)
+        self.assertIn("turnstile config set models.reviewer=sonnet:medium", readme); self.assertIn("neither replaces the repo gate", readme)
+        for name in ("reviewer", "story-reviewer"):
+            agent = (ROOT / "agents" / (name + ".md")).read_text(); brief = (REFS / "briefs" / (name + ".md")).read_text()
+            self.assertIn("BLOCKED: review skill", agent); self.assertIn("BLOCKED: review skill", brief)
+        self.assertIn("{{review_skill}}", (REFS / "briefs" / "reviewer.md").read_text()); self.assertIn("{{story_review_skill}}", (REFS / "briefs" / "story-reviewer.md").read_text())
+        self.assertIn("turnstile config", (ROOT / "templates" / "CLAUDE.md.workspace").read_text())
     def test_every_reference_link_exists(self):
         for md in [SKILL / "SKILL.md"] + list(REFS.glob("*.md")) + list((REFS / "env").glob("*.md")) + list((REFS / "briefs").glob("*.md")):
             for rel in re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", md.read_text()):

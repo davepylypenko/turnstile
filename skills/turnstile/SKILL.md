@@ -54,7 +54,8 @@ and base from GitHub; refused when the base is not the story branch or another P
 1. `turnstile init --epic <KEY> --workitem <slug> --knowledge <pdffiller-knowledge clone> --lead <login> --lead-github
    <GitHub login> --github-org <org> --repo '<json>'… --variant <v> --desk <d>` — creates the knowledge worktree on
    `epic/<key>`, `delivery/`, `.turnstile`, the workspace `CLAUDE.md`. Repo JSON keys: `name, base, epic_branch, slack,
-   gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix`.
+   gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix`; `--models '{"reviewer":{"effort":"high"}}'`
+   seeds `epic.models` (defaults: `turnstile config list`); then run `## preferences`.
 2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`;
    write `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400
    logic lines, test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
@@ -62,6 +63,18 @@ and base from GitHub; refused when the base is not the story branch or another P
    approve line; wait. Without the approval no story leaves `PLANNED` (no `--reason` override).
 4. After the lead approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`,
    then dispatch implementers per the merge order.
+
+## preferences (right after init, and whenever the lead asks)
+
+Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` or `$TURNSTILE_USER_CONFIG`, never in git) >
+epic state (`epic.models`, `epic.review_skill`, `epic.story_review_skill`) > plugin defaults. Ask the lead **one** batched
+question — "Do you use your own review skill (name it), and do you want a different model/effort for any agent? Current
+effective values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`,
+`config set review_skill=/my-review`, `config set story_review_skill=…` (user layer; `--epic` only when the lead says it is for the
+whole epic or team; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions ("use my
+/x-review skill", "reviewer on sonnet") map to the same commands; never ask what the user file already answers; `turnstile status`
+prints the effective line. `review_skill` is what the `reviewer` runs for the deep review (`--deep-review` report), `story_review_skill`
+the story-reviewer's; neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 
 ## dispatch <agent> <brief>
 
@@ -76,9 +89,10 @@ and base from GitHub; refused when the base is not the story branch or another P
    For `tester` pass `--var test_user=<address>`; the password is never in the prompt or the brief — the tester reads
    `TURNSTILE_TEST_PASSWORD` or the keychain item `turnstile-test-password` itself at login (`references/env/pdffiller-dev.md`
    § Credentials); the tester resolves its Figma tools per `references/tools/figma.md` and comes back `BLOCKED` when the
-   environment has none. Models: implementer and
-   deployer sonnet, reviewer opus xhigh, story-reviewer fable, the rest opus. One agent per task; parallel agents only across different
-   repos or stories.
+   environment has none. Model and effort come from the `AGENT:` line the command printed (`AGENT: turnstile:reviewer
+   model=opus effort=medium`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
+   Agent tool — never pick a model yourself. The reviewer briefs carry the resolved review skill. One agent per task;
+   parallel agents only across different repositories (`## Token discipline`).
 3. On return read the ≤ 8-line reply (the report is in `reports/`), record the facts with `turnstile pass` / `bug`,
    then reply to the lead. Never paste agent output into the chat.
 
@@ -138,6 +152,16 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
    and the re-request are the notification; the pass checks GitHub (`reviewRequests`, request newer than the replies). A push-only
    rework (no reviewer comment since the PR last went to humans) takes no `--rerequested`: it records `reviewer_notified: false`,
    the board reads "reviewers not notified", and you tell the lead, who decides whether to ping.
+
+## Token discipline (lead rules 2026-10-19, 2026-10-26)
+
+- Agents run on the cheapest model that does the job: the `AGENT:` line of `turnstile brief` decides (no Opus outside the two
+  review agents unless the lead's config says so). Agents start one at a time; in parallel only across different repositories.
+- Waiting on GitHub, CI or a deploy goes through `Monitor` or one background command that re-invokes you when it exits;
+  never a cron, a loop skill or a watchdog. No interim "still waiting" messages to the lead: report when there is a fact.
+- The repo gate (`pdf-review` or the repo's review skill) runs once per head; re-run it only for P1/P2 (`blocker`/`major`)
+  findings — minor fixes land without a re-review. Leftovers go to human review.
+- You dispatch; you never read a diff, run a suite or paste agent output into the chat.
 
 ## Bugs on the board
 

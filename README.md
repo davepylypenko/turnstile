@@ -94,6 +94,28 @@ Verified end to end on 2026-10-30 (`docs/superpowers/reviews/2026-10-30-onboardi
   of a REWORK PR's thread authors passes once every thread has its reply and the head is clean (lead rule 2026-10-14).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
   anything reaches human review.
+- Token discipline (lead rules 2026-10-19, 2026-10-26): every agent's model and effort come from `epic.models`
+  (`init --models`, defaults: implementer, deployer, tester sonnet; stack-step, comments-handler, investigator haiku;
+  reviewer opus medium; story-reviewer opus high) and `turnstile brief` prints them on its `AGENT:` line; agents start
+  one at a time, in parallel only across different repositories; waiting on GitHub or CI goes through `Monitor` or a background command,
+  never a cron or watchdog, with no interim "still waiting" messages to the lead; the repo gate runs once per head and is
+  re-run only for P1/P2 findings; the orchestrator dispatches and never reads diffs or runs suites itself.
+
+### Per-person overrides
+
+Three layers, highest first: **user** (`~/.config/turnstile/config.json`, or `$TURNSTILE_USER_CONFIG`; per person,
+never in git) > **epic** (`epic.models`, `epic.review_skill`, `epic.story_review_skill` in `state.json`, written through
+the same guarded commit path as `pass`) > **plugin defaults**. `turnstile config list` prints every effective value with its source;
+`turnstile config set <key>=<value>` writes the user file, `--epic` the epic state; `turnstile config unset <key> [--epic]`
+(or `=default`) resets. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
+`review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
+the story-reviewer's; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
+
+```
+turnstile config set review_skill=/my-review
+turnstile config set models.reviewer=sonnet:medium
+```
 
 ## Usage
 
@@ -205,8 +227,10 @@ Every deploy record, ENV_TESTING pass and DONE also asks GitHub for the head of 
 when any differs (a push without `pass pr` leaves `state.json` stale); `--offline` records `deploy.head_verified: false`
 and DONE refuses it.
 
-Agents (`agents/`): implementer (sonnet), reviewer (opus, xhigh), story-reviewer (fable), stack-step, comments-handler,
-investigator, tester (opus, Figma parity), deployer (sonnet); launched as `turnstile:<name>` with a brief from
+Agents (`agents/`): implementer, deployer, tester (sonnet; the tester does Figma parity), stack-step, comments-handler,
+investigator (haiku), reviewer (opus, medium), story-reviewer (opus, high); the frontmatter defaults equal `epic.models`,
+which `init --models '{"<agent>":{"model":…,"effort":…}}'` overrides per epic (model `haiku|sonnet|opus|fable`, effort
+`low|medium|high|xhigh`). Launched as `turnstile:<name>` with the model and effort from the `AGENT:` line of
 `turnstile brief`.
 
 ### How the lead approves
@@ -228,7 +252,7 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset` (per-person and per-epic models and review skills), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
