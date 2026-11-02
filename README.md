@@ -72,9 +72,20 @@ Without the shim the CLI is
 
 Verified end to end on 2026-10-30 (`docs/superpowers/reviews/2026-10-30-onboarding-check.md`).
 
+## Continuing someone else's epic
+
+`turnstile attach --knowledge ../knowledge --epic MYD-1 [--workspace .] [--workitem my-epic]` fetches `origin/epic/<key>`,
+adds the knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, writes `.turnstile` and
+the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and prints `status`; then the
+skill's `## preferences` step asks for this person's own review skill and models. Every writer first fetches: a worktree
+behind origin is refused (`MISSING: epic branch behind origin by N commits — run: turnstile sync`). `turnstile sync` fetches,
+fast-forwards and pushes — never rebase, never force; diverged histories print both heads and wait for the lead to merge.
+
 ## What you get
 
-- `state.json` — a single source of truth for the epic, in git, readable by any session or person.
+- `state.json` — a single source of truth for the epic, in git, readable by any session or person. Every write is
+  committed to the epic branch of the knowledge repo and pushed to origin at once (`SYNC:` opens every `status`; a failed
+  push is a `WARN` plus `turnstile sync`; `--no-push` for offline work, after which READY and beyond wait for a sync).
 - `turnstile pass` — the only way to change state; validates DoR/DoD, verifies the PR head against GitHub, then writes
   the ledger, renders the board, commits the state and tells you which Jira transition to make.
 - `turnstile reconcile` — read-only drift check against GitHub; every command it proposes is one `pass` would accept.

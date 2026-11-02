@@ -11,7 +11,9 @@ The state is `delivery/state.json` in the knowledge worktree (found through `.tu
 `references/lifecycle.md` (DoR/DoD per state with the exact `turnstile pass` call). Templates: `references/pr-body.md`,
 `references/slack.md`, `references/reports.md`, `references/evidence.md`; env recipes in `references/env/`.
 The CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`; `turnstile …` below means that path, or the bare name when the lead
-installed the PATH shim (`scripts/install-cli.sh`). The Bash guard treats both spellings alike.
+installed the PATH shim (`scripts/install-cli.sh`). The Bash guard treats both spellings alike. Every write is committed to
+the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHED` or "behind origin" run `turnstile sync`
+(fetch, fast-forward, push; never rebase or force — diverged histories go to the lead). `--no-push` only for offline work.
 
 ## Rules that never bend
 
@@ -75,6 +77,12 @@ whole epic or team; `=default` / `config unset` resets) and show `turnstile conf
 /x-review skill", "reviewer on sonnet") map to the same commands; never ask what the user file already answers; `turnstile status`
 prints the effective line. `review_skill` is what the `reviewer` runs for the deep review (`--deep-review` report), `story_review_skill`
 the story-reviewer's; neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+
+## attach (continue an epic from another machine)
+
+"Continue epic X" → `turnstile attach --knowledge <clone> --epic <KEY> [--workspace .] [--workitem <name>]`: fetches
+`origin/epic/<key>`, adds the knowledge worktree, writes `.turnstile` and the workspace `CLAUDE.md`, prints `status`. Run
+`## preferences` next (this person's user file may be empty). A worktree behind origin refuses every writer until `turnstile sync`.
 
 ## dispatch <agent> <brief>
 

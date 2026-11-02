@@ -17,7 +17,7 @@ class SkillFiles(unittest.TestCase):
     def test_skill_md_short_with_frontmatter_and_commands(self):
         text = (SKILL / "SKILL.md").read_text(); fm = parse_frontmatter(text)
         self.assertEqual(fm["name"], "turnstile"); self.assertTrue(len(fm["description"]) > 60)
-        self.assertLessEqual(len(text.splitlines()), 170)
+        self.assertLessEqual(len(text.splitlines()), 180)
         for h in ["## init", "## status", "## pass", "## dispatch", "## story-gate", "## plan"]: self.assertIn(h, text)
         for cli in ["turnstile status", "turnstile pass", "! TURNSTILE_LEAD=1 turnstile approve", "turnstile jira-synced", "turnstile plan-submitted",
                     "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--companions"]:
@@ -50,6 +50,13 @@ class SkillFiles(unittest.TestCase):
             self.assertIn("BLOCKED: review skill", agent); self.assertIn("BLOCKED: review skill", brief)
         self.assertIn("{{review_skill}}", (REFS / "briefs" / "reviewer.md").read_text()); self.assertIn("{{story_review_skill}}", (REFS / "briefs" / "story-reviewer.md").read_text())
         self.assertIn("turnstile config", (ROOT / "templates" / "CLAUDE.md.workspace").read_text())
+    def test_attach_and_sync_are_documented(self):
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); ws = (ROOT / "templates" / "CLAUDE.md.workspace").read_text()
+        self.assertIn("## attach", text); self.assertIn("## Continuing someone else's epic", readme)
+        for doc in (text, readme, ws):
+            for needle in ["turnstile sync", "SYNC:", "never rebase", "pushe"]: self.assertIn(needle, doc, needle)
+        for doc in (text, readme):
+            for needle in ["turnstile attach --knowledge", "--epic", "origin/epic/<key>", "behind origin", "--no-push", "preferences", "pushed"]: self.assertIn(needle, doc, needle)
     def test_every_reference_link_exists(self):
         for md in [SKILL / "SKILL.md"] + list(REFS.glob("*.md")) + list((REFS / "env").glob("*.md")) + list((REFS / "briefs").glob("*.md")):
             for rel in re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", md.read_text()):
