@@ -96,6 +96,11 @@ def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: 
 
 def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
     out: List[Proposal] = []
+    for sid, s in data.get("stories", {}).items():
+        mine = {pid: p for pid, p in data["prs"].items() if p.get("story") == sid}
+        if rules.is_trunk(s) and s.get("state") == "IN_PROGRESS" and mine and all(p.get("state") == "MERGED" for p in mine.values()):
+            out.append(Proposal(sid, "trunk_merged", "every PR of %s merged into the base: deploy the base and record it" % sid,
+                                "turnstile pass story %s INTEGRATION_REVIEW --build <build> --head <base sha> [--base-heads repo=sha,…]" % sid))
     for pid, pr in data["prs"].items():
         f = facts.get(pid)
         if f is None:
@@ -226,8 +231,10 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
             print("plan: awaiting approval %s" % ((e or {}).get("id") or "?"))
         from . import config
         print("config: " + config.one_line(config.effective(st.data)))
+        e = st.data["epic"]; modes = sorted({(s.get("mode") or "stack") for s in st.data["stories"].values()})
+        print("flag: %s · story_mode: %s%s" % (e.get("flag") or "none", e.get("story_mode") or "stack", " (stories: %s)" % ", ".join(modes) if modes else ""))
         for sid, s in st.data["stories"].items():
-            print("story %s [%s] %s — %s" % (sid, s.get("state"), s.get("title"), s.get("next_action", "")))
+            print("story %s [%s]%s %s — %s" % (sid, s.get("state"), " (trunk)" if rules.is_trunk(s) else "", s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():
             print("pr %-28s [%s] %s" % (pid, pr.get("state"), pr.get("next_action", "")))
         pending = [a for a in st.data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at")]

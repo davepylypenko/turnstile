@@ -34,6 +34,30 @@ class PrAdd(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf): rc = pass_cmd.run(self.d, "pr", "jsfiller#7", "AI_REVIEW", opts(head="cccccccc33333333", ci="success"), io=self.io)
         self.assertEqual(rc, 0, buf.getvalue()); self.assertEqual(self.data()["prs"]["jsfiller#7"]["state"], "AI_REVIEW")
+    def test_trunk_mode_wants_the_repo_base_unless_stacked_on(self):
+        d = self.data(); d["stories"]["S1"]["mode"] = "trunk"; d["prs"]["jsfiller#1"]["branch"] = "feature/MYD-10"; (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = self.add(); self.assertEqual(rc, 2); self.assertIn("not on the repo base develop", out); self.assertIn("--stacked-on", out); self.assertNotIn("jsfiller#7", self.data()["prs"])
+        self.io.facts["jsfiller#7"]["base"] = "develop"; rc, out = self.add(); self.assertEqual(rc, 0, out)
+        pr = self.data()["prs"]["jsfiller#7"]; self.assertEqual((pr["base"], pr["blocked_by"]), ("develop", None))
+        self.io.heads["jsfiller#8"] = "dddddddd44444444"; self.io.facts["jsfiller#8"] = {"base": "feature/MYD-10", "branch": "feature/MYD-11b"}
+        (self.d / "briefs" / "MYD-10.md").write_text("b\n")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.add(self.d, "jsfiller#8", "S1", "MYD-10", io=self.io)
+        self.assertEqual(rc, 2); self.assertIn("not on the repo base develop", buf.getvalue())
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.add(self.d, "jsfiller#8", "S1", "MYD-10", io=self.io, stacked_on="jsfiller#7")
+        self.assertEqual(rc, 2); self.assertIn("not on the branch of jsfiller#7", buf.getvalue())
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.add(self.d, "jsfiller#8", "S1", "MYD-10", io=self.io, stacked_on="jsfiller#1")
+        self.assertEqual(rc, 0, buf.getvalue()); self.assertEqual(self.data()["prs"]["jsfiller#8"]["blocked_by"], "jsfiller#1")
+        self.io.heads["jsfiller#9"] = "eeeeeeee55555555"; self.io.facts["jsfiller#9"] = {"base": "feature/MYD-11", "branch": "feature/MYD-10c"}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.add(self.d, "jsfiller#9", "S1", "MYD-10", io=self.io, stacked_on="jsfiller#77")
+        self.assertEqual(rc, 2); self.assertIn("must name an open PR of S1", buf.getvalue())
+    def test_stacked_on_is_refused_in_stack_mode(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.add(self.d, "jsfiller#7", "S1", "MYD-11", io=self.io, stacked_on="jsfiller#1")
+        self.assertEqual(rc, 2); self.assertIn("trunk-mode flag", buf.getvalue())
     def test_refusals_write_nothing(self):
         before = (self.d / "state.json").read_text()
         for kw, needle in [(dict(pr="jsfiller#7", story="S9"), "unknown story S9"), (dict(ticket="MYD-99"), "not in stories.S1.tickets"),

@@ -91,6 +91,10 @@ class Agents(unittest.TestCase):
             for needle in ["requested_reviewers", "reviewers[]=", "exactly the thread authors", "push-only", "--add-reviewer"]:
                 self.assertIn(needle, doc, needle)
         self.assertNotIn("no reviewer requests,", text)
+    def test_tester_and_implementer_know_the_epic_flag_and_the_arms(self):
+        tester = (AGENTS / "tester.md").read_text(); impl = (AGENTS / "implementer.md").read_text()
+        for needle in ["treatment", "control", "BLOCKED: no flag toggle", "§ Feature flag"]: self.assertIn(needle, tester, needle)
+        self.assertIn("Trunk mode", impl); self.assertIn("flag off", impl)
     def test_no_agent_carries_frontmatter_hooks(self):
         # round 3: Claude Code 2.1.x ignores hooks/mcpServers/permissionMode in plugin agent frontmatter (warns); the plugin-level guards
         # read the payload's agent_type (turnstile:<role>) instead

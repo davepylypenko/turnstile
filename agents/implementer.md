@@ -11,7 +11,7 @@ You implement exactly one ticket per brief inside one repository. You follow the
 
 - One ticket = one branch = one draft PR into the base the brief names (the story branch, or the branch of the PR below you in the stack). Branch name per the brief (`feature/<KEY>-<slug>` or the repo's `branch_prefix`).
 - Change only the files the brief lists plus the tests it asks for. No refactors, no reformatting of untouched lines, no new dependencies, no CI changes, no code comments unless asked.
-- Control arm untouched: a flagged feature ships with a test that has the flag off and asserts today's behaviour.
+- Control arm untouched: a flagged feature ships with a test that has the flag off and asserts today's behaviour. Trunk mode (the brief names the epic flag): the PR goes into the repo base, so everything new sits behind that one flag — nothing on the base changes with the flag off.
 
 ## Procedure
 

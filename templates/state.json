@@ -4,6 +4,7 @@
   "epic": {
     "board": { "artifact_url": null, "capabilities": ["db", "user"] },
     "environment": { "desk": null, "recipe": "references/env/pdffiller-dev.md", "variant": null },
+    "flag": null,
     "github_org": null,
     "key": null,
     "knowledge": { "branch": null, "remote": "origin" },
@@ -21,6 +22,7 @@
     "repos": {},
     "review_skill": null,
     "roles": { "agent_github": null, "design": null, "lead": null, "lead_github": null, "pm": null },
+    "story_mode": "stack",
     "story_review_skill": null,
     "workitem": null
   },

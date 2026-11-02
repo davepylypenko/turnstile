@@ -7,6 +7,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 {{ticket_key}} — {{ticket_title}}
 Repo `{{repo}}` (org `{{github_org}}`), worktree `{{worktree}}`, base branch `{{base_branch}}`, branch `{{branch}}`.
 Read the repo's `CLAUDE.md` and {{repo_guides}} first.
+Feature flag: `{{flag}}` — every behaviour change sits behind it; with the flag off the control behaviour on the base stays as today, proven by a flag-off test (`none` = no flag for this epic).
 
 ## Scope (implement exactly this)
 {{scope}}

@@ -19,7 +19,9 @@ def build_parser():
                      ("--cases-not-testable", {"type": int, "help": "cases with verdict not_testable_here in the recorded run (default 0)"}),
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
                      ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"}),
-                     ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"})]:
+                     ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"}),
+                     ("--arm", {"choices": ["treatment", "control"], "help": "trunk mode: the arm a recorded env run tested (treatment = flag on, control = flag off)"}),
+                     ("--base-heads", {"help": "trunk mode, with --build --head: repo=sha pairs when the story spans repos (default: --head for every repo)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
     ps.add_argument("--full", action="store_true", help="the recorded env run covered every case of the story (DONE needs a full clean run)")
@@ -34,10 +36,11 @@ def build_parser():
     ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
     ba.add_argument("--case", help="test-case id the bug covers (one bug per story + case; a persisting fail reopens it)")
+    ba.add_argument("--arm", choices=["treatment", "control"], help="trunk mode: the arm the bug was found on (default treatment)")
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
     prp = sub.add_parser("pr", help="register a PR of the epic (DEV) from its GitHub facts"); psub = prp.add_subparsers(dest="pr_cmd"); p.pr_parser = prp
     pa = psub.add_parser("add"); pa.add_argument("ident"); pa.add_argument("--story", required=True); pa.add_argument("--ticket", required=True)
-    pa.add_argument("--no-commit", action="store_true")
+    pa.add_argument("--no-commit", action="store_true"); pa.add_argument("--stacked-on", help="trunk mode: the open PR of the story this PR deliberately stacks on (its base must be that PR's branch)")
     th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
     th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
     th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
@@ -63,11 +66,13 @@ def build_parser():
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
                      ("--agent-github", {"help": "GitHub login the agents post thread replies as (default: --lead-github)"}),
-                     ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, epic_branch, slack[, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
+                     ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, slack[, epic_branch, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
                      ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
                      ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
                      ("--recipe", {"default": "references/env/pdffiller-dev.md"}),
                      ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"}),
+                     ("--flag", {"help": "the one experiment feature flag of the epic (trunk mode; also: turnstile config set flag=<name> --epic)"}),
+                     ("--story-mode", {"default": "stack", "choices": ["stack", "trunk"], "help": "default story mode for plan.md stories without `mode` (trunk recommended: PRs merge into the base behind the flag)"}),
                      ("--models", {"help": "JSON agent → {model, effort} merged over the defaults (model: haiku|sonnet|opus|fable, effort: low|medium|high|xhigh)"})]:
         ini.add_argument(flag, **kw)
     return p
@@ -116,13 +121,13 @@ def main(argv=None):
         if a.cmd == "bug":
             from . import bug_cmd
             if a.bug_cmd == "add":
-                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case, no_push=a.no_push)
+                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case, no_push=a.no_push, arm=a.arm)
             if a.bug_cmd == "set":
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note, no_push=a.no_push)
             return 2
         if a.cmd == "pr":
             from .pr_cmd import add as pr_add
-            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push)
+            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on)
         if a.cmd == "threads":
             from .threads import run as threads_run
             return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit, no_push=a.no_push)

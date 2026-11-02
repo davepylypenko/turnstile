@@ -21,7 +21,7 @@ def _commit(delivery: pathlib.Path, st, summary: str, io, no_push: bool = False)
     print("OK " + summary); return 0
 
 def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None, figma: Optional[str] = None, note: str = "",
-        case: Optional[str] = None, io=None, no_push: bool = False) -> int:
+        case: Optional[str] = None, io=None, no_push: bool = False, arm: Optional[str] = None) -> int:
     from .pass_cmd import IO, _now_s
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -32,17 +32,24 @@ def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None,
             if not (title or "").strip():
                 raise TurnstileError("--title is required")
             _check_pr(pr)
+            from .rules import ARMS, is_trunk, run_arm
+            if arm and arm not in ARMS:
+                raise TurnstileError("--arm must be one of %s" % "|".join(ARMS))
+            if arm and not is_trunk(st.data["stories"][story]):
+                raise TurnstileError("--arm is a trunk-mode flag (story %s is in stack mode)" % story)
             bugs = st.data.setdefault("bugs", [])
-            if case:  # 2026-10-14 finding 5: one bug per story + case; a persisting fail reopens it instead of duplicating
-                dup = next((b for b in bugs if b.get("story") == story and b.get("case") == case), None)
+            if case:  # 2026-10-14 finding 5: one bug per story + case (and arm); a persisting fail reopens it instead of duplicating
+                dup = next((b for b in bugs if b.get("story") == story and b.get("case") == case and run_arm(b) == (arm or "treatment")), None)
                 if dup:
                     raise TurnstileError("bug %s already covers case %s of %s (state %s): reopen it with 'turnstile bug set %s --state todo', or record the "
                                          "run and it is reopened automatically" % (dup["id"], case, story, dup.get("state"), dup["id"]))
             now = _now_s()
             bug = {"id": next_id(bugs), "story": story, "case": case, "title": title.strip(), "source": source, "pr": pr, "figma": figma,
                    "state": "todo", "note": note or "", "runs": [], "created_at": now, "updated_at": now}
+            if arm:
+                bug["arm"] = arm
             bugs.append(bug)
-            return _commit(delivery, st, "bug %s added (%s%s): %s" % (bug["id"], story, ", case " + case if case else "", bug["title"]), io, no_push)
+            return _commit(delivery, st, "bug %s added (%s%s%s): %s" % (bug["id"], story, ", case " + case if case else "", ", " + arm + " arm" if arm else "", bug["title"]), io, no_push)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 

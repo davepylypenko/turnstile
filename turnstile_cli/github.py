@@ -178,6 +178,13 @@ def fetch(pr_id: str, org: str) -> PrFacts:
     pr = json.loads(out.stdout)["data"]["repository"]["pullRequest"]
     return parse(pr_id, pr)
 
+def compare(repo: str, org: str, base: str, head: str) -> str:
+    """GitHub's compare status of head against base: identical / ahead (base contained in head) / behind / diverged."""
+    out = subprocess.run(["gh", "api", "repos/%s/%s/compare/%s...%s" % (org, repo, base, head), "--jq", ".status"], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise TurnstileError("gh api compare failed for %s %s...%s: %s" % (repo, base[:12], head[:12], out.stderr.strip()[:200]))
+    return out.stdout.strip()
+
 NODE_QUERY = "query($id:ID!){ node(id:$id){ ... on PullRequestReviewThread { comments(first:1){ nodes{ author{__typename login} } } } } }"
 
 def thread_author(thread_id: str) -> dict:

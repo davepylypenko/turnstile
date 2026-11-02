@@ -25,6 +25,10 @@ class FakeIO:
         if self.fail_push: raise RuntimeError(self.fail_push)
         self.pushes.append(branch)
     def git_ff(self, delivery, branch): self.ffs.append(branch); self.behind = 0
+    def github_compare(self, repo, org, base, head):
+        self.compares = getattr(self, "compares", []); self.compares.append((repo, base, head))
+        if getattr(self, "compare_fail", None): raise RuntimeError(self.compare_fail)
+        return getattr(self, "compare", {}).get((repo, base), "ahead")
     def git_commit(self, delivery, message):
         if self.fail_commit:
             raise RuntimeError("gpg: signing failed")

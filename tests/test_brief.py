@@ -89,6 +89,14 @@ class Run(unittest.TestCase):
         rc, out = self.run_brief("reviewer", "REVIEW-1-r2", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=opus effort=high\n", out)
         rc, out = self.run_brief("implementer", "MYD-11", self.all_vars("implementer")); self.assertIn("AGENT: turnstile:implementer model=haiku effort=low\n", out)
         rc, out = self.run_brief("deployer", "DEPLOY-x", self.all_vars("deployer")); self.assertIn("AGENT: turnstile:deployer model=sonnet\n", out)
+    def test_tester_and_implementer_briefs_carry_the_epic_flag_and_the_arm(self):
+        from turnstile_cli import state
+        rc, out = self.run_brief("tester", "ENV-S1", self.all_vars("tester")); self.assertEqual(rc, 0, out)
+        text = (self.d / "briefs" / "ENV-S1.md").read_text(); self.assertIn("Feature flag: `none` · arm: `treatment`", text)
+        d = json.loads((self.d / "state.json").read_text()); d["epic"]["flag"] = "pwr-l2f-funnel"; (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = self.run_brief("tester", "ENV-S1-control", self.all_vars("tester") + ["arm=control"]); self.assertEqual(rc, 0, out)
+        text = (self.d / "briefs" / "ENV-S1-control.md").read_text(); self.assertIn("Feature flag: `pwr-l2f-funnel` · arm: `control`", text); self.assertIn("--arm control", text)
+        rc, out = self.run_brief("implementer", "MYD-10", self.all_vars("implementer")); self.assertIn("Feature flag: `pwr-l2f-funnel`", (self.d / "briefs" / "MYD-10.md").read_text())
     def test_review_briefs_carry_the_resolved_review_skill_user_layer_first(self):
         from turnstile_cli import config, state
         rc, out = self.run_brief("reviewer", "REVIEW-2", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)

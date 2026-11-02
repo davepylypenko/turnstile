@@ -28,6 +28,13 @@ Use an isolated headless browser (Playwright) with its own profile / user-data d
 visible Chrome, never a shared devtools MCP session. Viewport per the Figma frame; device scale factor 1 unless the
 frame is retina.
 
+## Feature flag
+
+Trunk-mode epics ship behind one experiment flag (`epic.flag`). The lead records here how to toggle it on this environment (e.g. the AB
+Tower / feature-flag admin URL, a cookie or query parameter, or an account allowlist) and how to prove the state (an XHR field, a DOM
+marker). The tester toggles it only that way: `treatment` = flag on, `control` = flag off. No method recorded here → the tester
+replies `BLOCKED: no flag toggle for <flag> on <environment>` before the first case; it never guesses.
+
 ## Builds
 Front: `static.version` of each app on the variant (deployer records it). Monolith: variant image tag (`DEV_ECR_TAG`).
 Record both in the `ENV-<S>.md` header.

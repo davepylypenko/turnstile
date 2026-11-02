@@ -84,10 +84,13 @@ function stories() {
   document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
     Object.entries(STATE.stories || {}).map(([sid, s]) => {
       const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
-      const e = s.evidence || {};
-      const ev = ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—'),
-                  'env ' + (e.env_test ? (((e.env_test.cases || {}).fail === 0 && e.env_test.figma_parity === 'pass') ? '✓' : '✗ ' + ((e.env_test.cases || {}).fail == null ? '?' : e.env_test.cases.fail) + ' fail') : '—')].join(' · ');
-      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
+      const e = s.evidence || {}, trunk = s.mode === 'trunk';
+      const runMark = r => r ? ((((r.cases || {}).fail === 0) && (r.figma_parity === 'pass' || (r.arm === 'control' && r.figma_parity === 'not_testable_here'))) ? '✓' : '✗ ' + ((r.cases || {}).fail == null ? '?' : r.cases.fail) + ' fail') + (r.full ? '' : ' (partial)') : '—';
+      const lastArm = a => (e.env_runs || []).filter(r => (r.arm || 'treatment') === a).slice(-1)[0];
+      const ev = ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—')]
+        .concat(trunk ? ['treatment ' + runMark(lastArm('treatment')), 'control ' + runMark(lastArm('control'))] : ['env ' + runMark(e.env_test)]).join(' · ');
+      const mode = trunk ? '<br><span class="muted">trunk · flag ' + esc((STATE.epic || {}).flag || 'none') + '</span>' : '';
+      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 const BUG_STATES = ['todo', 'ai', 'testing', 'done'];

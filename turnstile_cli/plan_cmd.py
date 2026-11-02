@@ -6,10 +6,13 @@ from .errors import TurnstileError
 BLOCK_RX = re.compile(r"```json[ \t]+turnstile-stories[ \t]*\n(.*?)\n```", re.S)
 ID_RX = re.compile(r"^S\d+$")
 REQUIRED = ("title", "tickets", "repos", "branch")
-DEFAULTS = {"after": [], "parallel_with": [], "test_cases": [], "figma": [], "env_slot": {}, "human_review_units": []}
+DEFAULTS = {"after": [], "parallel_with": [], "test_cases": [], "control_cases": [], "figma": [], "env_slot": {}, "human_review_units": []}
+MODES = ("stack", "trunk")
 KEEP = ("state", "evidence", "next_action", "last_reason")
 
-def stories_from_plan(text: str) -> dict:
+def stories_from_plan(text: str, default_mode: str = "stack") -> dict:
+    if default_mode not in MODES:
+        raise TurnstileError("epic.story_mode must be one of %s (is %r)" % ("|".join(MODES), default_mode))
     m = BLOCK_RX.search(text or "")
     if not m:
         raise TurnstileError("plan.md has no ```json turnstile-stories block")
@@ -29,6 +32,11 @@ def stories_from_plan(text: str) -> dict:
             if not s.get(k):
                 raise TurnstileError("story %s lacks %r" % (sid, k))
         full = copy.deepcopy(DEFAULTS); full.update(copy.deepcopy(s))
+        full.setdefault("mode", default_mode)
+        if full["mode"] not in MODES:
+            raise TurnstileError("story %s.mode must be one of %s (is %r)" % (sid, "|".join(MODES), full["mode"]))
+        if not isinstance(full["control_cases"], list):
+            raise TurnstileError("story %s.control_cases must be a list" % sid)
         out[sid] = full
     for sid, s in out.items():
         for key in ("after", "parallel_with"):
@@ -71,7 +79,7 @@ def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> in
             if not plan_path.exists():
                 raise TurnstileError("no plan.md in %s" % delivery)
             text = plan_path.read_text()
-            planned = stories_from_plan(text)
+            planned = stories_from_plan(text, (data.get("epic") or {}).get("story_mode") or "stack")
             before = set(data.get("stories") or {})
             data["stories"], warnings = merge_stories(data.get("stories") or {}, planned)
             digest = st_mod.digest(text)

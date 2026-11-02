@@ -40,6 +40,10 @@ class ParseRepo(unittest.TestCase):
         for bad in ['{"name":"x"}', "not json", '["jsfiller"]', '{"name":"x","base":"b","epic_branch":"e","slack":"c","gate":"g","unknown":1}']:
             with self.assertRaises(TurnstileError, msg=bad):
                 init_cmd.parse_repo(bad)
+    def test_epic_branch_is_optional_and_defaults_to_the_base(self):
+        _, cfg = init_cmd.parse_repo('{"name":"app","base":"main","slack":"C9"}')
+        self.assertEqual(cfg["epic_branch"], "main"); self.assertEqual(cfg["base"], "main")
+        with self.assertRaises(TurnstileError): init_cmd.parse_repo('{"name":"app","epic_branch":"e","slack":"C9"}')
     def test_epic_branch_name(self):
         self.assertEqual(init_cmd.epic_branch_name("MYD-16538"), "epic/myd-16538")
 
@@ -105,6 +109,16 @@ class Init(unittest.TestCase):
                     '{"reviewer":{"tools":"x"}}', '{"reviewer":{}}', '{"reviewer":"opus"}']:
             with self.assertRaises(TurnstileError, msg=bad): models.parse(bad)
         io = FakeGit(); self.assertEqual(init_cmd.run(opts(self.tmp / "ws9", self.knowledge, models='{"reviewer":{"model":"gpt"}}'), io), 2); self.assertEqual(io.calls, [])
+    def test_init_records_flag_and_story_mode(self):
+        import contextlib, io as _io
+        st = init_cmd.build_state(opts(self.ws, self.knowledge, flag=" pwr-l2f-funnel ", story_mode="trunk"))["epic"]
+        self.assertEqual((st["flag"], st["story_mode"]), ("pwr-l2f-funnel", "trunk"))
+        st = init_cmd.build_state(opts(self.ws, self.knowledge))["epic"]; self.assertEqual((st["flag"], st["story_mode"]), (None, "stack"))
+        with self.assertRaises(TurnstileError): init_cmd.build_state(opts(self.ws, self.knowledge, story_mode="branchy"))
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge, flag="pwr-x", story_mode="trunk"), FakeGit())
+        self.assertEqual(rc, 0); self.assertIn("flag=pwr-x", buf.getvalue())
+        t = json.loads((init_cmd.TEMPLATES / "state.json").read_text())["epic"]; self.assertIn("flag", t); self.assertEqual(t["story_mode"], "stack")
     def test_init_prints_the_effective_config_and_the_preferences_prompt(self):
         import contextlib, io as _io
         from turnstile_cli import config

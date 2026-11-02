@@ -135,6 +135,8 @@ def _story_gates_passed(pr: dict, stories: Optional[Dict[str, dict]], out: List[
     s = (stories or {}).get(sid)
     if s is None:
         out.append("MISSING story %s in state (the PR's story is unknown, so its gates cannot be verified)" % sid)
+    elif is_trunk(s):
+        return
     elif s.get("state") != "DONE" and s.get("human_review") != "per_pr":
         out.append("MISSING story %s to be DONE (is %s): human review receives only stories that passed integration review and env testing "
                    "(lead-set human_review: per_pr in plan.md exempts a legacy story)" % (sid, s.get("state")))
@@ -245,6 +247,18 @@ STORY_FROM = {
     "DONE": ["ENV_TESTING"],
 }
 PR_AT_LEAST_READY = ["READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
+STORY_MODES = ("stack", "trunk")
+ARMS = ("treatment", "control")
+
+def is_trunk(story: Optional[dict]) -> bool:
+    return (story or {}).get("mode") == "trunk"
+
+def run_arm(run: Optional[dict]) -> str:
+    return (run or {}).get("arm") or "treatment"
+
+def last_run_of(story: dict, arm: str) -> Optional[dict]:
+    runs = [r for r in ((story.get("evidence") or {}).get("env_runs") or []) if run_arm(r) == arm]
+    return runs[-1] if runs else None
 
 ACTIVE_STORY_STATES = ("IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING")
 
@@ -271,6 +285,37 @@ def _prs_at_least_ready(story: dict, prs: Dict[str, dict], out: List[str]) -> No
     for pid, p in prs.items():
         if p.get("story") == story.get("_id") and p.get("state") not in PR_AT_LEAST_READY:
             out.append("MISSING PR %s at least READY (is %s)" % (pid, p.get("state")))
+
+def _prs_all_merged(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
+    mine = {pid: p for pid, p in prs.items() if p.get("story") == story.get("_id")}
+    if not mine:
+        out.append("MISSING at least one PR of story %s (trunk mode gates review the merged PRs)" % story.get("_id"))
+    for pid, p in mine.items():
+        if p.get("state") != "MERGED":
+            out.append("MISSING PR %s to be MERGED into the repo base (is %s): trunk mode reviews and tests the story after its PRs merged" % (pid, p.get("state")))
+        elif not p.get("merged_sha"):
+            out.append("MISSING merged_sha of %s (recorded by pass pr %s MERGED --merged-sha <sha>)" % (pid, pid))
+
+def _arm_run_clean(story: dict, arm: str, out: List[str]) -> None:
+    run = last_run_of(story, arm)
+    label = "env_runs[%s]" % arm
+    if run is None:
+        out.append("MISSING a recorded %s-arm run (pass story %s ENV_TESTING --arm %s --report … --cases-pass … --full)" % (arm, story.get("_id"), arm))
+        return
+    dp = (story.get("evidence") or {}).get("deploy") or {}
+    if not same_head(run.get("head"), dp.get("head")):
+        out.append("MISSING %s.head == evidence.deploy.head (%s vs %s)" % (label, run.get("head"), dp.get("head")))
+    cases = run.get("cases") or {}
+    if "fail" not in cases:
+        out.append("MISSING %s.cases.fail (explicit count)" % label)
+    elif cases.get("fail") != 0:
+        out.append("MISSING %s.cases.fail == 0 (has %s)" % (label, cases.get("fail")))
+    allowed = ("pass",) if arm == "treatment" else ("pass", "not_testable_here")
+    if run.get("figma_parity") not in allowed:
+        out.append("MISSING %s.figma_parity in %s (has %s)" % (label, "/".join(allowed), run.get("figma_parity")))
+    if not run.get("full"):
+        out.append("MISSING %s.full (DONE needs one full final run per arm: pass story %s ENV_TESTING --arm %s … --full)" % (label, story.get("_id"), arm))
+    _full_run_covers_every_case(story, out, run)
 
 def _stacked_into_story_branch(story: dict, prs: Dict[str, dict], out: List[str]) -> None:
     """Spec §4.2 IN_PROGRESS DoD: every ticket PR of the story is stacked or merged into the story branch. A PR's base is
@@ -344,20 +389,21 @@ def last_env_run(story: dict) -> Optional[dict]:
     runs = ev.get("env_runs") or []
     return runs[-1] if runs else (ev.get("env_test") or None)
 
-def _full_run_covers_every_case(story: dict, out: List[str]) -> None:
+def _full_run_covers_every_case(story: dict, out: List[str], run: Optional[dict] = None) -> None:
     """Round 2 R2-10: --full is not self-declared. A full run's pass + fail + not_testable_here equals the story's test-case
-    count from the approved plan; a story without test cases cannot have a full run."""
-    run = last_env_run(story) or {}
+    count from the approved plan (the control arm's against control_cases); a story without cases cannot have a full run."""
+    run = run if run is not None else (last_env_run(story) or {})
     if not run.get("full"):
         return
     cases = run.get("cases") or {}
     total = (cases.get("pass") or 0) + (cases.get("fail") or 0) + (cases.get("not_testable_here") or 0)
-    n = len(story.get("test_cases") or [])
+    key = "control_cases" if run_arm(run) == "control" else "test_cases"
+    n = len(story.get(key) or [])
     if n == 0:
-        out.append("MISSING stories.%s.test_cases (plan.md lists the story's cases; a --full run is measured against them)" % story.get("_id"))
+        out.append("MISSING stories.%s.%s (plan.md lists the story's cases; a --full run is measured against them)" % (story.get("_id"), key))
     elif total != n:
-        out.append("MISSING --full run to cover the story's %d test case%s: pass + fail + not_testable_here is %d (--cases-not-testable counts the "
-                   "cases with verdict not_testable_here)" % (n, "" if n == 1 else "s", total))
+        out.append("MISSING --full run to cover the story's %d %s: pass + fail + not_testable_here is %d (--cases-not-testable counts the "
+                   "cases with verdict not_testable_here)" % (n, key.replace("_", " ")[:-1] + ("" if n == 1 else "s"), total))
 
 def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) -> None:
     """Spec §4.2 ENV_TESTING DoD, 2026-10-14 finding 5: every failed case of the last run has a bug keyed by story + case id
@@ -370,11 +416,12 @@ def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) 
     failed = last.get("failed_cases") or []
     if n != len(failed):
         out.append("MISSING --cases-fail %d to equal the number of --failed-cases ids (%d: %s)" % (n, len(failed), ", ".join(failed) or "none"))
-    open_cases = {b.get("case") for b in bugs or [] if b.get("story") == sid and b.get("case") and b.get("state") != "done"}
+    arm = run_arm(last)
+    open_cases = {b.get("case") for b in bugs or [] if b.get("story") == sid and b.get("case") and b.get("state") != "done" and run_arm(b) == arm}
     for case in failed:
         if case not in open_cases:
-            out.append("MISSING a bug for failed case %s of %s (turnstile bug add --story %s --case %s --title … --source …; a done bug of the "
-                       "same case is reopened when the run is recorded)" % (case, sid, sid, case))
+            out.append("MISSING a bug for failed case %s of %s (turnstile bug add --story %s --case %s%s --title … --source …; a done bug of the "
+                       "same case is reopened when the run is recorded)" % (case, sid, sid, case, " --arm control" if arm == "control" else ""))
 
 def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None,
                 bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None,
@@ -397,24 +444,42 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         entry = latest_entry(awaiting, "start_story", "story", sid)  # the lead's word, full stop: no --reason bypass (2026-10-14 finding 2)
         check_approved_entry(approved or (entry or {}).get("id"), "start_story", "story", sid, awaiting, out)
         return out
+    trunk = is_trunk(story)
     if target == "INTEGRATION_REVIEW":
-        _prs_at_least_ready(story, prs, out)
-        _stacked_into_story_branch(story, prs, out)
+        if trunk:
+            _prs_all_merged(story, prs, out)
+        else:
+            _prs_at_least_ready(story, prs, out); _stacked_into_story_branch(story, prs, out)
         dp = (story.get("evidence") or {}).get("deploy") or {}
         if not dp.get("build"):
-            out.append("MISSING evidence.deploy.build (stack top deployed to the story env slot)")
+            out.append("MISSING evidence.deploy.build (%s deployed to the story env slot)" % ("repo base with the merged PRs" if trunk else "stack top"))
         if not dp.get("head"):
-            out.append("MISSING evidence.deploy.head (stack-top sha that was deployed; pass --head)")
-        _deploy_is_stack_top(story, prs, out)
+            out.append("MISSING evidence.deploy.head (%s sha that was deployed; pass --head)" % ("base" if trunk else "stack-top"))
+        if not trunk:
+            _deploy_is_stack_top(story, prs, out)
         return out
     if target == "ENV_TESTING":
-        _prs_at_least_ready(story, prs, out)
+        if trunk:
+            _prs_all_merged(story, prs, out)
+        else:
+            _prs_at_least_ready(story, prs, out); _deploy_is_stack_top(story, prs, out)
         _review_head_bound(story, out)
-        _deploy_is_stack_top(story, prs, out)
         if recording_run:
             _run_bound_to_deploy(story, out, "env_runs[-1]")
             _full_run_covers_every_case(story, out)
         _fails_became_bugs(story, bugs, out)
+        return out
+    if target == "DONE" and trunk:
+        _prs_all_merged(story, prs, out)
+        _review_head_bound(story, out)
+        _deploy_heads_verified(story, out)
+        for arm in ARMS:
+            _arm_run_clean(story, arm, out)
+        for b in bugs or []:
+            if b.get("story") == sid and b.get("state") != "done":
+                out.append("MISSING bug %s to be done (is %s)" % (b.get("id"), b.get("state")))
+        entry = latest_entry(awaiting, "story_done", "story", sid)
+        check_approved_entry(approved or (entry or {}).get("id"), "story_done", "story", sid, awaiting, out)
         return out
     if target == "DONE":
         _prs_at_least_ready(story, prs, out)
@@ -445,6 +510,12 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
 
 def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
     s = story.get("state")
+    if is_trunk(story):
+        return {"PLANNED": "wait for the lead to start it",
+                "IN_PROGRESS": "bring every PR to MERGED (each goes to humans on its own, behind the epic flag), deploy the base head, then pass INTEGRATION_REVIEW --build --head",
+                "INTEGRATION_REVIEW": "run the story-reviewer agent on the merged diff until clean, then pass ENV_TESTING",
+                "ENV_TESTING": "run the tester agent on both arms (--arm treatment: flag on; --arm control: flag off); fix bugs; re-run; then pass DONE",
+                "DONE": "done; the PRs are on the base behind the flag"}.get(s, "")
     return {"PLANNED": "wait for the lead to start it",
             "IN_PROGRESS": "bring every PR to READY, deploy the stack top, then pass INTEGRATION_REVIEW",
             "INTEGRATION_REVIEW": "run the story-reviewer agent until clean, then pass ENV_TESTING",

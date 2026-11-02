@@ -94,6 +94,13 @@ class Config(unittest.TestCase):
         out_of(config_cmd.set_, self.d, "review_skill=/my-review", io=self.io)  # the user layer still wins over the epic one
         rc, out = out_of(config_cmd.list_, self.d); self.assertIn("review_skill = /my-review (user)", out); self.assertIn("USER_CONFIG: %s" % self.user, out)
 
+    def test_flag_is_epic_only(self):
+        rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", io=self.io); self.assertEqual(rc, 2); self.assertIn("flag is epic state", out); self.assertFalse(self.user.exists())
+        rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", epic=True, io=self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["epic"]["flag"], "pwr-l2f"); self.assertIn("flag = pwr-l2f (epic)", out); self.assertIn("flag=pwr-l2f", config.one_line(config.effective(self.data(), {})))
+        rc, out = out_of(config_cmd.set_, self.d, "flag=", epic=True, io=self.io); self.assertEqual(rc, 2); self.assertIn("non-empty flag name", out)
+        rc, out = out_of(config_cmd.unset, self.d, "flag", epic=True, io=self.io); self.assertEqual(rc, 0); self.assertIsNone(self.data()["epic"]["flag"]); self.assertIn("flag = none (default)", out)
+        self.assertIn("config set flag=pwr-l2f (epic)", (self.d / "ledger.md").read_text())
     def test_list_without_a_delivery(self):
         rc, out = out_of(config_cmd.list_, None)
         self.assertEqual(rc, 0); self.assertIn("EPIC: none", out); self.assertIn("(absent)", out)

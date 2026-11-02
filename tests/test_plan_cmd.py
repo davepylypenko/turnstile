@@ -26,6 +26,23 @@ class Parse(unittest.TestCase):
             with self.assertRaises(TurnstileError, msg=bad[:40]):
                 plan_cmd.stories_from_plan(bad)
 
+class TrunkMode(unittest.TestCase):
+    def test_mode_defaults_from_the_epic_and_control_cases_parse(self):
+        s = plan_cmd.stories_from_plan(PLAN)
+        self.assertEqual((s["S1"]["mode"], s["S2"]["mode"], s["S1"]["control_cases"]), ("stack", "stack", []))
+        s = plan_cmd.stories_from_plan(PLAN, "trunk"); self.assertEqual((s["S1"]["mode"], s["S2"]["mode"]), ("trunk", "trunk"))
+        text = PLAN.replace('"test_cases": ["TP-1"]', '"test_cases": ["TP-1"], "mode": "stack", "control_cases": ["CC-1", "CC-2"]')
+        s = plan_cmd.stories_from_plan(text, "trunk"); self.assertEqual((s["S1"]["mode"], s["S1"]["control_cases"], s["S2"]["mode"]), ("stack", ["CC-1", "CC-2"], "trunk"))
+        for bad, default in [(PLAN.replace('"test_cases": ["TP-1"]', '"test_cases": ["TP-1"], "mode": "branchy"'), "stack"), (PLAN, "x"),
+                             (PLAN.replace('"test_cases": ["TP-1"]', '"test_cases": ["TP-1"], "control_cases": "CC-1"'), "stack")]:
+            with self.assertRaises(TurnstileError): plan_cmd.stories_from_plan(bad, default)
+    def test_plan_submitted_uses_epic_story_mode(self):
+        d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; d.mkdir(); shutil.copy(FIX, d / "state.json"); (d / ".state.lock").touch()
+        data = json.loads((d / "state.json").read_text()); data["epic"]["story_mode"] = "trunk"; (d / "state.json").write_text(state.dumps(data))
+        (d / "plan.md").write_text(PLAN)
+        with contextlib.redirect_stdout(io.StringIO()): self.assertEqual(plan_cmd.run(d, io=FakeIO()), 0)
+        st = json.loads((d / "state.json").read_text())["stories"]; self.assertEqual((st["S1"]["mode"], st["S2"]["mode"], st["S2"]["control_cases"]), ("trunk", "trunk", []))
+
 class Merge(unittest.TestCase):
     def test_keeps_state_of_existing_and_plans_new(self):
         existing = json.loads(FIX.read_text())["stories"]

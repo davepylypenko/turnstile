@@ -7,8 +7,8 @@ from .errors import TurnstileError
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "templates"
 PLAN_TEMPLATE = ROOT / "skills" / "turnstile" / "references" / "plan.md"
-REPO_REQUIRED = ("name", "base", "epic_branch", "slack")
-REPO_KEYS = REPO_REQUIRED + ("gate", "gate_check", "ci_ignore", "copilot", "branch_prefix")
+REPO_REQUIRED = ("name", "base", "slack")
+REPO_KEYS = REPO_REQUIRED + ("epic_branch", "gate", "gate_check", "ci_ignore", "copilot", "branch_prefix")
 
 @dataclass
 class InitOptions:
@@ -30,6 +30,8 @@ class InitOptions:
     chat_language: str = "English"
     agent_github: Optional[str] = None
     models: Optional[str] = None
+    flag: Optional[str] = None
+    story_mode: str = "stack"
 
 class InitIO:
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
@@ -53,7 +55,7 @@ def parse_repo(spec: str) -> Tuple[str, dict]:
         raise TurnstileError("--repo has unknown key(s) %s (allowed: %s)" % (", ".join(unknown), ", ".join(REPO_KEYS)))
     gate = raw.get("gate") or None
     gate_check = raw["gate_check"] if "gate_check" in raw else gate
-    cfg = {"base": raw["base"], "epic_branch": raw["epic_branch"], "slack": raw["slack"], "gate": gate, "gate_check": gate_check,
+    cfg = {"base": raw["base"], "epic_branch": raw.get("epic_branch") or raw["base"], "slack": raw["slack"], "gate": gate, "gate_check": gate_check,
            "ci_ignore": list(raw["ci_ignore"]) if "ci_ignore" in raw else ([gate_check] if gate_check else []),
            "copilot": bool(raw.get("copilot", False))}
     if raw.get("branch_prefix"):
@@ -75,6 +77,9 @@ def build_state(o: InitOptions) -> dict:
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
     e["models"] = models.parse(o.models)
     e["knowledge"] = {"branch": epic_branch_name(o.epic), "remote": "origin"}
+    if o.story_mode not in ("stack", "trunk"):
+        raise TurnstileError("--story-mode must be stack or trunk (got %r)" % o.story_mode)
+    e["flag"] = (o.flag or "").strip() or None; e["story_mode"] = o.story_mode
     return data
 
 def write_workspace_claude_md(ws: pathlib.Path, epic_key: str, rel: str, chat_language: str) -> pathlib.Path:

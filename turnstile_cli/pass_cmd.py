@@ -38,6 +38,8 @@ class Options:
     full: bool = False
     no_commit: bool = False
     no_push: bool = False
+    arm: Optional[str] = None
+    base_heads: Optional[str] = None
 
 class IO:
     """Everything that touches the world; injectable so tests stay offline."""
@@ -82,6 +84,9 @@ class IO:
     def github_head(self, pr_id: str, org: str) -> str:
         from . import github
         return github.fetch(pr_id, org).head
+    def github_compare(self, repo: str, org: str, base: str, head: str) -> str:
+        from . import github
+        return github.compare(repo, org, base, head)
 
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
@@ -261,6 +266,10 @@ def _apply_story_evidence(story: dict, o: Options) -> None:
         run = {"report": o.report, "cases": {"pass": o.cases_pass, "fail": o.cases_fail, "not_testable_here": o.cases_not_testable or 0},
                "failed_cases": failed, "figma_parity": o.figma_parity,
                "full": bool(o.full), "build": o.build, "head": head, "at": _now()}
+        if rules.is_trunk(story):
+            run["arm"] = o.arm or "treatment"
+        elif o.arm:
+            raise TurnstileError("--arm is a trunk-mode flag (story %s is in stack mode)" % story.get("_id"))
         ev.setdefault("env_runs", []).append(run)
         ev["env_test"] = run
     elif o.report:
@@ -269,12 +278,57 @@ def _apply_story_evidence(story: dict, o: Options) -> None:
         if not o.build or not head:
             raise TurnstileError("--build and --head go together when recording a deploy (the build number and the stack-top sha on the slot)")
         ev["deploy"] = {"build": o.build, "head": head, "at": _now()}
+        if o.base_heads:
+            if not rules.is_trunk(story):
+                raise TurnstileError("--base-heads is a trunk-mode flag (story %s is in stack mode)" % story.get("_id"))
+            ev["deploy"]["base_heads"] = _parse_base_heads(o.base_heads)
+    elif o.base_heads:
+        raise TurnstileError("--base-heads goes with --build --head (a deploy record)")
+
+def _parse_base_heads(spec: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for item in spec.split(","):
+        repo, _, sha = item.partition("=")
+        if not repo.strip() or not sha:
+            raise TurnstileError("--base-heads takes repo=sha pairs (got %r)" % item)
+        if not rules.valid_head(sha.strip()):
+            raise TurnstileError("--base-heads %s: sha must be 8–40 hex characters" % repo)
+        out[repo.strip()] = sha.strip().lower()
+    return out
+
+def _verify_trunk_deploy(story: dict, sid: str, data: dict, o: Options, io: IO, notes: List[str]) -> List[str]:
+    """Trunk mode: the deploy is the repo base; GitHub must show every merged PR's merge commit contained in the deployed head of
+    its repo (compare status identical/ahead) and no PR of the story still open. The merged shas become deploy.heads."""
+    dp = (story.get("evidence") or {}).get("deploy") or {}
+    if not dp.get("head"):
+        return []
+    mine = {pid: p for pid, p in data["prs"].items() if p.get("story") == sid}
+    if o.offline:
+        notes.append("WARN --offline: merged PRs of %s NOT verified against the deployed base head; DONE stays refused until an online story pass" % sid)
+        dp["head_verified"] = {"verified": False}; dp["heads"] = {pid: p.get("merged_sha") for pid, p in mine.items()}
+        return []
+    org = rules.require_org(data); out: List[str] = []; heads = {}
+    for pid, p in sorted(mine.items()):
+        if p.get("state") != "MERGED" or not p.get("merged_sha"):
+            out.append("MISSING PR %s MERGED with merged_sha before the trunk integration review (is %s)" % (pid, p.get("state"))); continue
+        repo = pid.split("#", 1)[0]; base_head = (dp.get("base_heads") or {}).get(repo) or dp.get("head")
+        try:
+            status = io.github_compare(repo, org, p["merged_sha"], base_head)
+        except Exception as e:
+            raise TurnstileError("GitHub compare for %s unavailable (%s); fix gh or use --offline (DONE refuses it)" % (pid, e))
+        if status not in ("identical", "ahead"):
+            out.append("MISSING merge commit %s of %s contained in the deployed %s head %s (compare status %s): deploy a newer base and re-record it"
+                       % (p["merged_sha"][:12], pid, repo, (base_head or "")[:12], status))
+        heads[pid] = p["merged_sha"]
+    if not out:
+        dp["heads"] = heads; dp["head_verified"] = {"verified": True, "at": _now()}
+    return out
 
 def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> None:
     """2026-10-14 finding 5: a failing case whose bug exists (keyed story + case) gets the run appended; a done bug is reopened."""
     for case in run.get("failed_cases") or []:
         for b in data.get("bugs") or []:
-            if b.get("story") == sid and b.get("case") == case:
+            if b.get("story") == sid and b.get("case") == case and rules.run_arm(b) == rules.run_arm(run):
                 b.setdefault("runs", []).append({"build": run.get("build"), "head": run.get("head"), "report": run.get("report"), "at": run.get("at")})
                 if b.get("state") == "done":
                     b["state"] = "todo"; b["updated_at"] = _now_s()
@@ -475,7 +529,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 if target in ("INTEGRATION_REVIEW", "ENV_TESTING", "DONE"):
                     if target == "DONE" and o.offline:
                         raise TurnstileError("DONE verifies every deployed PR head against GitHub; --offline is refused here")
-                    missing_heads = _verify_story_heads(trial, ident, data, o, io, notes)
+                    verify = _verify_trunk_deploy if rules.is_trunk(trial) else _verify_story_heads
+                    missing_heads = verify(trial, ident, data, o, io, notes)
                 plan_missing = None
                 if target == "IN_PROGRESS" and story.get("state") == "PLANNED":
                     plan_path = delivery / "plan.md"

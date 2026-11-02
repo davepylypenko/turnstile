@@ -27,6 +27,8 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
             raise TurnstileError("config set needs key=value (keys: %s)" % config.KEYS_HELP)
         key, value = assignment.split("=", 1); key = key.strip()
         section, agent = config.parse_key(key)
+        if key == "flag" and not epic:
+            raise TurnstileError("flag is epic state (one flag per epic): turnstile config set flag=<name> --epic")
         reset = value.strip() == "default"
         parsed = None if reset else config.parse_value(key, value)
         verb = "unset" if reset else "set"

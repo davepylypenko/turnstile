@@ -13,6 +13,20 @@ class Bugs(unittest.TestCase):
     def test_next_id(self):
         self.assertEqual(bug_cmd.next_id([]), "b01"); self.assertEqual(bug_cmd.next_id([{"id": "b03"}, {"id": "b11"}, {"id": "x"}]), "b12")
 
+    def test_arm_is_trunk_only_and_keys_the_case(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = bug_cmd.add(self.d, "S1", "x", "tester", case="TP-1", arm="control", io=self.io)
+        self.assertEqual(rc, 2); self.assertIn("trunk-mode flag", buf.getvalue())
+        d = self.data(); d["stories"]["S1"]["mode"] = "trunk"; (self.d / "state.json").write_text(json.dumps(d))
+        with contextlib.redirect_stdout(buf): rc = bug_cmd.add(self.d, "S1", "x", "tester", case="TP-1", arm="control", io=self.io)
+        self.assertEqual(rc, 0); self.assertEqual(self.data()["bugs"][0]["arm"], "control"); self.assertIn("control arm", buf.getvalue())
+        with contextlib.redirect_stdout(buf): rc = bug_cmd.add(self.d, "S1", "y", "tester", case="TP-1", io=self.io)
+        self.assertEqual(rc, 0); self.assertNotIn("arm", self.data()["bugs"][1])  # treatment: a different key than the control bug
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = bug_cmd.add(self.d, "S1", "z", "tester", case="TP-1", arm="control", io=self.io)
+        self.assertEqual(rc, 2); self.assertIn("already covers case TP-1", buf.getvalue())
+        with contextlib.redirect_stdout(buf): rc = bug_cmd.add(self.d, "S1", "z", "tester", case="TP-2", arm="both", io=self.io)
+        self.assertEqual(rc, 2)
     def test_add_and_set(self):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
