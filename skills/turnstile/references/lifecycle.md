@@ -47,6 +47,14 @@ startable); two stories run at once only when the approved `plan.md` lists them 
 has its own branch, stack, slot and tester run. Human review receives a story's units only after DONE (or with
 `human_review: per_pr` set by the lead in `plan.md` for a legacy story).
 
+Trunk mode (`stories.<S>.mode: trunk`, default `epic.story_mode`): the PR rows above apply unchanged except that `ON_HUMAN_REVIEW`
+does not wait for the story (every PR merges into the repo base behind `epic.flag`; `pr add` requires that base unless
+`--stacked-on`). The story rows change: **IN_PROGRESS** ends when every PR is **MERGED**; **INTEGRATION_REVIEW** records the
+deployed base (`--build --head [--base-heads repo=sha,…]`) and verifies on GitHub that each `merged_sha` is contained in it
+(`deploy.heads` = the merged shas, `head_verified`); **ENV_TESTING** records runs per arm (`--arm treatment|control`; a full control
+run covers `control_cases`, its parity may be `not_testable_here`); **DONE** needs the last run of each arm full and clean on
+`deploy.head`, every bug done (`bug add --arm`), the lead's `story_done` word.
+
 ## Jira mapping (printed by `pass`, performed through the Atlassian MCP, recorded with `jira-synced`)
 
 DEV / AI_REVIEW / READY → In progress · ON_HUMAN_REVIEW / REWORK / APPROVED → On Review · MERGED → On Hold.

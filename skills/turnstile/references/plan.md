@@ -19,9 +19,13 @@ One story = one business slice that is testable and releasable on its own. If th
 define the slices here and give the rationale. `human_review: per_pr` is lead-set and exempts a legacy story from the
 story gates (README "The lead's word").
 
-| Story | Title | Tickets | Repos | Story branch | After | Parallel with | Env slot |
-|---|---|---|---|---|---|---|---|
-| S1 | | | | | — | | variant / desk |
+| Story | Title | Tickets | Repos | Mode | Story branch | After | Parallel with | Env slot |
+|---|---|---|---|---|---|---|---|---|
+| S1 | | | | trunk / stack | | — | | variant / desk |
+
+`mode: trunk` (default from `epic.story_mode`): the ticket PRs merge into the repo base behind the epic flag (`epic.flag`), each
+reaching humans on its own; the story gates run after the merges on the deployed base, with two env arms (`test_cases` with the
+flag on, `control_cases` with the flag off). `mode: stack`: the ticket PRs stack into the story branch and the gates precede human review.
 
 ## 3. Merge order and stack
 
@@ -35,9 +39,9 @@ branch or another PR of the same story), file overlaps with parallel stories and
 
 ## 5. Test-case map and Figma frames
 
-| Story | Test cases | Figma frames (`file:node`) | Parity tolerance |
-|---|---|---|---|
-| S1 | TP-… | | 1 px, exact colour |
+| Story | Test cases (treatment) | Control cases (trunk: flag off) | Figma frames (`file:node`) | Parity tolerance |
+|---|---|---|---|---|
+| S1 | TP-… | CC-… | | 1 px, exact colour |
 
 ## 6. Inputs needed from humans
 
@@ -53,9 +57,11 @@ branch or another PR of the same story), file overlaps with parallel stories and
     "tickets": [],
     "repos": [],
     "branch": "",
+    "mode": "trunk",
     "after": [],
     "parallel_with": [],
     "test_cases": [],
+    "control_cases": [],
     "figma": [],
     "env_slot": { "variant": null, "desk": null },
     "human_review_units": []

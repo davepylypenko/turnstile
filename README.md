@@ -72,6 +72,21 @@ Without the shim the CLI is
 
 Verified end to end on 2026-10-30 (`docs/superpowers/reviews/2026-10-30-onboarding-check.md`).
 
+## Trunk mode (one flag per epic)
+
+Recommended for new epics: `init --story-mode trunk --flag <experiment flag>` (`epic.flag`; later `config set flag=<name> --epic`). Every PR goes
+straight into the repo base (`epic.repos.<r>.base`) behind that one flag — `pr add` refuses another base unless `--stacked-on <pr>`
+names a deliberate stack — and flows `DEV → … → MERGED` on its own: the story gates are not a prerequisite for `ON_HUMAN_REVIEW`
+(the old `human_review: per_pr` keeps working for migrated stories). The story gates come **after** the merges: `pass story S
+INTEGRATION_REVIEW --build <n> --head <base sha> [--base-heads repo=sha,…]` records a deploy of the base and verifies on GitHub
+(`compare` status `identical`/`ahead`) that every merged PR's merge commit is contained in it and no PR is still open; the
+story-reviewer reviews the union of the merged diffs on that head. `ENV_TESTING` records two arms on the same head:
+`--arm treatment` (flag on, `stories.<S>.test_cases`) and `--arm control` (flag off, `stories.<S>.control_cases`, parity may be
+`not_testable_here`); bugs carry `--arm`. `DONE` needs the last run of **each** arm full and clean on the deploy head, every bug
+done and every PR merged. `plan.md` stories take `"mode": "trunk" | "stack"` (default `epic.story_mode`, `stack` for old
+epics — stack mode behaves exactly as before) and `"control_cases"`. The tester toggles the flag only as the environment recipe's
+§ Feature flag says (unknown → `BLOCKED`). `epic_branch` in `--repo` is optional now (defaults to the base) and is recorded only.
+
 ## Continuing someone else's epic
 
 `turnstile attach --knowledge ../knowledge --epic MYD-1 [--workspace .] [--workitem my-epic]` fetches `origin/epic/<key>`,

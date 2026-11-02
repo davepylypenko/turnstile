@@ -133,6 +133,14 @@ is deployed to the story's slot (dispatch `deployer`).
    and a parallel start needs `parallel_with` in the approved plan; then `pass pr … ON_HUMAN_REVIEW --head …
    --slack <permalink> --reviewers a,b --approved <ah-id>` after the message went out).
 
+## trunk mode (`stories.<S>.mode: trunk`, `epic.flag`)
+
+PRs merge into the repo base behind the one epic flag and reach humans on their own (`pr add` wants the repo base; `--stacked-on`
+for a deliberate stack). After every PR of the story is MERGED: deploy the base, `pass story S INTEGRATION_REVIEW --build <n>
+--head <base sha>` (GitHub compare proves the merges are in it), story-reviewer on the merged diff, then two tester runs on the
+same head — `ENV-S-treatment` (`--var arm=treatment`) and `ENV-S-control` (`--var arm=control`, flag off, `control_cases`) —
+recorded with `--arm`; `DONE` needs both arms full and clean. The brief carries `{{flag}}`; a tester without a toggle method is BLOCKED.
+
 ## plan (re-plan after a scope change)
 
 Edit `delivery/plan.md` (stories, branches, units, map) with the rationale in `decisions.md`; `turnstile plan-submitted`

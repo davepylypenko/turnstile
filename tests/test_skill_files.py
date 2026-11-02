@@ -17,7 +17,7 @@ class SkillFiles(unittest.TestCase):
     def test_skill_md_short_with_frontmatter_and_commands(self):
         text = (SKILL / "SKILL.md").read_text(); fm = parse_frontmatter(text)
         self.assertEqual(fm["name"], "turnstile"); self.assertTrue(len(fm["description"]) > 60)
-        self.assertLessEqual(len(text.splitlines()), 180)
+        self.assertLessEqual(len(text.splitlines()), 190)
         for h in ["## init", "## status", "## pass", "## dispatch", "## story-gate", "## plan"]: self.assertIn(h, text)
         for cli in ["turnstile status", "turnstile pass", "! TURNSTILE_LEAD=1 turnstile approve", "turnstile jira-synced", "turnstile plan-submitted",
                     "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--companions"]:
@@ -57,6 +57,19 @@ class SkillFiles(unittest.TestCase):
             for needle in ["turnstile sync", "SYNC:", "never rebase", "pushe"]: self.assertIn(needle, doc, needle)
         for doc in (text, readme):
             for needle in ["turnstile attach --knowledge", "--epic", "origin/epic/<key>", "behind origin", "--no-push", "preferences", "pushed"]: self.assertIn(needle, doc, needle)
+    def test_trunk_mode_is_documented(self):
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); plan = (REFS / "plan.md").read_text()
+        life = (REFS / "lifecycle.md").read_text(); recipe = (REFS / "env" / "pdffiller-dev.md").read_text()
+        self.assertIn("## Trunk mode (one flag per epic)", readme); self.assertIn("## trunk mode", text); self.assertIn("## Feature flag", recipe)
+        for doc in (text, readme, life):
+            for needle in ["--arm", "control_cases", "--stacked-on", "epic.flag", "MERGED"]: self.assertIn(needle, doc, needle)
+        for needle in ["--story-mode trunk", "--base-heads", "`identical`/`ahead`", "epic_branch", "human_review: per_pr", "BLOCKED"]: self.assertIn(needle, readme, needle)
+        for needle in ['"mode": "trunk"', '"control_cases": []', "| Mode |", "Control cases"]: self.assertIn(needle, plan, needle)
+        self.assertIn("BLOCKED: no flag toggle", recipe)
+        for name in ("tester", "implementer"):
+            self.assertIn("{{flag}}", (REFS / "briefs" / (name + ".md")).read_text(), name)
+        self.assertIn("{{arm}}", (REFS / "briefs" / "tester.md").read_text())
+        self.assertIn("BLOCKED: no flag toggle", (ROOT / "agents" / "tester.md").read_text()); self.assertIn("flag off", (ROOT / "agents" / "implementer.md").read_text())
     def test_every_reference_link_exists(self):
         for md in [SKILL / "SKILL.md"] + list(REFS.glob("*.md")) + list((REFS / "env").glob("*.md")) + list((REFS / "briefs").glob("*.md")):
             for rel in re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", md.read_text()):
