@@ -19,7 +19,7 @@ def list_(delivery: Optional[pathlib.Path]) -> int:
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 
-def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, io=None, no_commit: bool = False) -> int:
+def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, io=None, no_commit: bool = False, no_push: bool = False) -> int:
     from .pass_cmd import IO, _side_effects
     io = io or IO()
     try:
@@ -40,7 +40,7 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
                     e.setdefault("models", models.defaults())[agent] = dict(models.DEFAULTS[agent]) if reset else parsed
                 else:
                     e[key] = None if reset else parsed
-                _side_effects(delivery, st, ["config %s %s (epic)" % (verb, key if reset else assignment)], io, no_commit)
+                _side_effects(delivery, st, ["config %s %s (epic)" % (verb, key if reset else assignment)], io, no_commit, no_push)
                 data = st.data
         else:
             u = config.load_user()
@@ -63,5 +63,5 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 
-def unset(delivery: Optional[pathlib.Path], key: str, epic: bool = False, io=None, no_commit: bool = False) -> int:
-    return set_(delivery, key + "=default", epic=epic, io=io, no_commit=no_commit)
+def unset(delivery: Optional[pathlib.Path], key: str, epic: bool = False, io=None, no_commit: bool = False, no_push: bool = False) -> int:
+    return set_(delivery, key + "=default", epic=epic, io=io, no_commit=no_commit, no_push=no_push)

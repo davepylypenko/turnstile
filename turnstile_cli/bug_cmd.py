@@ -14,14 +14,14 @@ def _check_pr(pr: Optional[str]) -> None:
     if pr and not PR_RX.match(pr):
         raise TurnstileError("pr must look like repo#123 (got %r)" % pr)
 
-def _commit(delivery: pathlib.Path, st, summary: str, io) -> int:
+def _commit(delivery: pathlib.Path, st, summary: str, io, no_push: bool = False) -> int:
     from .pass_cmd import _side_effects, _recompute_next_actions
     _recompute_next_actions(st.data)
-    _side_effects(delivery, st, [summary], io, False)
+    _side_effects(delivery, st, [summary], io, False, no_push)
     print("OK " + summary); return 0
 
 def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None, figma: Optional[str] = None, note: str = "",
-        case: Optional[str] = None, io=None) -> int:
+        case: Optional[str] = None, io=None, no_push: bool = False) -> int:
     from .pass_cmd import IO, _now_s
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -42,11 +42,11 @@ def add(delivery, story: str, title: str, source: str, pr: Optional[str] = None,
             bug = {"id": next_id(bugs), "story": story, "case": case, "title": title.strip(), "source": source, "pr": pr, "figma": figma,
                    "state": "todo", "note": note or "", "runs": [], "created_at": now, "updated_at": now}
             bugs.append(bug)
-            return _commit(delivery, st, "bug %s added (%s%s): %s" % (bug["id"], story, ", case " + case if case else "", bug["title"]), io)
+            return _commit(delivery, st, "bug %s added (%s%s): %s" % (bug["id"], story, ", case " + case if case else "", bug["title"]), io, no_push)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 
-def set_(delivery, bug_id: str, state: Optional[str] = None, pr: Optional[str] = None, note: Optional[str] = None, io=None) -> int:
+def set_(delivery, bug_id: str, state: Optional[str] = None, pr: Optional[str] = None, note: Optional[str] = None, io=None, no_push: bool = False) -> int:
     from .pass_cmd import IO
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -70,6 +70,6 @@ def set_(delivery, bug_id: str, state: Optional[str] = None, pr: Optional[str] =
             if changes:
                 from .pass_cmd import _now_s
                 bug["updated_at"] = _now_s()
-            return _commit(delivery, st, "bug %s %s" % (bug_id, ", ".join(changes) or "unchanged"), io)
+            return _commit(delivery, st, "bug %s %s" % (bug_id, ", ".join(changes) or "unchanged"), io, no_push)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2

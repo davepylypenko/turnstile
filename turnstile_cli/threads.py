@@ -314,7 +314,7 @@ def _now_s() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[str], report: Optional[str] = None, io=None,
-        no_commit: bool = False) -> int:
+        no_commit: bool = False, no_push: bool = False) -> int:
     """`turnstile threads <pr> --self-resolved <ids> --needs-lead <ids> [--report reports/COMMENTS-<n>.md]`. Ids are GitHub review
     thread ids (PRRT_…) or the REST id of a comment in the thread. Without ids it lists the classification and writes nothing."""
     from . import pass_cmd
@@ -391,7 +391,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
             pending = [m for m in replies_missing(pr, pid, facts.threads, (data.get("epic") or {}).get("roles"), awaiting, org)
                        if m.startswith("MISSING classification") or m.startswith("MISSING re-classification")]
             pass_cmd._recompute_next_actions(data)
-            pass_cmd._side_effects(delivery, st, [summary] + extra, io, no_commit)
+            pass_cmd._side_effects(delivery, st, [summary] + extra, io, no_commit, no_push)
         for line in replies_now + asks:
             print(line)
         for m in pending:

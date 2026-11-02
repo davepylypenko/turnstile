@@ -60,7 +60,7 @@ def merge_stories(existing: dict, planned: dict) -> Tuple[dict, List[str]]:
             raise TurnstileError("cannot drop story %s in state %s; keep it in plan.md" % (sid, cur.get("state")))
     return merged, warnings
 
-def run(delivery, io=None, no_commit: bool = False) -> int:
+def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> int:
     from .pass_cmd import IO, _side_effects, _open_entry, _ensure_start_story_entries, _recompute_next_actions, _now
     io = io or IO()
     delivery = pathlib.Path(delivery)
@@ -85,7 +85,7 @@ def run(delivery, io=None, no_commit: bool = False) -> int:
             _recompute_next_actions(data)
             new = sorted(set(planned) - before)
             summary = "plan submitted: %d stories (%d new%s), approval %s" % (len(planned), len(new), ": " + ", ".join(new) if new else "", entry["id"])
-            _side_effects(delivery, st, [summary] + extra + warnings, io, no_commit)
+            _side_effects(delivery, st, [summary] + extra + warnings, io, no_commit, no_push)
         for w in warnings:
             print(w)
         print("PLAN: %d stories (%d new)" % (len(planned), len(new)))

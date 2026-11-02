@@ -67,7 +67,10 @@ class Init(unittest.TestCase):
         self.assertEqual((self.ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo/delivery")
         self.assertIn("MYD-1", (self.ws / "CLAUDE.md").read_text()); self.assertIn("TURNSTILE_LEAD=1", (self.ws / "CLAUDE.md").read_text())
         self.assertIn("Chat with the lead in English", (self.ws / "CLAUDE.md").read_text()); self.assertEqual(data["epic"]["chat_language"], "English")
-        self.assertEqual(io.calls[-1][0][:3], ["commit", "-q", "-m"]); self.assertEqual(io.calls[-1][1], d)
+        self.assertEqual([c[0][0] for c in io.calls[-3:]], ["commit", "rev-parse", "push"]); self.assertEqual(io.calls[-3][1], d)
+        self.assertEqual(io.calls[-1][0], ["push", "-q", "origin", "HEAD:refs/heads/epic/myd-1"]); self.assertEqual(io.calls[-1][1], d)
+        self.assertEqual(data["epic"]["knowledge"], {"branch": "epic/myd-1", "remote": "origin"})
+        self.assertTrue(json.loads((d / ".sync.json").read_text())["pushed"]); self.assertIn(".sync.json", (d / ".gitignore").read_text())
 
     def test_workspace_claude_md_names_the_cli_path(self):
         from unittest import mock
@@ -148,6 +151,13 @@ class Init(unittest.TestCase):
         self.assertEqual((d / "decisions.md").read_text(), "mine"); self.assertFalse((d / "state.json").exists())
         with contextlib.redirect_stdout(_io.StringIO()): self.assertEqual(init_cmd.run(opts(ws3, self.knowledge), FakeGit()), 0)
 
+    def test_init_records_a_failed_push_as_not_pushed(self):
+        import contextlib, io as _io
+        git = FakeGit(fail={"push"}); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge), git)
+        self.assertEqual(rc, 0); self.assertIn("WARN: not pushed: git push failed: simulated", buf.getvalue()); self.assertIn("SYNC: NOT PUSHED", buf.getvalue())
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        rec = json.loads((d / ".sync.json").read_text()); self.assertFalse(rec["pushed"]); self.assertIn("simulated", rec["reason"])
     def test_init_keeps_existing_claude_md(self):
         (self.ws / "CLAUDE.md").write_text("mine\n")
         init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
@@ -180,6 +190,7 @@ class Init(unittest.TestCase):
         self.assertEqual(subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True).stdout.strip(), "epic/myd-1")
         self.assertIn("turnstile: init MYD-1", subprocess.run(["git", "log", "--oneline"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
+        rec = json.loads((wt / "context" / "workitems" / "demo" / "delivery" / ".sync.json").read_text()); self.assertFalse(rec["pushed"])  # no origin
 
     def test_init_refuses_knowledge_clone_inside_workspace_and_foreign_marker(self):
         k = self.ws / "pdffiller-knowledge"

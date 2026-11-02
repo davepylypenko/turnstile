@@ -12,6 +12,19 @@ class FakeIO:
     """GitHub facts per PR: `heads` gives the head, `facts` per-PR overrides of the canned green PrFacts."""
     def __init__(self, heads=None):
         self.commits = []; self.renders = 0; self.heads = heads or {}; self.facts = {}; self.fail_commit = False; self.fail_render = False
+        self.pushes = []; self.fetches = []; self.ffs = []; self.fail_push = None; self.fail_fetch = None; self.behind = 0; self.ahead = 0
+        self.branch = "epic/myd-1"; self.head = "c0ffee0000000000"
+    def current_branch(self, delivery): return self.branch
+    def head_sha(self, delivery): return self.head
+    def sha(self, delivery, ref): return "0r1g1n0000000000"
+    def git_fetch(self, delivery, branch):
+        self.fetches.append(branch)
+        if self.fail_fetch: raise RuntimeError(self.fail_fetch)
+    def behind_ahead(self, delivery, branch): return self.behind, self.ahead
+    def git_push(self, delivery, branch):
+        if self.fail_push: raise RuntimeError(self.fail_push)
+        self.pushes.append(branch)
+    def git_ff(self, delivery, branch): self.ffs.append(branch); self.behind = 0
     def git_commit(self, delivery, message):
         if self.fail_commit:
             raise RuntimeError("gpg: signing failed")
@@ -103,7 +116,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(self.io.renders, 1)
         self.assertEqual(len(self.io.commits), 1)
         self.assertTrue((self.d / ".gitattributes").read_text().startswith("ledger.md merge=union"))
-        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp"])
+        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
     def test_ready_can_declare_companion_prs_on_the_send_entry(self):

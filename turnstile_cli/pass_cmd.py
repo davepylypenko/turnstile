@@ -1,11 +1,11 @@
 import copy, datetime, os, pathlib, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from . import state as st_mod, rules, ledger, threads
+from . import state as st_mod, rules, ledger, threads, sync
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
-GITIGNORE = ".*.tmp\n"
+GITIGNORE = ".*.tmp\n.sync.json\n"
 HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
 APPROVED_VIA = "lead-terminal"  # the lead types the approve command in the Claude Code prompt with the `!` prefix
 
@@ -37,6 +37,7 @@ class Options:
     offline: bool = False
     full: bool = False
     no_commit: bool = False
+    no_push: bool = False
 
 class IO:
     """Everything that touches the world; injectable so tests stay offline."""
@@ -46,6 +47,29 @@ class IO:
         if r.returncode != 0:
             subprocess.run(["git", "reset", "-q", "--", "."], cwd=str(delivery), capture_output=True)
             raise TurnstileError((r.stderr or r.stdout).strip()[:300] or "git commit exited %d" % r.returncode)
+    def _git(self, delivery: pathlib.Path, args: List[str]) -> str:
+        r = subprocess.run(["git"] + args, cwd=str(delivery), capture_output=True, text=True)
+        if r.returncode != 0:
+            raise TurnstileError("git %s: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:200]))
+        return r.stdout.strip()
+    def current_branch(self, delivery: pathlib.Path) -> str:
+        return self._git(delivery, ["branch", "--show-current"])
+    def head_sha(self, delivery: pathlib.Path) -> str:
+        return self._git(delivery, ["rev-parse", "HEAD"])
+    def sha(self, delivery: pathlib.Path, ref: str) -> str:
+        return self._git(delivery, ["rev-parse", ref])
+    def git_fetch(self, delivery: pathlib.Path, branch: str) -> None:
+        self._git(delivery, ["fetch", "-q", "origin", branch])
+    def behind_ahead(self, delivery: pathlib.Path, branch: str):
+        try:
+            behind, ahead = self._git(delivery, ["rev-list", "--left-right", "--count", "origin/%s...HEAD" % branch]).split()
+        except (TurnstileError, ValueError):
+            return 0, 0
+        return int(behind), int(ahead)
+    def git_push(self, delivery: pathlib.Path, branch: str) -> None:
+        self._git(delivery, ["push", "-q", "origin", "HEAD:refs/heads/" + branch])
+    def git_ff(self, delivery: pathlib.Path, branch: str) -> None:
+        self._git(delivery, ["merge", "-q", "--ff-only", "origin/" + branch])
     def render_board(self, data: dict) -> Optional[str]:
         try:
             from . import board
@@ -313,10 +337,14 @@ class _Snapshot:
             else:
                 st_mod.write_atomic(p, text)
 
-def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], io: IO, no_commit: bool) -> None:
-    """validate happened → render board in memory → write state + ledger + board → git commit; on commit
-    failure restore the three files from the in-memory snapshot so the disk equals the last committed state."""
+def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], io: IO, no_commit: bool, no_push: bool = False) -> None:
+    """validate happened → fetch + behind-origin guard → render board in memory → write state + ledger + board → git commit →
+    push the epic branch; on commit failure restore the three files from the in-memory snapshot so the disk equals the last
+    committed state; a failed push is a WARN recorded in .sync.json."""
     delivery = pathlib.Path(delivery)
+    branch = None
+    if not no_commit:
+        branch = sync.branch(io, delivery, st.data); sync.guard_behind(io, delivery, branch)
     try:
         html = io.render_board(st.data)
     except Exception as e:
@@ -335,6 +363,8 @@ def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], 
         snap.restore()
         st.loaded_digest = st_mod.digest(snap.before["state.json"] or "")
         raise TurnstileError("git commit failed: %s" % e)
+    if not no_commit:
+        sync.push(io, delivery, branch, no_push)
 
 def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, io: Optional[IO] = None) -> int:
     io = io or IO()
@@ -363,6 +393,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 _apply_pr_evidence(trial, o)
                 missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes, data=data)
                 missing += rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
+                missing += sync.missing_for(delivery, target in HEAD_VERIFIED_TARGETS)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = pr["state"]
@@ -451,6 +482,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     plan_missing = rules.plan_approval_missing(data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
                 missing = missing_heads + rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason, bugs=data.get("bugs"),
                                                             awaiting=awaiting, approved=o.approved, plan_missing=plan_missing, recording_run=recording)
+                missing += sync.missing_for(delivery, target == "DONE")
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = story["state"]
@@ -478,7 +510,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 raise TurnstileError("kind must be pr or story")
             _ensure_start_story_entries(data)
             _recompute_next_actions(data)
-            _side_effects(delivery, st, [summary] + extra, io, o.no_commit)
+            _side_effects(delivery, st, [summary] + extra, io, o.no_commit, o.no_push)
         for n in notes:
             print(n)
         if jira_line:
@@ -492,7 +524,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
     except TurnstileError as e:
         print("\n".join(notes + ["MISSING %s" % e])); return 2
 
-def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None) -> int:
+def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None, no_push: bool = False) -> int:
     io = io or IO()
     delivery = pathlib.Path(delivery)
     try:
@@ -504,7 +536,7 @@ def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO
                 raise TurnstileError("Jira status for %s in state %s is %r, not %r" % (ident, pr.get("state"), expected, status))
             pr["jira"] = {"status": status, "synced": True}
             summary = "jira %s → %s (synced)" % (pr["ticket"], status)
-            _side_effects(delivery, st, [summary], io, False)
+            _side_effects(delivery, st, [summary], io, False, no_push)
         print("OK jira %s synced" % ident)
         return 0
     except TurnstileError as e:

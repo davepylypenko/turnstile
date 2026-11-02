@@ -30,6 +30,11 @@ class CliSmoke(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:medium (default)", out.stdout)
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "review_skill=/x", "--epic"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
         self.assertEqual(out.returncode, 2); self.assertIn("MISSING no .turnstile", out.stdout)
+    def test_sync_attach_and_no_push_are_wired(self):
+        for args, needle in [(["sync", "--help"], "usage: turnstile sync"), (["--help"], "attach"), (["attach", "--help"], "--workitem"), (["pass", "--help"], "--no-push"),
+                             (["pr", "add", "--help"], "--no-push"), (["config", "set", "--help"], "--no-push"), (["bug", "add", "--help"], "--no-push")]:
+            out = subprocess.run([sys.executable, "-m", "turnstile_cli"] + args, cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr); self.assertIn(needle, out.stdout, " ".join(args))
     def test_shim_forwards(self):
         out = subprocess.run([str(ROOT / "scripts" / "turnstile"), "--version"],
                              cwd=ROOT, capture_output=True, text=True)

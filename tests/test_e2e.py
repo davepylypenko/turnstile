@@ -33,12 +33,14 @@ class E2E(unittest.TestCase):
                cwd=self.ws / "delivery", env=self.gh_env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(r.stdout.strip().splitlines()[-1].startswith("OK pass pr jsfiller#1 AI_REVIEW → READY"))
+        self.assertIn("WARN: not pushed:", r.stdout); self.assertFalse(json.loads((self.ws / "delivery" / ".sync.json").read_text())["pushed"])  # no origin
         log = subprocess.run(["git", "log", "--oneline"], cwd=self.ws, capture_output=True, text=True).stdout
         self.assertIn("turnstile: pass pr jsfiller#1", log)
         self.assertTrue((self.ws / "delivery" / "board.html").exists())
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=self.ws, capture_output=True, text=True).stdout, "")
         r = sh(["pass", "pr", "jsfiller#1", "ON_HUMAN_REVIEW", "--head", H], cwd=self.ws, env=self.gh_env)
-        self.assertEqual(r.returncode, 2); self.assertIn("MISSING evidence.human.slack_permalink", r.stdout)
+        self.assertEqual(r.returncode, 2); self.assertIn("MISSING evidence.human.slack_permalink", r.stdout); self.assertIn("run: turnstile sync", r.stdout)
+        r = sh(["sync"], cwd=self.ws, env=self.gh_env); self.assertEqual(r.returncode, 2); self.assertIn("MISSING fetch origin main failed", r.stdout)  # no epic.knowledge in the fixture: the worktree branch
 
     def test_pass_refuses_when_github_head_differs(self):
         payload = json.loads(GH_FIX.read_text()); payload["headRefOid"] = "ffffffff6666666600000000000000000000ffff"
@@ -61,7 +63,7 @@ class E2E(unittest.TestCase):
     def test_status_without_network(self):
         # PATH without `gh` (only the interpreter and the shim's bash/dirname): fetch raises, cli prints WARN, no network
         r = sh(["status"], cwd=self.ws, env=self.gh_env)
-        self.assertIn("WARN jsfiller#1", r.stdout)
+        self.assertIn("WARN jsfiller#1", r.stdout); self.assertTrue(r.stdout.startswith("SYNC: unknown"), r.stdout[:80])
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # facts missing for an open PR
         self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout); self.assertIn("config: models implementer=sonnet", r.stdout)
         self.assertNotIn("uncommitted", r.stdout)

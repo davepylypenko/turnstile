@@ -1,7 +1,7 @@
 import json, os, pathlib, shutil, subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
-from . import state as st_mod, ledger, models, config
+from . import state as st_mod, ledger, models, config, sync
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -74,7 +74,16 @@ def build_state(o: InitOptions) -> dict:
     e["board"] = {"artifact_url": o.board_url, "capabilities": ["db", "user"]}
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
     e["models"] = models.parse(o.models)
+    e["knowledge"] = {"branch": epic_branch_name(o.epic), "remote": "origin"}
     return data
+
+def write_workspace_claude_md(ws: pathlib.Path, epic_key: str, rel: str, chat_language: str) -> pathlib.Path:
+    text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", epic_key).replace("{{delivery}}", rel) \
+        .replace("{{chat_language}}", chat_language).replace("{{cli}}", shutil.which("turnstile") or str(ROOT / "scripts" / "turnstile"))
+    target = ws / "CLAUDE.md"
+    if target.exists():
+        target = ws / "CLAUDE.md.turnstile"
+    target.write_text(text); return target
 
 def _ensure_worktree(o: InitOptions, io: InitIO, knowledge: pathlib.Path, wt: pathlib.Path) -> str:
     branch = epic_branch_name(o.epic)
@@ -128,11 +137,7 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
             ledger.append(delivery, "init %s (%s) on %s" % (o.epic, o.workitem, branch))
             rel = os.path.relpath(str(delivery), str(ws))
             (ws / ".turnstile").write_text(rel + "\n"); created.append(ws / ".turnstile")
-            text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", o.epic).replace("{{delivery}}", rel).replace("{{chat_language}}", o.chat_language).replace("{{cli}}", shutil.which("turnstile") or str(ROOT / "scripts" / "turnstile"))
-            target = ws / "CLAUDE.md"
-            if target.exists():
-                target = ws / "CLAUDE.md.turnstile"
-            target.write_text(text); created.append(target)
+            target = write_workspace_claude_md(ws, o.epic, rel, o.chat_language); created.append(target)
             io.git(["add", "-A", "."], delivery)
             io.git(["commit", "-q", "-m", "turnstile: init %s" % o.epic, "--", "."], delivery)
         except TurnstileError as e:
@@ -143,7 +148,12 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
                     path.unlink()
             raise TurnstileError("%s — init rolled back (%s removed; the worktree %s stays); fix the cause and re-run the same init command"
                                  % (e, ", ".join(str(c) for c in created) or "nothing", wt))
-        print("WORKTREE: %s (%s)" % (wt, branch)); print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
+        head = io.git(["rev-parse", "HEAD"], delivery).strip() or None
+        try:
+            io.git(["push", "-q", "origin", "HEAD:refs/heads/" + branch], delivery); rec = sync.record(delivery, True, head)
+        except TurnstileError as e:
+            rec = sync.record(delivery, False, head, str(e)[:200]); print("WARN: not pushed: %s" % str(e)[:200])
+        print("WORKTREE: %s (%s)" % (wt, branch)); print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target); print(sync.line(rec))
         print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
         print("CONFIG: " + config.one_line(config.effective(data)))
         print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "

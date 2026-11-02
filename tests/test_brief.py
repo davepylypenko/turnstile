@@ -101,7 +101,7 @@ class Run(unittest.TestCase):
         self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=low\n", out)
         rc, out = self.run_brief("story-reviewer", "STORY-S1-review-r2", self.all_vars("story-reviewer"))
         self.assertIn("Story review skill: `/my-story-review`", (self.d / "briefs" / "STORY-S1-review-r2.md").read_text())
-        self.assertFalse(any(p.name.endswith(".json") and p.name != "state.json" for p in self.d.iterdir()))
+        self.assertFalse(any(p.name.endswith(".json") and p.name not in ("state.json", ".sync.json") for p in self.d.iterdir()))
     def test_tester_brief_requires_test_user(self):
         rc, out = self.run_brief("tester", "ENV-S1", [v for v in self.all_vars("tester") if not v.startswith("test_user=")])
         self.assertEqual(rc, 2); self.assertIn("MISSING placeholder test_user", out)

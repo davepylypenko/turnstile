@@ -47,10 +47,18 @@ def build_parser():
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     cf = sub.add_parser("config", help="agent models/effort and review skills: user (~/.config/turnstile/config.json or $TURNSTILE_USER_CONFIG) > epic (state.json) > plugin defaults")
     csub = cf.add_subparsers(dest="config_cmd"); csub.add_parser("list", help="effective values with their source")
-    for name, pos, h in [("set", "assignment", "key=value: models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill; value 'default' resets"),
-                         ("unset", "key", "reset the key in the chosen layer")]:
-        c = csub.add_parser(name); c.add_argument(pos, help=h); c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file")
-        c.add_argument("--no-commit", action="store_true")
+    cs = csub.add_parser("set"); cs.add_argument("assignment", metavar="key=value", help="models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill; value 'default' resets")
+    cu = csub.add_parser("unset"); cu.add_argument("key", help="reset the key in the chosen layer")
+    for c in (cs, cu):
+        c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file"); c.add_argument("--no-commit", action="store_true")
+    sub.add_parser("sync", help="fetch origin, fast-forward the epic branch and push it (never rebase or force); refuses diverged histories")
+    at = sub.add_parser("attach", help="continue an existing epic from another machine: worktree of origin/epic/<key>, .turnstile, workspace CLAUDE.md, status")
+    for flag, kw in [("--knowledge", {"required": True}), ("--epic", {"required": True}), ("--workspace", {"default": "."}),
+                     ("--workitem", {"help": "the workitem folder (needed when the epic branch holds several deliveries)"}),
+                     ("--chat-language", {"help": "default: the epic's recorded chat_language"})]:
+        at.add_argument(flag, **kw)
+    for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
+        sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
@@ -77,6 +85,9 @@ def main(argv=None):
         if a.cmd == "init":
             from .init_cmd import run as init_run, InitOptions
             return init_run(InitOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
+        if a.cmd == "attach":
+            from .attach_cmd import run as attach_run, AttachOptions
+            return attach_run(AttachOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
         if a.cmd == "config":
             from . import config_cmd
             try:
@@ -86,11 +97,14 @@ def main(argv=None):
                     raise
                 delivery = None
             if a.config_cmd == "set":
-                return config_cmd.set_(delivery, a.assignment, epic=a.epic, no_commit=a.no_commit)
+                return config_cmd.set_(delivery, a.assignment, epic=a.epic, no_commit=a.no_commit, no_push=a.no_push)
             if a.config_cmd == "unset":
-                return config_cmd.unset(delivery, a.key, epic=a.epic, no_commit=a.no_commit)
+                return config_cmd.unset(delivery, a.key, epic=a.epic, no_commit=a.no_commit, no_push=a.no_push)
             return config_cmd.list_(delivery)
         delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
+        if a.cmd == "sync":
+            from .sync import run as sync_run
+            return sync_run(delivery)
         if a.cmd == "pass":
             from .pass_cmd import run, Options
             o = Options(**{k.replace("-", "_"): v for k, v in vars(a).items()
@@ -98,26 +112,26 @@ def main(argv=None):
             return run(delivery, a.kind, a.ident, a.target, o)
         if a.cmd == "brief":
             from .brief_cmd import run as brief_run
-            return brief_run(delivery, a.agent, a.name, a.vars, force=a.force, no_commit=a.no_commit)
+            return brief_run(delivery, a.agent, a.name, a.vars, force=a.force, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "bug":
             from . import bug_cmd
             if a.bug_cmd == "add":
-                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case)
+                return bug_cmd.add(delivery, a.story, a.title, a.source, pr=a.pr, figma=a.figma, note=a.note, case=a.case, no_push=a.no_push)
             if a.bug_cmd == "set":
-                return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note)
+                return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note, no_push=a.no_push)
             return 2
         if a.cmd == "pr":
             from .pr_cmd import add as pr_add
-            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit)
+            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "threads":
             from .threads import run as threads_run
-            return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit)
+            return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "plan-submitted":
             from .plan_cmd import run as plan_run
-            return plan_run(delivery, no_commit=a.no_commit)
+            return plan_run(delivery, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "jira-synced":
             from .pass_cmd import jira_synced
-            return jira_synced(delivery, a.ident, a.status)
+            return jira_synced(delivery, a.ident, a.status, no_push=a.no_push)
         if a.cmd == "approve":
             from .pass_cmd import approve
             return approve(delivery, a.ah_id)

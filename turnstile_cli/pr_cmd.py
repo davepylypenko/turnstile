@@ -3,7 +3,7 @@ from . import rules, state as st_mod
 from .bug_cmd import PR_RX, _commit
 from .errors import TurnstileError
 
-def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False) -> int:
+def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False) -> int:
     from .pass_cmd import IO, _side_effects, _recompute_next_actions
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -33,7 +33,7 @@ def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool 
                                   "blocked_by": None, "evidence": {}, "jira": {"status": rules.JIRA_FOR_PR_STATE["DEV"], "synced": False}, "next_action": ""}
             _recompute_next_actions(data)
             summary = "pr %s added (%s, %s) DEV head %s" % (pr_id, story, ticket, (f.head or "")[:8])
-            _side_effects(delivery, st, [summary], io, no_commit)
+            _side_effects(delivery, st, [summary], io, no_commit, no_push)
             print("JIRA: %s → %s" % (ticket, rules.JIRA_FOR_PR_STATE["DEV"])); print("OK " + summary); return 0
     except TurnstileError as e:
         print("MISSING %s" % e); return 2

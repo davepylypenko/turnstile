@@ -38,7 +38,7 @@ def parse_vars(var_list: List[str]) -> dict:
         out[k] = v
     return out
 
-def run(delivery, agent: str, name: str, var_list: List[str], force: bool = False, io=None, no_commit: bool = False) -> int:
+def run(delivery, agent: str, name: str, var_list: List[str], force: bool = False, io=None, no_commit: bool = False, no_push: bool = False) -> int:
     from .pass_cmd import IO, _side_effects
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -66,7 +66,7 @@ def run(delivery, agent: str, name: str, var_list: List[str], force: bool = Fals
             if out.exists() and not force:
                 raise TurnstileError("briefs/%s.md exists (use --force to overwrite)" % name)
             out.parent.mkdir(parents=True, exist_ok=True); out.write_text(text)
-            _side_effects(delivery, st, ["brief %s for %s" % (name, agent)], io, no_commit)
+            _side_effects(delivery, st, ["brief %s for %s" % (name, agent)], io, no_commit, no_push)
         report = delivery / "reports" / (name + ".md")
         print(models.agent_line(agent, eff["models"][agent])); print("BRIEF: %s" % out.resolve()); print("REPORT: %s" % report.resolve())
         print("PROMPT: Read and execute %s. Write your report to %s. Reply with at most 8 lines." % (out.resolve(), report.resolve()))

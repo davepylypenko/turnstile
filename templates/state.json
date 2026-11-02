@@ -6,6 +6,7 @@
     "environment": { "desk": null, "recipe": "references/env/pdffiller-dev.md", "variant": null },
     "github_org": null,
     "key": null,
+    "knowledge": { "branch": null, "remote": "origin" },
     "models": {
       "comments-handler": { "effort": null, "model": "haiku" },
       "deployer": { "effort": null, "model": "sonnet" },

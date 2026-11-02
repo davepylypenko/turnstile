@@ -192,7 +192,10 @@ def uncommitted(delivery: pathlib.Path) -> List[str]:
     return [ln[3:].strip().split("/")[-1] for ln in r.stdout.splitlines() if ln.strip()]
 
 def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> int:
+    from . import sync
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
+    if not as_json:
+        print(sync.line(sync.load(delivery)))
     ledger_path = pathlib.Path(delivery) / "ledger.md"
     org = rules.require_org(st.data)
     facts = {}

@@ -222,7 +222,16 @@ class BashGuard(unittest.TestCase):
                             "turnstile plan-submitted",
                             "turnstile bug add --story S1 --title x --source y", "turnstile bug set b01 --state done",
                             "turnstile brief tester ENV-S1 --var story_id=S1", "turnstile config list", "turnstile config set models.reviewer=sonnet:medium",
-                            "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11"])
+                            "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11",
+                            "turnstile sync", "turnstile attach --knowledge ../k --epic MYD-1 --workspace ."])
+
+    def test_sync_git_traffic_keeps_todays_verdicts(self):
+        # the CLI itself fetches, fast-forwards and pushes; a model-issued push/fetch was already read-only for the guard, a merge inside
+        # the delivery dir and any rebase stay blocked, a merge at the worktree root stays as it was (allowed)
+        subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
+        self.assertAllowed(["git push -q origin HEAD:refs/heads/epic/myd-1", "git fetch -q origin epic/myd-1", "git merge -q --ff-only origin/epic/myd-1"])
+        self.assertBlocked(["cd delivery && git merge origin/epic/myd-1"], "delivery-write")
+        self.assertBlocked(["git rebase origin/epic/myd-1", "git push --force origin epic/myd-1"], "")
 
     def test_round3_computed_subcommands_and_writers(self):
         # R3-1: a computed subcommand forged `approve` with the lead's ledger line; R3-2: env/awk/find/sort/git config wrote state.json
