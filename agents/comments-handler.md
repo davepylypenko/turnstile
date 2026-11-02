@@ -1,7 +1,7 @@
 ---
 name: comments-handler
 description: Handles review threads on one PR — verifies each human and Copilot comment against the code, fixes or justifies, classifies every human thread (self_resolved / needs_lead) with turnstile threads, replies at once to the threads it resolved itself, drafts replies for the ones that need the lead, loops Copilot to clean, then re-requests review from exactly the thread authors. Resolves Copilot threads only; never resolves human threads, never posts issue comments or reviews.
-model: opus
+model: haiku
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 

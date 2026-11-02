@@ -21,6 +21,15 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "threads", "--help"], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         for flag in ("--self-resolved", "--needs-lead", "--report"): self.assertIn(flag, out.stdout)
+    def test_config_subcommand_is_wired(self):
+        import tempfile
+        env = dict(__import__("os").environ, PYTHONPATH=str(ROOT), TURNSTILE_USER_CONFIG=str(pathlib.Path(tempfile.mkdtemp()) / "u.json"))
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "--help"], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("--epic", out.stdout)
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:medium (default)", out.stdout)
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "review_skill=/x", "--epic"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 2); self.assertIn("MISSING no .turnstile", out.stdout)
     def test_shim_forwards(self):
         out = subprocess.run([str(ROOT / "scripts" / "turnstile"), "--version"],
                              cwd=ROOT, capture_output=True, text=True)

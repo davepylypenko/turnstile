@@ -1,6 +1,6 @@
 import datetime, pathlib, re
-from typing import List, Tuple
-from . import state as st_mod, rules
+from typing import List, Optional, Tuple
+from . import state as st_mod, rules, models, config
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -18,9 +18,10 @@ def render(template: str, vars: dict) -> Tuple[str, List[str]]:
         missing.add(k); return m.group(0)
     return PLACEHOLDER.sub(sub, template), sorted(missing)
 
-def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str) -> dict:
-    epic = data.get("epic") or {}; env = epic.get("environment") or {}
-    return {"epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
+def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Optional[dict] = None) -> dict:
+    epic = data.get("epic") or {}; env = epic.get("environment") or {}; eff = eff or config.effective(data)
+    return {"review_skill": eff["review_skill"]["value"], "story_review_skill": eff["story_review_skill"]["value"],
+            "epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
             "variant": env.get("variant") or "", "desk": env.get("desk") or "", "env_recipe": env.get("recipe") or "", "agent": agent,
             "brief_name": name, "brief_path": "briefs/%s.md" % name, "report_path": "reports/%s.md" % name,
             "skill_dir": str(ROOT / "skills" / "turnstile"),
@@ -55,7 +56,7 @@ def run(delivery, agent: str, name: str, var_list: List[str], force: bool = Fals
                 missing_plan = rules.plan_approval_missing(st.data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
                 if missing_plan:
                     raise TurnstileError("no agent but the investigator starts before the lead approved plan.md (spec §4.1): " + missing_plan)
-            vars = builtins(st.data, delivery, agent, name); vars.update(parse_vars(var_list))
+            eff = config.effective(st.data); vars = builtins(st.data, delivery, agent, name, eff); vars.update(parse_vars(var_list))
             text, missing = render(tpl.read_text(), vars)
             if missing:
                 for m in missing:
@@ -67,7 +68,7 @@ def run(delivery, agent: str, name: str, var_list: List[str], force: bool = Fals
             out.parent.mkdir(parents=True, exist_ok=True); out.write_text(text)
             _side_effects(delivery, st, ["brief %s for %s" % (name, agent)], io, no_commit)
         report = delivery / "reports" / (name + ".md")
-        print("AGENT: turnstile:%s" % agent); print("BRIEF: %s" % out.resolve()); print("REPORT: %s" % report.resolve())
+        print(models.agent_line(agent, eff["models"][agent])); print("BRIEF: %s" % out.resolve()); print("REPORT: %s" % report.resolve())
         print("PROMPT: Read and execute %s. Write your report to %s. Reply with at most 8 lines." % (out.resolve(), report.resolve()))
         print("OK brief %s for %s" % (name, agent))
         return 0

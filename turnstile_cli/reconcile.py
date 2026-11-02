@@ -221,6 +221,8 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
             print("plan: approved %s" % e["id"])
         else:
             print("plan: awaiting approval %s" % ((e or {}).get("id") or "?"))
+        from . import config
+        print("config: " + config.one_line(config.effective(st.data)))
         for sid, s in st.data["stories"].items():
             print("story %s [%s] %s — %s" % (sid, s.get("state"), s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():

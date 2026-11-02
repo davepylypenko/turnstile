@@ -1,7 +1,7 @@
 ---
 name: tester
 description: Runs a story's test cases on the deployed environment and checks every screen against its Figma frame pixel-level (screenshots side by side plus numeric DOM checks) in an isolated headless browser. Writes ENV-<story>.md and the evidence folder; fails become bugs through the orchestrator. Never changes code.
-model: opus
+model: sonnet
 disallowedTools: Edit, MultiEdit, NotebookEdit, Agent, Skill, mcp__plugin_slack_slack__slack_send_message, mcp__plugin_slack_slack__slack_send_message_draft, mcp__plugin_slack_slack__slack_schedule_message, mcp__claude_ai_Atlassian__transitionJiraIssue, mcp__claude_ai_Atlassian__editJiraIssue, mcp__claude_ai_Atlassian__addCommentToJiraIssue, mcp__claude_ai_Atlassian__createJiraIssue
 ---
 

@@ -14,4 +14,6 @@ knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first i
   messages always wait for the lead.
 - All implementation, review, testing and deployment is delegated to the `turnstile:*` agents; the orchestrator never
   reads diffs or runs suites itself.
+- Agent models/effort and the review skills come from `turnstile config list` (user file > epic state > defaults); a chat
+  instruction like "use my /x-review skill" or "reviewer on sonnet" becomes `turnstile config set <key>=<value> [--epic]`.
 - Chat with the lead in {{chat_language}}. Code, commits, PRs, tickets and docs in English.

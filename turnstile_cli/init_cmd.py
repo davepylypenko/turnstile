@@ -1,7 +1,7 @@
 import json, os, pathlib, shutil, subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
-from . import state as st_mod, ledger
+from . import state as st_mod, ledger, models, config
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -29,6 +29,7 @@ class InitOptions:
     recipe: str = "references/env/pdffiller-dev.md"
     chat_language: str = "English"
     agent_github: Optional[str] = None
+    models: Optional[str] = None
 
 class InitIO:
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
@@ -72,6 +73,7 @@ def build_state(o: InitOptions) -> dict:
     e["chat_language"] = o.chat_language
     e["board"] = {"artifact_url": o.board_url, "capabilities": ["db", "user"]}
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
+    e["models"] = models.parse(o.models)
     return data
 
 def _ensure_worktree(o: InitOptions, io: InitIO, knowledge: pathlib.Path, wt: pathlib.Path) -> str:
@@ -143,6 +145,9 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
                                  % (e, ", ".join(str(c) for c in created) or "nothing", wt))
         print("WORKTREE: %s (%s)" % (wt, branch)); print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
+        print("CONFIG: " + config.one_line(config.effective(data)))
+        print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
+              "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
         print("OK init %s" % o.epic)
         return 0
     except TurnstileError as e:

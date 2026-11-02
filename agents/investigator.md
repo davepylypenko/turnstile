@@ -1,7 +1,7 @@
 ---
 name: investigator
 description: Read-only investigation of a question in one or more repositories or environments — facts with file:line evidence and a recommendation. Launched by turnstile dispatch when the orchestrator needs an answer, not a change. Never pushes, never comments.
-model: opus
+model: haiku
 tools: Read, Grep, Glob, Bash
 ---
 

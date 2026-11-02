@@ -1,6 +1,11 @@
 import json, os, pathlib, subprocess, tempfile, unittest
+from unittest import mock
 from turnstile_cli import init_cmd
 from turnstile_cli.errors import TurnstileError
+
+_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
+def setUpModule(): _env.start()
+def tearDownModule(): _env.stop()
 
 JS = '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-1","slack":"C1","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}'
 MONO = '{"name":"pdffiller","base":"master","epic_branch":"l2f","slack":"G1","gate":"run-lint","gate_check":null,"copilot":true,"branch_prefix":"l2f-myd-"}'
@@ -81,6 +86,33 @@ class Init(unittest.TestCase):
         self.assertIsNone(json.loads((d / "state.json").read_text())["epic"]["roles"]["agent_github"])
         self.assertIn("agent_github", json.loads((init_cmd.TEMPLATES / "state.json").read_text())["epic"]["roles"])
         self.assertEqual(init_cmd.build_state(opts(self.ws, self.knowledge, agent_github="agentbot"))["epic"]["roles"]["agent_github"], "agentbot")
+    def test_models_default_merge_and_validate(self):
+        # lead rules 2026-10-19 / 2026-10-26: agent models live in epic.models; --models is a partial JSON override
+        from turnstile_cli import models
+        init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        written = json.loads((d / "state.json").read_text())["epic"]["models"]
+        self.assertEqual(written, models.DEFAULTS); self.assertEqual(written["reviewer"], {"model": "opus", "effort": "medium"})
+        self.assertEqual(written["story-reviewer"], {"model": "opus", "effort": "high"}); self.assertEqual(written["investigator"]["model"], "haiku")
+        m = init_cmd.build_state(opts(self.ws, self.knowledge, models='{"reviewer":{"model":"opus","effort":"high"},"tester":{"model":"opus"}}'))["epic"]["models"]
+        self.assertEqual(m["reviewer"], {"model": "opus", "effort": "high"}); self.assertEqual(m["tester"], {"model": "opus", "effort": None})
+        self.assertEqual(m["implementer"], models.DEFAULTS["implementer"]); self.assertEqual(sorted(m), sorted(models.DEFAULTS))
+        self.assertEqual(models.parse('{"reviewer":{"effort":null}}')["reviewer"], {"model": "opus", "effort": None})
+        for bad in ["not json", "[]", '{"nobody":{"model":"opus"}}', '{"reviewer":{"model":"gpt"}}', '{"reviewer":{"effort":"max"}}',
+                    '{"reviewer":{"tools":"x"}}', '{"reviewer":{}}', '{"reviewer":"opus"}']:
+            with self.assertRaises(TurnstileError, msg=bad): models.parse(bad)
+        io = FakeGit(); self.assertEqual(init_cmd.run(opts(self.tmp / "ws9", self.knowledge, models='{"reviewer":{"model":"gpt"}}'), io), 2); self.assertEqual(io.calls, [])
+    def test_init_prints_the_effective_config_and_the_preferences_prompt(self):
+        import contextlib, io as _io
+        from turnstile_cli import config
+        config.save_user({"review_skill": "/my-review"}); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge, models='{"reviewer":{"effort":"high"}}'), FakeGit())
+        self.assertEqual(rc, 0); out = buf.getvalue()
+        self.assertIn("CONFIG: models implementer=sonnet", out); self.assertIn("reviewer=opus:high", out); self.assertIn("review_skill=/my-review", out)
+        self.assertIn("overrides: epic models.reviewer, user review_skill", out); self.assertIn("NEXT: ask the lead once (skill § preferences)", out); self.assertIn("turnstile config set", out)
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"; data = json.loads((d / "state.json").read_text())
+        self.assertIsNone(data["epic"]["review_skill"]); self.assertIsNone(data["epic"]["story_review_skill"])  # the user's skill never lands in git
+        self.assertIn("turnstile config", (self.ws / "CLAUDE.md").read_text())
     def test_chat_language_comes_from_init_not_the_template(self):
         # 2026-10-14 minor 11: personal items stay out of the plugin
         self.assertNotIn("Ukrainian", (init_cmd.TEMPLATES / "CLAUDE.md.workspace").read_text())

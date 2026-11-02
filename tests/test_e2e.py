@@ -16,7 +16,8 @@ class E2E(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=self.ws, check=True)
-        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
+                        TURNSTILE_USER_CONFIG=str(self.ws / "user-config.json"))
         # a PATH with a canned `gh`: the shim's real IO goes through it, no network
         self.bin = pathlib.Path(tempfile.mkdtemp()) / "bin"; self.bin.mkdir(); (self.bin / "python3").symlink_to(sys.executable)
         self.gh_env = dict(self.env, PATH=os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]))
@@ -62,7 +63,7 @@ class E2E(unittest.TestCase):
         r = sh(["status"], cwd=self.ws, env=self.gh_env)
         self.assertIn("WARN jsfiller#1", r.stdout)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # facts missing for an open PR
-        self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout)
+        self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout); self.assertIn("config: models implementer=sonnet", r.stdout)
         self.assertNotIn("uncommitted", r.stdout)
         (self.ws / "delivery" / "ledger.md").write_text("- stray\n")
         r = sh(["status"], cwd=self.ws, env=self.gh_env)

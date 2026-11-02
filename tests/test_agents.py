@@ -1,9 +1,10 @@
-import pathlib, re, unittest
+import json, pathlib, re, unittest
+from turnstile_cli import models
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
-EXPECTED = {"implementer": ("sonnet", None), "reviewer": ("opus", "xhigh"), "story-reviewer": ("fable", None), "stack-step": ("opus", None),
-            "comments-handler": ("opus", None), "investigator": ("opus", None), "tester": ("opus", None), "deployer": ("sonnet", None)}
+EXPECTED = {"implementer": ("sonnet", None), "reviewer": ("opus", "medium"), "story-reviewer": ("opus", "high"), "stack-step": ("haiku", None),
+            "comments-handler": ("haiku", None), "investigator": ("haiku", None), "tester": ("sonnet", None), "deployer": ("sonnet", None)}
 SECTIONS = ["## Role", "## Procedure", "## Cannot", "## Report", "## Common rules"]
 COMMON = ["Poll every 2 minutes or less", "never silent for more than 5 minutes", "reports/", "8 lines", "no subagents", "TURNSTILE_LEAD"]
 FORBIDDEN_TOOLS = ["slack_send_message", "slack_send_message_draft", "slack_schedule_message", "transitionJiraIssue", "Agent"]
@@ -24,6 +25,17 @@ class Agents(unittest.TestCase):
             fm = parse_frontmatter((AGENTS / (name + ".md")).read_text())
             self.assertEqual(fm["name"], name); self.assertEqual(fm["model"], model, name); self.assertEqual(fm.get("effort"), effort, name)
             self.assertTrue(len(fm["description"]) > 40, name); self.assertTrue("tools" in fm or "disallowedTools" in fm, name)
+    def test_frontmatter_matches_epic_models_defaults_and_the_allowed_set(self):
+        # lead rules 2026-10-19 / 2026-10-26: cheapest model that does the job; the frontmatter and epic.models say the same thing
+        self.assertEqual({k: (v["model"], v["effort"]) for k, v in models.DEFAULTS.items()}, EXPECTED)
+        template = json.loads((ROOT / "templates" / "state.json").read_text())["epic"]["models"]
+        self.assertEqual(template, models.DEFAULTS)
+        for p in AGENTS.glob("*.md"):
+            fm = parse_frontmatter(p.read_text())
+            self.assertIn(fm["model"], models.MODELS, p.name)
+            self.assertEqual((fm["model"], fm.get("effort")), (models.DEFAULTS[p.stem]["model"], models.DEFAULTS[p.stem]["effort"]), p.name)
+            if "effort" in fm: self.assertIn(fm["effort"], models.EFFORTS, p.name)
+        self.assertEqual([k for k, v in models.DEFAULTS.items() if v["model"] == "opus"], ["reviewer", "story-reviewer"])
     def test_sections_and_common_rules(self):
         for p in AGENTS.glob("*.md"):
             text = p.read_text()

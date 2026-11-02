@@ -221,7 +221,8 @@ class BashGuard(unittest.TestCase):
                             "turnstile init --epic MYD-1 --workitem demo --knowledge ../k --lead a --lead-github b --github-org o",
                             "turnstile plan-submitted",
                             "turnstile bug add --story S1 --title x --source y", "turnstile bug set b01 --state done",
-                            "turnstile brief tester ENV-S1 --var story_id=S1"])
+                            "turnstile brief tester ENV-S1 --var story_id=S1", "turnstile config list", "turnstile config set models.reviewer=sonnet:medium",
+                            "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11"])
 
     def test_round3_computed_subcommands_and_writers(self):
         # R3-1: a computed subcommand forged `approve` with the lead's ledger line; R3-2: env/awk/find/sort/git config wrote state.json

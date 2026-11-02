@@ -45,6 +45,12 @@ def build_parser():
     br = sub.add_parser("brief", help="render an agent brief from its template (the dispatch helper)"); br.add_argument("agent"); br.add_argument("name")
     br.add_argument("--var", action="append", default=[], dest="vars"); br.add_argument("--force", action="store_true"); br.add_argument("--no-commit", action="store_true")
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
+    cf = sub.add_parser("config", help="agent models/effort and review skills: user (~/.config/turnstile/config.json or $TURNSTILE_USER_CONFIG) > epic (state.json) > plugin defaults")
+    csub = cf.add_subparsers(dest="config_cmd"); csub.add_parser("list", help="effective values with their source")
+    for name, pos, h in [("set", "assignment", "key=value: models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill; value 'default' resets"),
+                         ("unset", "key", "reset the key in the chosen layer")]:
+        c = csub.add_parser(name); c.add_argument(pos, help=h); c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file")
+        c.add_argument("--no-commit", action="store_true")
     ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
@@ -53,7 +59,8 @@ def build_parser():
                      ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
                      ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
                      ("--recipe", {"default": "references/env/pdffiller-dev.md"}),
-                     ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"})]:
+                     ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"}),
+                     ("--models", {"help": "JSON agent → {model, effort} merged over the defaults (model: haiku|sonnet|opus|fable, effort: low|medium|high|xhigh)"})]:
         ini.add_argument(flag, **kw)
     return p
 
@@ -70,6 +77,19 @@ def main(argv=None):
         if a.cmd == "init":
             from .init_cmd import run as init_run, InitOptions
             return init_run(InitOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
+        if a.cmd == "config":
+            from . import config_cmd
+            try:
+                delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
+            except TurnstileError:
+                if a.delivery or getattr(a, "epic", False):
+                    raise
+                delivery = None
+            if a.config_cmd == "set":
+                return config_cmd.set_(delivery, a.assignment, epic=a.epic, no_commit=a.no_commit)
+            if a.config_cmd == "unset":
+                return config_cmd.unset(delivery, a.key, epic=a.epic, no_commit=a.no_commit)
+            return config_cmd.list_(delivery)
         delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
         if a.cmd == "pass":
             from .pass_cmd import run, Options

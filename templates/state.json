@@ -6,9 +6,21 @@
     "environment": { "desk": null, "recipe": "references/env/pdffiller-dev.md", "variant": null },
     "github_org": null,
     "key": null,
+    "models": {
+      "comments-handler": { "effort": null, "model": "haiku" },
+      "deployer": { "effort": null, "model": "sonnet" },
+      "implementer": { "effort": null, "model": "sonnet" },
+      "investigator": { "effort": null, "model": "haiku" },
+      "reviewer": { "effort": "medium", "model": "opus" },
+      "stack-step": { "effort": null, "model": "haiku" },
+      "story-reviewer": { "effort": "high", "model": "opus" },
+      "tester": { "effort": null, "model": "sonnet" }
+    },
     "plan": { "digest": null, "path": "plan.md", "submitted_at": null },
     "repos": {},
+    "review_skill": null,
     "roles": { "agent_github": null, "design": null, "lead": null, "lead_github": null, "pm": null },
+    "story_review_skill": null,
     "workitem": null
   },
   "prs": {},

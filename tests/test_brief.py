@@ -1,6 +1,11 @@
-import contextlib, io, json, pathlib, re, shutil, tempfile, unittest
+import contextlib, io, json, os, pathlib, re, shutil, tempfile, unittest
+from unittest import mock
 from turnstile_cli import brief_cmd
 from tests.test_pass import FakeIO
+
+_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
+def setUpModule(): _env.start()
+def tearDownModule(): _env.stop()
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "state_min.json"
@@ -71,6 +76,32 @@ class Run(unittest.TestCase):
         self.approve_plan(); (self.d / "plan.md").write_text("# plan\nedited\n")  # an edited plan voids the approval
         rc, out = self.run_brief("tester", "T", self.all_vars("tester")); self.assertEqual(rc, 2); self.assertIn("changed", out)
         self.approve_plan(); self.assertEqual(self.run_brief("tester", "T", self.all_vars("tester"))[0], 0)
+    def test_agent_line_carries_the_resolved_model_and_effort(self):
+        # lead rules 2026-10-19 / 2026-10-26: the orchestrator passes model/effort from this line, never its own choice
+        from turnstile_cli import state
+        rc, out = self.run_brief("reviewer", "REVIEW-1", self.all_vars("reviewer")); self.assertEqual(rc, 0)
+        self.assertIn("AGENT: turnstile:reviewer model=opus effort=medium\n", out)  # no epic.models in the fixture: defaults
+        rc, out = self.run_brief("implementer", "MYD-10", self.all_vars("implementer")); self.assertIn("AGENT: turnstile:implementer model=sonnet\n", out)
+        rc, out = self.run_brief("investigator", "I", self.all_vars("investigator")); self.assertIn("AGENT: turnstile:investigator model=haiku\n", out)
+        rc, out = self.run_brief("story-reviewer", "STORY-S1-review", self.all_vars("story-reviewer")); self.assertIn("model=opus effort=high\n", out)
+        d = json.loads((self.d / "state.json").read_text()); d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "high"}, "implementer": {"model": "haiku", "effort": "low"}}
+        (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = self.run_brief("reviewer", "REVIEW-1-r2", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=opus effort=high\n", out)
+        rc, out = self.run_brief("implementer", "MYD-11", self.all_vars("implementer")); self.assertIn("AGENT: turnstile:implementer model=haiku effort=low\n", out)
+        rc, out = self.run_brief("deployer", "DEPLOY-x", self.all_vars("deployer")); self.assertIn("AGENT: turnstile:deployer model=sonnet\n", out)
+    def test_review_briefs_carry_the_resolved_review_skill_user_layer_first(self):
+        from turnstile_cli import config, state
+        rc, out = self.run_brief("reviewer", "REVIEW-2", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
+        text = (self.d / "briefs" / "REVIEW-2.md").read_text(); self.assertIn("Deep review skill: `/code-review`", text); self.assertIn("BLOCKED: review skill /code-review not available", text)
+        d = json.loads((self.d / "state.json").read_text()); d["epic"]["review_skill"] = "/pdf-review:run"; d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "high"}}
+        (self.d / "state.json").write_text(state.dumps(d))
+        config.save_user({"review_skill": "/my-review", "story_review_skill": "/my-story-review", "models": {"reviewer": {"model": "sonnet", "effort": "low"}}})
+        rc, out = self.run_brief("reviewer", "REVIEW-3", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
+        text = (self.d / "briefs" / "REVIEW-3.md").read_text(); self.assertIn("Deep review skill: `/my-review`", text); self.assertNotIn("/pdf-review:run", text)
+        self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=low\n", out)
+        rc, out = self.run_brief("story-reviewer", "STORY-S1-review-r2", self.all_vars("story-reviewer"))
+        self.assertIn("Story review skill: `/my-story-review`", (self.d / "briefs" / "STORY-S1-review-r2.md").read_text())
+        self.assertFalse(any(p.name.endswith(".json") and p.name != "state.json" for p in self.d.iterdir()))
     def test_tester_brief_requires_test_user(self):
         rc, out = self.run_brief("tester", "ENV-S1", [v for v in self.all_vars("tester") if not v.startswith("test_user=")])
         self.assertEqual(rc, 2); self.assertIn("MISSING placeholder test_user", out)
