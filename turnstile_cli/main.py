@@ -52,6 +52,8 @@ def build_parser():
     csub = cf.add_subparsers(dest="config_cmd"); csub.add_parser("list", help="effective values with their source")
     cs = csub.add_parser("set"); cs.add_argument("assignment", metavar="key=value", help="models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill; value 'default' resets")
     cu = csub.add_parser("unset"); cu.add_argument("key", help="reset the key in the chosen layer")
+    ca = csub.add_parser("apply", help="apply an epic-layer change the lead approved (turnstile approve <ah-id>)"); ca.add_argument("ah_id")
+    ca.add_argument("--no-commit", action="store_true"); ca.add_argument("--no-push", action="store_true")
     for c in (cs, cu):
         c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file"); c.add_argument("--no-commit", action="store_true")
     sub.add_parser("sync", help="fetch origin, fast-forward the epic branch and push it (never rebase or force); refuses diverged histories")
@@ -98,13 +100,15 @@ def main(argv=None):
             try:
                 delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
             except TurnstileError:
-                if a.delivery or getattr(a, "epic", False):
+                if a.delivery or getattr(a, "epic", False) or a.config_cmd == "apply":
                     raise
                 delivery = None
             if a.config_cmd == "set":
                 return config_cmd.set_(delivery, a.assignment, epic=a.epic, no_commit=a.no_commit, no_push=a.no_push)
             if a.config_cmd == "unset":
                 return config_cmd.unset(delivery, a.key, epic=a.epic, no_commit=a.no_commit, no_push=a.no_push)
+            if a.config_cmd == "apply":
+                return config_cmd.apply(delivery, a.ah_id, no_commit=a.no_commit, no_push=a.no_push)
             return config_cmd.list_(delivery)
         delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
         if a.cmd == "sync":

@@ -1,6 +1,6 @@
 import contextlib, io, json, os, pathlib, shutil, tempfile, unittest
 from unittest import mock
-from turnstile_cli import config, config_cmd, models, reconcile, state
+from turnstile_cli import config, config_cmd, models, pass_cmd, reconcile, state
 from turnstile_cli.errors import TurnstileError
 from tests.test_pass import FakeIO
 
@@ -14,7 +14,7 @@ def out_of(fn, *a, **kw):
 
 class Config(unittest.TestCase):
     def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp()); self.user = self.tmp / "home" / "turnstile.json"
+        self.tmp = pathlib.Path(tempfile.mkdtemp()).resolve(); self.user = self.tmp / "home" / "turnstile.json"; self.user.parent.mkdir()
         self.env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": str(self.user)}); self.env.start(); self.addCleanup(self.env.stop)
         self.d = self.tmp / "ws" / "delivery"; self.d.mkdir(parents=True); shutil.copy(FIX, self.d / "state.json"); (self.d / ".state.lock").touch()
         self.io = FakeIO()
@@ -39,15 +39,34 @@ class Config(unittest.TestCase):
         self.assertIn("(all defaults)", config.one_line(config.effective(None, {})))
 
     def test_user_file_path_env_and_default(self):
-        self.assertEqual(config.user_path(), self.user)
+        self.assertEqual(config.user_path(), self.user.resolve())
         with mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": ""}):
             self.assertEqual(config.user_path(), pathlib.Path(os.path.expanduser("~")) / ".config" / "turnstile" / "config.json")
         self.assertEqual(config.load_user(), {})
-        self.user.parent.mkdir(parents=True); self.user.write_text("nope")
+        self.user.write_text("nope")
         with self.assertRaises(TurnstileError): config.load_user()
-        self.user.write_text("[]")
-        with self.assertRaises(TurnstileError): config.load_user()
+        for bad in ["[]", '{"models": "opus"}', '{"models": {"reviewer": "opus"}}', '{"review_skill": "pdf-review"}', '{"story_review_skill": 3}', '{"review_skill": "/a b"}']:
+            self.user.write_text(bad)
+            with self.assertRaises(TurnstileError, msg=bad): config.load_user()
+        self.user.write_text('{"review_skill": "/pdf-review:run", "models": {"reviewer": {"model": "sonnet"}}}'); self.assertEqual(config.load_user()["review_skill"], "/pdf-review:run")
+    def test_user_path_refuses_checkouts_and_non_json_and_creates_only_its_own_dir(self):
+        # review P2-1: TURNSTILE_USER_CONFIG=<delivery>/state.json must never become a write path
+        (self.tmp / "ws" / ".git").mkdir(parents=True)
+        for bad in [self.d / "state.json", self.d / "x.json", self.tmp / "ws" / "any.json", self.tmp / "home" / "cfg.txt"]:
+            with mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": str(bad)}):
+                with self.assertRaises(TurnstileError, msg=str(bad)): config.user_path()
+                rc, out = out_of(config_cmd.set_, self.d, "review_skill=/x", io=self.io); self.assertEqual(rc, 2); self.assertIn("TURNSTILE_USER_CONFIG must be", out)
+        self.assertEqual(json.loads((self.d / "state.json").read_text()), json.loads(FIX.read_text())); self.assertFalse((self.d / "x.json").exists())
+        with mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": str(self.tmp / "nodir" / "u.json")}):
+            with self.assertRaises(TurnstileError): config.save_user({})
+        self.assertFalse((self.tmp / "nodir").exists())
+        with mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": ""}), mock.patch.object(config, "default_user_dir", return_value=self.tmp / "dot" / "turnstile"):
+            config.save_user({"review_skill": "/x"}); self.assertTrue((self.tmp / "dot" / "turnstile" / "config.json").exists())
 
+    def test_skill_values_must_be_slash_commands(self):
+        for bad in ["pdf-review", "/pdf review", "/x;rm", "http://x", "/"]:
+            with self.assertRaises(TurnstileError, msg=bad): config.parse_value("review_skill", bad)
+        for ok in ["/code-review", "/pdf-review:run", "/my.review_2"]: self.assertEqual(config.parse_value("story_review_skill", ok), ok)
     def test_keys_and_values_are_validated(self):
         for key in ["model", "models.", "models.nobody", "gate", "review", ""]:
             with self.assertRaises(TurnstileError, msg=key): config.parse_key(key)
@@ -80,27 +99,50 @@ class Config(unittest.TestCase):
         self.assertEqual(json.loads(self.user.read_text()), {"review_skill": "/my-review"})
         rc, out = out_of(config_cmd.set_, self.d, "review_skill=default", io=self.io); self.assertEqual(json.loads(self.user.read_text()), {})
 
-    def test_set_epic_layer_commits_through_the_guarded_path_with_a_ledger_line(self):
+    def approve(self, ah):
+        with mock.patch.dict(os.environ, {"TURNSTILE_LEAD": "1"}): rc, out = out_of(pass_cmd.approve, self.d, ah, self.io)
+        self.assertEqual(rc, 0, out)
+    def test_set_epic_layer_opens_a_lead_entry_and_apply_commits_it(self):
+        # review P2-2: the epic layer is shared state, so it changes only after the lead's word (same pattern as send/merge)
         rc, out = out_of(config_cmd.set_, self.d, "review_skill=/pdf-review:run", epic=True, io=self.io)
-        self.assertEqual(rc, 0, out); self.assertIn("review_skill = /pdf-review:run (epic)", out); self.assertIn("OK config set review_skill (epic)", out)
-        self.assertEqual(self.data()["epic"]["review_skill"], "/pdf-review:run"); self.assertFalse(self.user.exists())
-        self.assertEqual(len(self.io.commits), 1); self.assertIn("config set review_skill=/pdf-review:run (epic)", (self.d / "ledger.md").read_text())
-        rc, out = out_of(config_cmd.set_, self.d, "models.reviewer=opus:high", epic=True, io=self.io)
-        self.assertEqual(self.data()["epic"]["models"]["reviewer"], {"model": "opus", "effort": "high"}); self.assertEqual(sorted(self.data()["epic"]["models"]), sorted(models.DEFAULTS))
-        self.assertIn("models.reviewer = opus:high (epic)", out)
-        rc, out = out_of(config_cmd.unset, self.d, "models.reviewer", epic=True, io=self.io)
-        self.assertEqual(self.data()["epic"]["models"]["reviewer"], models.DEFAULTS["reviewer"]); self.assertIn("(default)", out)
-        self.assertEqual(len(self.io.commits), 3); self.assertIn("config unset models.reviewer (epic)", (self.d / "ledger.md").read_text())
-        out_of(config_cmd.set_, self.d, "review_skill=/my-review", io=self.io)  # the user layer still wins over the epic one
+        self.assertEqual(rc, 0, out); self.assertIn("APPROVAL: the lead types: ! TURNSTILE_LEAD=1 turnstile approve ah-1", out); self.assertIn("THEN: turnstile config apply ah-1", out)
+        self.assertNotIn("review_skill", self.data()["epic"]); self.assertFalse(self.user.exists())
+        e = self.data()["awaiting_human"][0]; self.assertEqual((e["type"], e["payload"], e["old"], e["new"], e["reset"], e["approved_at"]), ("config", "review_skill", None, "/pdf-review:run", False, None))
+        self.assertEqual(len(self.io.commits), 1); self.assertIn("config set review_skill=/pdf-review:run proposed for the epic (ah-1 awaits the lead)", (self.d / "ledger.md").read_text())
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 2); self.assertIn("approved_at", out); self.assertNotIn("review_skill", self.data()["epic"])
+        rc, out = out_of(config_cmd.apply, self.d, "ah-9", io=self.io); self.assertEqual(rc, 2); self.assertIn("unknown id", out)
+        with mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
+            rc, out = out_of(reconcile.cli, self.d, status=True); self.assertIn("ah-1 lead config review_skill", out); self.assertNotIn("APPLY:", out)
+            self.approve("ah-1")
+            rc, out = out_of(reconcile.cli, self.d, status=True); self.assertIn("APPLY: turnstile config apply ah-1 (review_skill approved by the lead)", out)
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io)
+        self.assertEqual(rc, 0, out); self.assertIn("review_skill = /pdf-review:run (epic)", out); self.assertIn("OK config set review_skill (epic, ah-1)", out)
+        self.assertEqual(self.data()["epic"]["review_skill"], "/pdf-review:run"); self.assertTrue(self.data()["awaiting_human"][0]["consumed_at"])
+        self.assertIn("config set review_skill=/pdf-review:run (epic, approved ah-1)", (self.d / "ledger.md").read_text())
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 2); self.assertIn("not consumed yet", out)
+        out_of(config_cmd.set_, self.d, "models.reviewer=opus:high", epic=True, io=self.io); self.approve("ah-2")
+        d = self.data(); d["epic"]["models"] = dict(models.defaults(), reviewer={"model": "sonnet", "effort": None}); (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 2); self.assertIn("changed since ah-2 was proposed", out)
+        d["epic"]["models"]["reviewer"] = dict(models.DEFAULTS["reviewer"]); (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 2); self.assertIn("changed since", out)  # old was None (no epic.models in the fixture)
+        d["epic"].pop("models"); (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["epic"]["models"]["reviewer"], {"model": "opus", "effort": "high"}); self.assertIn("models.reviewer = opus:high (epic)", out)
+        out_of(config_cmd.unset, self.d, "models.reviewer", epic=True, io=self.io); self.approve("ah-3"); rc, out = out_of(config_cmd.apply, self.d, "ah-3", io=self.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.data()["epic"]["models"]["reviewer"], models.DEFAULTS["reviewer"]); self.assertIn("config unset models.reviewer (epic, approved ah-3)", (self.d / "ledger.md").read_text())
+        out_of(config_cmd.set_, self.d, "review_skill=/my-review", io=self.io)
         rc, out = out_of(config_cmd.list_, self.d); self.assertIn("review_skill = /my-review (user)", out); self.assertIn("USER_CONFIG: %s" % self.user, out)
+        rc, out = out_of(config_cmd.apply, None, "ah-1", io=self.io); self.assertEqual(rc, 2); self.assertIn("needs a delivery", out)
 
     def test_flag_is_epic_only(self):
         rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", io=self.io); self.assertEqual(rc, 2); self.assertIn("flag is epic state", out); self.assertFalse(self.user.exists())
-        rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", epic=True, io=self.io); self.assertEqual(rc, 0, out)
+        rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", epic=True, io=self.io); self.assertEqual(rc, 0, out); self.approve("ah-1")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 0, out)
         self.assertEqual(self.data()["epic"]["flag"], "pwr-l2f"); self.assertIn("flag = pwr-l2f (epic)", out); self.assertIn("flag=pwr-l2f", config.one_line(config.effective(self.data(), {})))
         rc, out = out_of(config_cmd.set_, self.d, "flag=", epic=True, io=self.io); self.assertEqual(rc, 2); self.assertIn("non-empty flag name", out)
-        rc, out = out_of(config_cmd.unset, self.d, "flag", epic=True, io=self.io); self.assertEqual(rc, 0); self.assertIsNone(self.data()["epic"]["flag"]); self.assertIn("flag = none (default)", out)
-        self.assertIn("config set flag=pwr-l2f (epic)", (self.d / "ledger.md").read_text())
+        rc, out = out_of(config_cmd.unset, self.d, "flag", epic=True, io=self.io); self.assertEqual(rc, 0); self.approve("ah-2")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 0); self.assertIsNone(self.data()["epic"]["flag"]); self.assertIn("flag = none (default)", out)
+        self.assertIn("config set flag=pwr-l2f (epic, approved ah-1)", (self.d / "ledger.md").read_text())
     def test_list_without_a_delivery(self):
         rc, out = out_of(config_cmd.list_, None)
         self.assertEqual(rc, 0); self.assertIn("EPIC: none", out); self.assertIn("(absent)", out)

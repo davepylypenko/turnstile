@@ -38,10 +38,33 @@ class TrunkMode(unittest.TestCase):
             with self.assertRaises(TurnstileError): plan_cmd.stories_from_plan(bad, default)
     def test_plan_submitted_uses_epic_story_mode(self):
         d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; d.mkdir(); shutil.copy(FIX, d / "state.json"); (d / ".state.lock").touch()
-        data = json.loads((d / "state.json").read_text()); data["epic"]["story_mode"] = "trunk"; (d / "state.json").write_text(state.dumps(data))
+        data = json.loads((d / "state.json").read_text()); data["epic"]["story_mode"] = "trunk"; data["stories"]["S1"]["state"] = "PLANNED"; (d / "state.json").write_text(state.dumps(data))
         (d / "plan.md").write_text(PLAN)
         with contextlib.redirect_stdout(io.StringIO()): self.assertEqual(plan_cmd.run(d, io=FakeIO()), 0)
         st = json.loads((d / "state.json").read_text())["stories"]; self.assertEqual((st["S1"]["mode"], st["S2"]["mode"], st["S2"]["control_cases"]), ("trunk", "trunk", []))
+
+class StartedStoryMode(unittest.TestCase):
+    def test_replan_cannot_flip_mode_or_human_review_of_a_started_story(self):
+        # review P2-3: like the branch, the mode decides the running rules; human_review may only be set where it was unset (the migration path)
+        existing = {"S1": {"state": "IN_PROGRESS", "branch": "epic_myd-1", "mode": "stack", "evidence": {}}}
+        planned = plan_cmd.stories_from_plan(PLAN, "trunk"); planned["S1"]["mode"] = "trunk"
+        with self.assertRaises(TurnstileError) as cm: plan_cmd.merge_stories(existing, planned)
+        self.assertIn("its mode cannot change from 'stack' to 'trunk'", str(cm.exception))
+        legacy = {"S1": {"state": "IN_PROGRESS", "branch": "epic_myd-1", "evidence": {}}}
+        merged, _ = plan_cmd.merge_stories(legacy, plan_cmd.stories_from_plan(PLAN)); self.assertEqual((merged["S1"]["mode"], merged["S1"]["human_review"]), ("stack", "per_pr"))
+        with self.assertRaises(TurnstileError): plan_cmd.merge_stories(legacy, planned)
+        started = {"S1": {"state": "ENV_TESTING", "branch": "epic_myd-1", "human_review": "per_pr", "evidence": {}}}
+        with self.assertRaises(TurnstileError) as cm: plan_cmd.merge_stories(started, plan_cmd.stories_from_plan(PLAN.replace(', "human_review": "per_pr"', "")))
+        self.assertIn("human_review cannot change from 'per_pr' to None", str(cm.exception))
+        planned_only = {"S1": {"state": "PLANNED", "branch": "epic_myd-1", "mode": "stack", "evidence": {}}}
+        self.assertEqual(plan_cmd.merge_stories(planned_only, planned)[0]["S1"]["mode"], "trunk")
+    def test_trunk_story_under_a_flag_needs_control_cases(self):
+        self.assertEqual(plan_cmd.stories_from_plan(PLAN, "trunk")["S1"]["control_cases"], [])
+        with self.assertRaises(TurnstileError) as cm: plan_cmd.stories_from_plan(PLAN, "trunk", "pwr-x")
+        self.assertIn("S1.control_cases is empty", str(cm.exception))
+        text = PLAN.replace('"test_cases": ["TP-1"]', '"test_cases": ["TP-1"], "control_cases": ["CC-1"]').replace('"after": ["S1"]', '"after": ["S1"], "control_cases": ["CC-2"]')
+        self.assertEqual(plan_cmd.stories_from_plan(text, "trunk", "pwr-x")["S2"]["control_cases"], ["CC-2"])
+        self.assertEqual(plan_cmd.stories_from_plan(PLAN.replace('"after": ["S1"]', '"after": ["S1"], "mode": "stack"'), "stack", "pwr-x")["S2"]["mode"], "stack")
 
 class Merge(unittest.TestCase):
     def test_keeps_state_of_existing_and_plans_new(self):

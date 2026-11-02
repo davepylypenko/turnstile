@@ -22,8 +22,10 @@ def record(delivery, pushed: bool, head: Optional[str], reason: Optional[str] = 
     return rec
 
 def branch(io, delivery, data: Optional[dict]) -> str:
-    b = (((data or {}).get("epic") or {}).get("knowledge") or {}).get("branch")
-    return b or io.current_branch(delivery)
+    b = (((data or {}).get("epic") or {}).get("knowledge") or {}).get("branch") or io.current_branch(delivery)
+    if not b:
+        raise TurnstileError("the knowledge worktree is on a detached HEAD and epic.knowledge.branch is unset; check out the epic branch")
+    return b
 
 def line(rec: Optional[dict]) -> str:
     if not rec:
@@ -33,8 +35,12 @@ def line(rec: Optional[dict]) -> str:
     return "SYNC: NOT PUSHED since %s (%s) — run: turnstile sync" % (rec.get("at"), rec.get("reason") or "?")
 
 def missing_for(delivery, gated: bool) -> list:
+    if not gated:
+        return []
     rec = load(delivery)
-    if gated and rec and rec.get("pushed") is False:
+    if rec is None:
+        return ["MISSING a recorded push of the epic branch on this machine (%s absent or unreadable) — run: turnstile sync, then re-run" % FILE]
+    if rec.get("pushed") is not True:
         return ["MISSING epic branch on origin: not pushed since %s (%s) — run: turnstile sync, then re-run" % (rec.get("at"), rec.get("reason") or "?")]
     return []
 
@@ -44,10 +50,12 @@ def _head(io, delivery) -> Optional[str]:
     except Exception:
         return None
 
-def guard_behind(io, delivery, br: str) -> None:
+def guard_behind(io, delivery, br: str, strict: bool = False) -> None:
     try:
         io.git_fetch(delivery, br)
     except Exception as e:
+        if strict:
+            raise TurnstileError("fetch failed: %s — fix the network or run with --no-push for local-only work" % str(e)[:160])
         print("WARN fetch origin %s failed (%s): proceeding on local facts" % (br, str(e)[:120])); return
     behind, ahead = io.behind_ahead(delivery, br)
     if behind:
@@ -58,6 +66,9 @@ def push(io, delivery, br: str, no_push: bool = False) -> dict:
     if no_push:
         print("WARN: not pushed: --no-push"); return record(delivery, False, head, "--no-push")
     try:
+        current = io.current_branch(delivery)
+        if current != br:
+            raise TurnstileError("worktree is on %s, not %s (detached HEAD or renamed branch); check out %s first" % (current or "a detached HEAD", br, br))
         io.git_push(delivery, br)
     except Exception as e:
         reason = str(e)[:200]; print("WARN: not pushed: %s" % reason); return record(delivery, False, head, reason)

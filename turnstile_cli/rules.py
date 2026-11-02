@@ -425,7 +425,7 @@ def _fails_became_bugs(story: dict, bugs: Optional[List[dict]], out: List[str]) 
 
 def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[str, dict], reason: Optional[str] = None,
                 bugs: Optional[List[dict]] = None, awaiting: Optional[List[dict]] = None, approved: Optional[str] = None,
-                plan_missing: Optional[str] = None, recording_run: bool = False) -> List[str]:
+                plan_missing: Optional[str] = None, recording_run: bool = False, flag: Optional[str] = None) -> List[str]:
     out: List[str] = []
     if target not in STORY_STATES:
         return ["MISSING valid target state (one of %s)" % ", ".join(STORY_STATES)]
@@ -473,7 +473,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         _prs_all_merged(story, prs, out)
         _review_head_bound(story, out)
         _deploy_heads_verified(story, out)
-        for arm in ARMS:
+        for arm in (ARMS if flag else ARMS[:1]):
             _arm_run_clean(story, arm, out)
         for b in bugs or []:
             if b.get("story") == sid and b.get("state") != "done":

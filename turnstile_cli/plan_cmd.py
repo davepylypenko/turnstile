@@ -10,7 +10,7 @@ DEFAULTS = {"after": [], "parallel_with": [], "test_cases": [], "control_cases":
 MODES = ("stack", "trunk")
 KEEP = ("state", "evidence", "next_action", "last_reason")
 
-def stories_from_plan(text: str, default_mode: str = "stack") -> dict:
+def stories_from_plan(text: str, default_mode: str = "stack", flag: Optional[str] = None) -> dict:
     if default_mode not in MODES:
         raise TurnstileError("epic.story_mode must be one of %s (is %r)" % ("|".join(MODES), default_mode))
     m = BLOCK_RX.search(text or "")
@@ -37,6 +37,8 @@ def stories_from_plan(text: str, default_mode: str = "stack") -> dict:
             raise TurnstileError("story %s.mode must be one of %s (is %r)" % (sid, "|".join(MODES), full["mode"]))
         if not isinstance(full["control_cases"], list):
             raise TurnstileError("story %s.control_cases must be a list" % sid)
+        if flag and full["mode"] == "trunk" and not full["control_cases"]:
+            raise TurnstileError("story %s.control_cases is empty: a trunk story under the epic flag %s is tested on both arms (list the flag-off cases)" % (sid, flag))
         out[sid] = full
     for sid, s in out.items():
         for key in ("after", "parallel_with"):
@@ -58,6 +60,11 @@ def merge_stories(existing: dict, planned: dict) -> Tuple[dict, List[str]]:
                 if cur.get("branch") and s.get("branch") != cur.get("branch"):
                     raise TurnstileError("story %s is %s: its branch cannot change from %s to %s in a re-plan (finish or reopen it first)"
                                          % (sid, cur.get("state"), cur.get("branch"), s.get("branch")))
+                for key, default in (("mode", "stack"), ("human_review", None)):
+                    old, new = cur.get(key) or default, s.get(key) or default
+                    if old != new and not (key == "human_review" and old is None):
+                        raise TurnstileError("story %s is %s: its %s cannot change from %r to %r in a re-plan (finish or reopen it first)"
+                                             % (sid, cur.get("state"), key, old, new))
                 for key in ("tickets", "repos"):
                     if cur.get(key) is not None and s.get(key) != cur.get(key):
                         warnings.append("WARN %s is %s: %s changed from %s to %s" % (sid, cur.get("state"), key, cur.get(key), s.get(key)))
@@ -79,7 +86,7 @@ def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> in
             if not plan_path.exists():
                 raise TurnstileError("no plan.md in %s" % delivery)
             text = plan_path.read_text()
-            planned = stories_from_plan(text, (data.get("epic") or {}).get("story_mode") or "stack")
+            planned = stories_from_plan(text, (data.get("epic") or {}).get("story_mode") or "stack", (data.get("epic") or {}).get("flag"))
             before = set(data.get("stories") or {})
             data["stories"], warnings = merge_stories(data.get("stories") or {}, planned)
             digest = st_mod.digest(text)

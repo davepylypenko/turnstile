@@ -72,8 +72,9 @@ Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` o
 epic state (`epic.models`, `epic.review_skill`, `epic.story_review_skill`) > plugin defaults. Ask the lead **one** batched
 question — "Do you use your own review skill (name it), and do you want a different model/effort for any agent? Current
 effective values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`,
-`config set review_skill=/my-review`, `config set story_review_skill=…` (user layer; `--epic` only when the lead says it is for the
-whole epic or team; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions ("use my
+`config set review_skill=/my-review`, `config set story_review_skill=…` (user layer: at once; `--epic`, only when the lead says it is
+for the whole epic or team, opens a `config` entry — the lead approves it with the usual line, then `turnstile config apply <ah-id>`;
+`=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions ("use my
 /x-review skill", "reviewer on sonnet") map to the same commands; never ask what the user file already answers; `turnstile status`
 prints the effective line. `review_skill` is what the `reviewer` runs for the deep review (`--deep-review` report), `story_review_skill`
 the story-reviewer's; neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).

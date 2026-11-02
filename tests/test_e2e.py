@@ -12,12 +12,13 @@ class E2E(unittest.TestCase):
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
-        (d / "reports").mkdir(); (d / "reports" / "R.md").write_text("clean"); (d / ".state.lock").touch()  # as init leaves it
+        (d / "reports").mkdir(); (d / "reports" / "R.md").write_text("clean"); (d / ".state.lock").touch(); (d / ".gitignore").write_text(".*.tmp\n.sync.json\n")  # as init leaves it
         subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], cwd=self.ws, check=True)
         subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=self.ws, check=True)
+        from turnstile_cli import sync; sync.record(d, True, H)
         self.env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
-                        TURNSTILE_USER_CONFIG=str(self.ws / "user-config.json"))
+                        TURNSTILE_USER_CONFIG=str(pathlib.Path(tempfile.mkdtemp()) / "user-config.json"))
         # a PATH with a canned `gh`: the shim's real IO goes through it, no network
         self.bin = pathlib.Path(tempfile.mkdtemp()) / "bin"; self.bin.mkdir(); (self.bin / "python3").symlink_to(sys.executable)
         self.gh_env = dict(self.env, PATH=os.pathsep.join([str(self.bin), "/usr/bin", "/bin"]))
@@ -29,11 +30,13 @@ class E2E(unittest.TestCase):
     def test_full_pr_path_with_real_git_commit(self):
         subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=self.ws, check=True)
         self.fake_gh(json.loads(GH_FIX.read_text()))
-        r = sh(["pass", "pr", "jsfiller#1", "READY", "--head", H, "--ci", "success", "--deep-review", "reports/R.md", "--rounds", "1", "--gate", "pdf-review:pass"],
-               cwd=self.ws / "delivery", env=self.gh_env)
+        args = ["pass", "pr", "jsfiller#1", "READY", "--head", H, "--ci", "success", "--deep-review", "reports/R.md", "--rounds", "1", "--gate", "pdf-review:pass"]
+        r = sh(args, cwd=self.ws / "delivery", env=self.gh_env)
+        self.assertEqual(r.returncode, 2); self.assertIn("MISSING fetch failed:", r.stdout); self.assertIn("--no-push for local-only work", r.stdout)  # no origin: a gated pass refuses
+        r = sh(args + ["--no-push"], cwd=self.ws / "delivery", env=self.gh_env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(r.stdout.strip().splitlines()[-1].startswith("OK pass pr jsfiller#1 AI_REVIEW → READY"))
-        self.assertIn("WARN: not pushed:", r.stdout); self.assertFalse(json.loads((self.ws / "delivery" / ".sync.json").read_text())["pushed"])  # no origin
+        self.assertIn("WARN: not pushed: --no-push", r.stdout); self.assertFalse(json.loads((self.ws / "delivery" / ".sync.json").read_text())["pushed"])
         log = subprocess.run(["git", "log", "--oneline"], cwd=self.ws, capture_output=True, text=True).stdout
         self.assertIn("turnstile: pass pr jsfiller#1", log)
         self.assertTrue((self.ws / "delivery" / "board.html").exists())
@@ -63,7 +66,7 @@ class E2E(unittest.TestCase):
     def test_status_without_network(self):
         # PATH without `gh` (only the interpreter and the shim's bash/dirname): fetch raises, cli prints WARN, no network
         r = sh(["status"], cwd=self.ws, env=self.gh_env)
-        self.assertIn("WARN jsfiller#1", r.stdout); self.assertTrue(r.stdout.startswith("SYNC: unknown"), r.stdout[:80])
+        self.assertIn("WARN jsfiller#1", r.stdout); self.assertTrue(r.stdout.startswith("SYNC: pushed " + H), r.stdout[:80])
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)  # facts missing for an open PR
         self.assertIn("== MYD-1", r.stdout); self.assertIn("awaiting humans:", r.stdout); self.assertIn("config: models implementer=sonnet", r.stdout)
         self.assertNotIn("uncommitted", r.stdout)

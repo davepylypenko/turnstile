@@ -1,5 +1,6 @@
 import json, pathlib, shutil, tempfile, unittest
 from turnstile_cli import pass_cmd, state
+from turnstile_cli import sync
 from tests.test_pass import FakeIO, opts, run_capture, H, H2
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
@@ -9,7 +10,7 @@ class StoryPassesVerifyGitHub(unittest.TestCase):
     """Round 2 R2-7: a push without `pass pr` leaves state.json stale; every story gate asks GitHub for the head of every PR
     in deploy.heads and refuses when any differs."""
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir()
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); sync.record(self.d, True, "aaaaaaaa11111111")
         shutil.copy(FIX, self.d / "state.json"); (self.d / ".state.lock").touch(); (self.d / "reports").mkdir()
         (self.d / "reports" / "ENV.md").write_text("ok"); (self.d / "reports" / "S.md").write_text("clean")
         self.io = FakeIO(heads={"jsfiller#1": H, "docs-platform#2": B})

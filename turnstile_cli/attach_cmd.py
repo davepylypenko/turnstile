@@ -1,4 +1,4 @@
-import os, pathlib
+import os, pathlib, re
 from dataclasses import dataclass
 from typing import Optional
 from . import state as st_mod, sync
@@ -13,8 +13,12 @@ class AttachOptions:
     workitem: Optional[str] = None
     chat_language: Optional[str] = None
 
+NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 def _find_delivery(wt: pathlib.Path, workitem: Optional[str]) -> pathlib.Path:
     if workitem:
+        if not NAME_RX.match(workitem) or workitem in (".", ".."):
+            raise TurnstileError("--workitem must be a folder name like my-epic (got %r)" % workitem)
         d = wt / "context" / "workitems" / workitem / "delivery"
         if not (d / "state.json").exists():
             raise TurnstileError("no state.json in %s" % d)

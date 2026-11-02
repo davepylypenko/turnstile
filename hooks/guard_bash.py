@@ -28,7 +28,8 @@ CONTENT_RULES = [("trailer", r"Co-Authored-By"), ("footer", r"Generated with \[C
 # the lead's actions never pass through the model's tool calls: the lead types `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
 # in the Claude Code prompt (the `!` prefix runs outside the hooks). Any model-issued command that carries the approve
 # command or the lead/migration markers, in any quoting/env/export/bash -c/heredoc form, is refused on the substring.
-LEAD_ONLY = [("lead-approve", "turnstile approve"), ("lead-approve", "TURNSTILE_LEAD"), ("lead-migration", "TURNSTILE_MIGRATION")]
+LEAD_ONLY = [("lead-approve", "turnstile approve"), ("lead-approve", "TURNSTILE_LEAD"), ("lead-migration", "TURNSTILE_MIGRATION"),
+             ("lead-config", "TURNSTILE_USER_CONFIG")]
 APPROVE = [r"(?:\bturnstile|turnstile_cli)\s+(?:--delivery[=\s]\S+\s+)?approve\b", r"turnstile_cli[^\n]*\bapprove\s*\("]
 LEAD_HINT = ("The lead approves by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt themself "
              "(the `!` prefix runs outside the model's tool calls). Ask the lead; never run it.")

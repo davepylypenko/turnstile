@@ -1,12 +1,13 @@
 import json, pathlib, shutil, tempfile, unittest
 from turnstile_cli import pass_cmd, rules, bug_cmd, state
+from turnstile_cli import sync
 from tests.test_pass import FakeIO, opts, run_capture, env, H, H2
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 
 class EnvRuns(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir()
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); sync.record(self.d, True, "aaaaaaaa11111111")
         shutil.copy(FIX, self.d / "state.json"); (self.d / ".state.lock").touch(); (self.d / "reports").mkdir()
         (self.d / "reports" / "ENV.md").write_text("ok"); (self.d / "reports" / "S.md").write_text("clean"); self.io = FakeIO()
         data = json.loads((self.d / "state.json").read_text())

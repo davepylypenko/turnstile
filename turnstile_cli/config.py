@@ -1,14 +1,41 @@
-import json, os, pathlib
+import json, os, pathlib, re
 from typing import Optional, Tuple
 from . import models
 from .errors import TurnstileError
 
 DEFAULT_REVIEW_SKILL = "/code-review"
 SKILL_KEYS = ("review_skill", "story_review_skill")
+SKILL_RX = re.compile(r"^/[\w:.-]+$")
 KEYS_HELP = "models.<agent>, review_skill, story_review_skill, flag (epic only)"
 
+def default_user_dir() -> pathlib.Path:
+    return pathlib.Path(os.path.expanduser("~")) / ".config" / "turnstile"
+
+def _inside_checkout(p: pathlib.Path) -> bool:
+    for d in [p] + list(p.parents):
+        if (d / ".git").exists() or (d / ".turnstile").exists() or (d / ".state.lock").exists():
+            return True
+    return False
+
 def user_path() -> pathlib.Path:
-    return pathlib.Path(os.environ.get("TURNSTILE_USER_CONFIG") or os.path.join(os.path.expanduser("~"), ".config", "turnstile", "config.json"))
+    override = os.environ.get("TURNSTILE_USER_CONFIG")
+    if not override:
+        return default_user_dir() / "config.json"
+    p = pathlib.Path(override).expanduser().resolve()
+    if p.suffix != ".json" or _inside_checkout(p.parent):
+        raise TurnstileError("TURNSTILE_USER_CONFIG must be a .json file outside any git checkout, delivery dir or workspace (got %s)" % p)
+    return p
+
+def _check_user_shape(data, p: pathlib.Path) -> dict:
+    if not isinstance(data, dict):
+        raise TurnstileError("user config %s must be a JSON object" % p)
+    m = data.get("models")
+    if m is not None and (not isinstance(m, dict) or any(not isinstance(v, dict) for v in m.values())):
+        raise TurnstileError("user config %s: models must map agent → {model, effort}" % p)
+    for k in SKILL_KEYS:
+        if data.get(k) is not None and not (isinstance(data[k], str) and SKILL_RX.match(data[k])):
+            raise TurnstileError("user config %s: %s must be a slash command like /my-review (is %r)" % (p, k, data[k]))
+    return data
 
 def load_user() -> dict:
     p = user_path()
@@ -16,14 +43,16 @@ def load_user() -> dict:
         return {}
     try:
         data = json.loads(p.read_text())
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise TurnstileError("user config %s is not valid JSON (%s)" % (p, e))
-    if not isinstance(data, dict):
-        raise TurnstileError("user config %s must be a JSON object" % p)
-    return data
+    return _check_user_shape(data, p)
 
 def save_user(data: dict) -> pathlib.Path:
-    p = user_path(); p.parent.mkdir(parents=True, exist_ok=True)
+    p = user_path()
+    if not p.parent.exists():
+        if default_user_dir() not in [p.parent] + list(p.parent.parents):
+            raise TurnstileError("%s does not exist; turnstile creates directories only under %s" % (p.parent, default_user_dir()))
+        p.parent.mkdir(parents=True)
     p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n"); return p
 
 def parse_key(key: str) -> Tuple[str, Optional[str]]:
@@ -47,6 +76,8 @@ def parse_value(key: str, value: str):
         return {"model": model, "effort": effort or None}
     if not value or not value.strip():
         raise TurnstileError("%s needs a non-empty %s" % (key, "flag name" if key == "flag" else "skill name (e.g. /pdf-review:run)"))
+    if key != "flag" and not SKILL_RX.match(value.strip()):
+        raise TurnstileError("%s must be a slash command like /pdf-review:run or /my-review (got %r)" % (key, value))
     return value.strip()
 
 def _model_entry(raw, default: dict, where: str) -> dict:

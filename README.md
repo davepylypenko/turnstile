@@ -132,8 +132,10 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
 Three layers, highest first: **user** (`~/.config/turnstile/config.json`, or `$TURNSTILE_USER_CONFIG`; per person,
 never in git) > **epic** (`epic.models`, `epic.review_skill`, `epic.story_review_skill` in `state.json`, written through
 the same guarded commit path as `pass`) > **plugin defaults**. `turnstile config list` prints every effective value with its source;
-`turnstile config set <key>=<value>` writes the user file, `--epic` the epic state; `turnstile config unset <key> [--epic]`
-(or `=default`) resets. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
+`turnstile config set <key>=<value>` writes the user file at once; `--epic` proposes the change as an `awaiting_human` entry of
+type `config` (old and new value) that the lead approves with the usual line, after which `turnstile config apply <ah-id>` commits
+it; `turnstile config unset <key> [--epic]` (or `=default`) resets. `TURNSTILE_USER_CONFIG` is the lead's shell variable: the Bash
+guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
 the story-reviewer's; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
@@ -278,7 +280,7 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset` (per-person and per-epic models and review skills), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models and review skills; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 

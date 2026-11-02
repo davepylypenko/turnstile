@@ -1,12 +1,13 @@
 import contextlib, io, json, pathlib, shutil, tempfile, unittest
 from turnstile_cli import pr_cmd, pass_cmd, state
+from turnstile_cli import sync
 from tests.test_pass import FakeIO, opts
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 
 class PrAdd(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; (self.d / "briefs").mkdir(parents=True)
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; (self.d / "briefs").mkdir(parents=True); sync.record(self.d, True, "aaaaaaaa11111111")
         shutil.copy(FIX, self.d / "state.json"); (self.d / ".state.lock").touch()
         self.io = FakeIO(heads={"jsfiller#7": "cccccccc33333333"}); self.io.facts["jsfiller#7"] = {"base": "epic_myd-1", "branch": "feature/MYD-11"}
         (self.d / "briefs" / "MYD-11.md").write_text("brief\n")

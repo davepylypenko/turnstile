@@ -1,5 +1,6 @@
 import contextlib, io as _io, json, os, pathlib, shutil, tempfile, unittest
 from turnstile_cli import pass_cmd, state
+from turnstile_cli import sync
 from turnstile_cli.errors import TurnstileError
 from turnstile_cli.github import PrFacts
 
@@ -62,7 +63,7 @@ READY_OPTS = dict(head=H, ci="success", deep_review="reports/R.md", rounds=2, ga
 
 class PassCmd(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir()
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); sync.record(self.d, True, "aaaaaaaa11111111")
         shutil.copy(FIX, self.d / "state.json")
         self.io = FakeIO(heads={"jsfiller#1": H, "docs-platform#2": "bbbbbbbb22222222"})
         (self.d / "reports").mkdir(); (self.d / "reports" / "R.md").write_text("ok")

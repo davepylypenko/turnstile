@@ -1,5 +1,6 @@
 import copy, json, pathlib, shutil, tempfile, unittest
 from turnstile_cli import board, reconcile, rules, pass_cmd
+from turnstile_cli import sync
 from turnstile_cli.errors import TurnstileError
 from tests.test_pass import FakeIO, opts, run_capture, READY_OPTS, H
 
@@ -7,7 +8,7 @@ FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 
 class OrgRequired(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir()
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); sync.record(self.d, True, "aaaaaaaa11111111")
         data = json.loads(FIX.read_text()); del data["epic"]["github_org"]
         (self.d / "state.json").write_text(json.dumps(data)); (self.d / "reports").mkdir(); (self.d / "reports" / "R.md").write_text("ok")
         (self.d / ".state.lock").touch()

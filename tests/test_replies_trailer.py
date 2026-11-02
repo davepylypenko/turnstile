@@ -1,5 +1,6 @@
 import copy, json, pathlib, shutil, tempfile, unittest
 from turnstile_cli import github, pass_cmd, state
+from turnstile_cli import sync
 from tests.test_pass import FakeIO, opts, run_capture, env, H, LINK, READY_OPTS
 
 D = pathlib.Path(__file__).parent / "fixtures"
@@ -18,7 +19,7 @@ class Parse(unittest.TestCase):
 
 class Trailer(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir()
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); sync.record(self.d, True, "aaaaaaaa11111111")
         shutil.copy(D / "state_min.json", self.d / "state.json"); (self.d / ".state.lock").touch()
         (self.d / "reports").mkdir(); (self.d / "reports" / "R.md").write_text("ok"); self.io = FakeIO(heads={"jsfiller#1": H})
     def test_trailer_and_footer_refused(self):

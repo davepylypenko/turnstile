@@ -216,7 +216,10 @@ class BashGuard(unittest.TestCase):
                             'bash -c "TURNSTILE_LEAD=1 turnstile approve ah-3"', "T\\URNSTILE_LEAD=1 turnstile approve ah-3",
                             "\"turnstile\" 'approve' ah-3", "turnstile   approve ah-3", "bash <<EOF\nTURNSTILE_LEAD=1 turnstile approve ah-1\nEOF",
                             "echo $TURNSTILE_LEAD", "export TURNSTILE_LEAD=1", "TURNSTILE_MIGRATION=1 cp new.json delivery/state.json",
-                            "TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "env | grep TURNSTILE_MIGRATION"], "lead-")
+                            "TURNSTILE_MIGRATION=1 python3 gen.py > delivery/state.json", "env | grep TURNSTILE_MIGRATION",
+                            "TURNSTILE_USER_CONFIG=delivery/state.json turnstile config set review_skill=/x", "export TURNSTILE_USER_CONFIG=/tmp/x.json; turnstile config list",
+                            "env TURNSTILE_USER_CONFIG=/tmp/x.json turnstile config set models.reviewer=opus", "\"TURNSTILE_USER_CONFIG\"=/tmp/x.json turnstile config list",
+                            "bash -c 'TURNSTILE_USER_CONFIG=/tmp/x.json turnstile config list'", "echo $TURNSTILE_USER_CONFIG"], "lead-")
         self.assertAllowed(["git commit -m 'feat(turnstile): approve flow'", "turnstile status", "turnstile pass pr jsfiller#1 READY --head a",
                             "turnstile init --epic MYD-1 --workitem demo --knowledge ../k --lead a --lead-github b --github-org o",
                             "turnstile plan-submitted",

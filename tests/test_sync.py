@@ -14,7 +14,7 @@ def out_of(fn, *a, **kw):
 
 class Writers(unittest.TestCase):
     def setUp(self):
-        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); shutil.copy(FIX, self.d / "state.json")
+        self.d = pathlib.Path(tempfile.mkdtemp()) / "delivery"; self.d.mkdir(); shutil.copy(FIX, self.d / "state.json"); sync.record(self.d, True, H)
         (self.d / "reports").mkdir(); (self.d / "reports" / "R.md").write_text("ok")
         self.io = FakeIO(heads={"jsfiller#1": H, "docs-platform#2": "bbbbbbbb22222222"})
     def data(self): return json.loads((self.d / "state.json").read_text())
@@ -25,7 +25,7 @@ class Writers(unittest.TestCase):
         self.assertEqual(rc, 0, out); self.assertEqual(self.io.fetches, ["epic/myd-1"]); self.assertEqual(self.io.pushes, ["epic/myd-1"])
         self.assertEqual(self.rec()["pushed"], True); self.assertEqual(self.rec()["head"], self.io.head); self.assertNotIn("WARN", out)
         self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json"])
-        d = self.data(); d["epic"]["knowledge"] = {"branch": "epic/other", "remote": "origin"}; (self.d / "state.json").write_text(state.dumps(d))
+        d = self.data(); d["epic"]["knowledge"] = {"branch": "epic/other", "remote": "origin"}; (self.d / "state.json").write_text(state.dumps(d)); self.io.branch = "epic/other"
         run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(self.io.pushes[-1], "epic/other")  # the branch init recorded wins over the worktree's current branch
 
@@ -63,11 +63,47 @@ class Writers(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(rc, 0); self.assertIn("WARN fetch origin epic/myd-1 failed (could not resolve host)", out); self.assertEqual(self.io.pushes, ["epic/myd-1"])
 
+    def test_fetch_failure_refuses_gated_transitions_unless_no_push(self):
+        # review P2-4
+        self.io.fail_fetch = "could not resolve host"; before = (self.d / "state.json").read_text()
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING fetch failed: could not resolve host — fix the network or run with --no-push for local-only work", out)
+        self.assertEqual((self.d / "state.json").read_text(), before); self.assertEqual(self.io.commits, [])
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(no_push=True, **READY_OPTS), self.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "READY"); self.assertEqual(self.rec()["reason"], "--no-push")
+    def test_missing_or_corrupt_sync_record_is_unknown_and_gates(self):
+        # review P3-6
+        (self.d / ".sync.json").unlink()
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io); self.assertEqual(rc, 2); self.assertIn("MISSING a recorded push of the epic branch on this machine", out)
+        (self.d / ".sync.json").write_text("{not json"); self.assertIsNone(sync.load(self.d))
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io); self.assertEqual(rc, 2); self.assertIn("absent or unreadable", out)
+        (self.d / ".sync.json").write_text('{"pushed": "yes"}')
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io); self.assertEqual(rc, 2)
+        self.assertEqual(sync.run(self.d, self.io), 0); self.assertEqual(run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)[0], 0)
+        (self.d / ".sync.json").unlink()
+        self.assertEqual(run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)[0], 0)  # not gated
+    def test_push_refused_off_the_epic_branch(self):
+        # review P3-7
+        self.io.branch = ""
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("detached HEAD and epic.knowledge.branch is unset", out); self.assertEqual(self.io.commits, [])
+        d = self.data(); d["epic"]["knowledge"] = {"branch": "epic/myd-1", "remote": "origin"}; (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("WARN: not pushed: worktree is on a detached HEAD, not epic/myd-1", out); self.assertEqual(self.io.pushes, [])
+        self.io.branch = "feature/x"; rc, out = out_of(sync.run, self.d, self.io); self.assertEqual(rc, 2); self.assertIn("worktree is on feature/x, not epic/myd-1", out); self.assertEqual(self.io.pushes, [])
+        self.io.branch = "epic/myd-1"; self.assertEqual(sync.run(self.d, self.io), 0); self.assertEqual(self.io.pushes, ["epic/myd-1"])
+    def test_origin_branch_missing_after_fetch_is_an_error(self):
+        # review P3-8
+        import subprocess
+        git = pathlib.Path(tempfile.mkdtemp()); subprocess.run(["git", "init", "-q"], cwd=git, check=True)
+        with self.assertRaises(TurnstileError) as cm: pass_cmd.IO().behind_ahead(git, "epic/none")
+        self.assertIn("origin/epic/none not found after the fetch", str(cm.exception))
     def test_no_commit_skips_fetch_and_push(self):
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success", no_commit=True), self.io)
-        self.assertEqual(rc, 0); self.assertEqual((self.io.fetches, self.io.pushes, self.io.commits), ([], [], [])); self.assertFalse((self.d / ".sync.json").exists())
+        self.assertEqual(rc, 0); self.assertEqual((self.io.fetches, self.io.pushes, self.io.commits), ([], [], [])); self.assertEqual((self.rec()["pushed"], self.rec()["head"]), (True, H))
 
     def test_status_and_reconcile_print_the_sync_state_first(self):
+        (self.d / ".sync.json").unlink()
         with mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
             rc, out = out_of(reconcile.cli, self.d, status=True); self.assertTrue(out.startswith("SYNC: unknown"), out[:60]); self.assertIn("run: turnstile sync", out)
             run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
@@ -132,6 +168,10 @@ class Attach(unittest.TestCase):
         self.assertIn((["fetch", "origin", "epic/myd-1"], self.knowledge), git.calls)
         self.assertIn((["worktree", "add", "-b", "epic/myd-1", str(wt), "origin/epic/myd-1"], self.knowledge), git.calls)
         self.assertFalse(any(c[0][0] == "merge" for c in git.calls)); self.assertFalse(any(c[0][0] in ("commit", "push") for c in git.calls))
+        for bad in ("..", "a/b", "../x", "x\\y", "."):
+            rc, out = self.attach(FakeGit(), workitem=bad); self.assertEqual(rc, 2, bad); self.assertIn("--workitem must be a folder name", out)
+        rc, out = self.attach(git); self.assertEqual(rc, 1, out)
+        self.assertFalse((self.ws / "CLAUDE.md.turnstile").exists()); self.assertIn("CLAUDE_MD: %s" % (self.ws / "CLAUDE.md"), out)
         self.assertEqual((self.ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo/delivery")
         text = (self.ws / "CLAUDE.md").read_text(); self.assertIn("MYD-1", text); self.assertIn("Chat with the lead in Ukrainian", text); self.assertIn("turnstile config", text)
         self.assertEqual(json.loads((d / ".sync.json").read_text())["pushed"], True)
@@ -157,6 +197,9 @@ class Attach(unittest.TestCase):
         rc, out = self.attach(git); self.assertEqual(rc, 1, out)
         self.assertFalse(any(c[0][:2] == ["worktree", "add"] for c in git.calls)); self.assertIn((["merge", "-q", "--ff-only", "origin/epic/myd-1"], self.ws / "pdffiller-knowledge"), git.calls)
         self.assertEqual((self.ws / "CLAUDE.md").read_text(), "mine\n"); self.assertIn("MYD-1", (self.ws / "CLAUDE.md.turnstile").read_text()); self.assertIn("CLAUDE_MD: %s" % (self.ws / "CLAUDE.md.turnstile"), out)
+        rc, out = self.attach(FakeGit()); self.assertEqual(rc, 1, out); self.assertIn("MYD-1", (self.ws / "CLAUDE.md.turnstile").read_text())
+        (self.ws / "CLAUDE.md.turnstile").write_text("theirs\n"); rc, out = self.attach(FakeGit()); self.assertEqual(rc, 2); self.assertIn("is not turnstile's own", out)
+        self.assertEqual((self.ws / "CLAUDE.md.turnstile").read_text(), "theirs\n")
         rc, out = self.attach(FakeGit(current="main")); self.assertEqual(rc, 2); self.assertIn("exists on branch 'main', not epic/myd-1", out)
         ws2 = self.tmp / "ws2"; ws2.mkdir(); git = FakeGit(fail={"merge"}, local_branch=True); rc, out = self.attach(git, workspace=str(ws2))
         self.assertEqual(rc, 1, out); self.assertIn((["worktree", "add", str(ws2 / "pdffiller-knowledge"), "epic/myd-1"], self.knowledge), git.calls)

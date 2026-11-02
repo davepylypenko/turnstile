@@ -1,9 +1,10 @@
 import pathlib
+from typing import Optional
 from . import rules, state as st_mod
 from .bug_cmd import PR_RX, _commit
 from .errors import TurnstileError
 
-def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False, stacked_on: str = None) -> int:
+def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False, stacked_on: Optional[str] = None) -> int:
     from .pass_cmd import IO, _side_effects, _recompute_next_actions
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:

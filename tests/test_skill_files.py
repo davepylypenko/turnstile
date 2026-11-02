@@ -43,6 +43,7 @@ class SkillFiles(unittest.TestCase):
             for needle in ["~/.config/turnstile/config.json", "TURNSTILE_USER_CONFIG", "turnstile config list", "config set review_skill=/my-review",
                            "epic.review_skill", "epic.story_review_skill", "--epic", "--deep-review", "gate_check", "never in git"]:
                 self.assertIn(needle, doc, needle)
+        for doc in (text, readme): self.assertIn("turnstile config apply <ah-id>", doc)
         self.assertIn("one** batched", text); self.assertIn("Never ask what the user file already answers".lower(), text.lower()); self.assertIn("reviewer on sonnet", text)
         self.assertIn("turnstile config set models.reviewer=sonnet:medium", readme); self.assertIn("neither replaces the repo gate", readme)
         for name in ("reviewer", "story-reviewer"):

@@ -82,12 +82,22 @@ def build_state(o: InitOptions) -> dict:
     e["flag"] = (o.flag or "").strip() or None; e["story_mode"] = o.story_mode
     return data
 
+CLAUDE_MD_MARKER = "— orchestrator workspace"
+
+def _ours(path: pathlib.Path) -> bool:
+    if not path.exists():
+        return True
+    first = (path.read_text().splitlines() or [""])[0]
+    return first.startswith("# ") and first.endswith(CLAUDE_MD_MARKER)
+
 def write_workspace_claude_md(ws: pathlib.Path, epic_key: str, rel: str, chat_language: str) -> pathlib.Path:
     text = (TEMPLATES / "CLAUDE.md.workspace").read_text().replace("{{epic_key}}", epic_key).replace("{{delivery}}", rel) \
         .replace("{{chat_language}}", chat_language).replace("{{cli}}", shutil.which("turnstile") or str(ROOT / "scripts" / "turnstile"))
     target = ws / "CLAUDE.md"
-    if target.exists():
+    if not _ours(target):
         target = ws / "CLAUDE.md.turnstile"
+        if not _ours(target):
+            raise TurnstileError("%s exists and is not turnstile's own (first line lacks %r); move it aside" % (target, CLAUDE_MD_MARKER))
     target.write_text(text); return target
 
 def _ensure_worktree(o: InitOptions, io: InitIO, knowledge: pathlib.Path, wt: pathlib.Path) -> str:

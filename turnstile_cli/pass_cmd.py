@@ -65,8 +65,8 @@ class IO:
     def behind_ahead(self, delivery: pathlib.Path, branch: str):
         try:
             behind, ahead = self._git(delivery, ["rev-list", "--left-right", "--count", "origin/%s...HEAD" % branch]).split()
-        except (TurnstileError, ValueError):
-            return 0, 0
+        except (TurnstileError, ValueError) as e:
+            raise TurnstileError("origin/%s not found after the fetch (renamed or deleted on origin?): %s" % (branch, str(e)[:120]))
         return int(behind), int(ahead)
     def git_push(self, delivery: pathlib.Path, branch: str) -> None:
         self._git(delivery, ["push", "-q", "origin", "HEAD:refs/heads/" + branch])
@@ -308,6 +308,10 @@ def _verify_trunk_deploy(story: dict, sid: str, data: dict, o: Options, io: IO, 
         dp["head_verified"] = {"verified": False}; dp["heads"] = {pid: p.get("merged_sha") for pid, p in mine.items()}
         return []
     org = rules.require_org(data); out: List[str] = []; heads = {}
+    repos = sorted({pid.split("#", 1)[0] for pid in mine}); missing_repos = [r for r in repos if r not in (dp.get("base_heads") or {})]
+    if len(repos) > 1 and missing_repos:
+        return ["MISSING --base-heads %s (story %s spans %s: one deployed base sha per repo, --head alone is ambiguous)"
+                % (",".join("%s=<sha>" % r for r in missing_repos), sid, ", ".join(repos))]
     for pid, p in sorted(mine.items()):
         if p.get("state") != "MERGED" or not p.get("merged_sha"):
             out.append("MISSING PR %s MERGED with merged_sha before the trunk integration review (is %s)" % (pid, p.get("state"))); continue
@@ -391,14 +395,14 @@ class _Snapshot:
             else:
                 st_mod.write_atomic(p, text)
 
-def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], io: IO, no_commit: bool, no_push: bool = False) -> None:
+def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], io: IO, no_commit: bool, no_push: bool = False, gated: bool = False) -> None:
     """validate happened → fetch + behind-origin guard → render board in memory → write state + ledger + board → git commit →
     push the epic branch; on commit failure restore the three files from the in-memory snapshot so the disk equals the last
     committed state; a failed push is a WARN recorded in .sync.json."""
     delivery = pathlib.Path(delivery)
     branch = None
     if not no_commit:
-        branch = sync.branch(io, delivery, st.data); sync.guard_behind(io, delivery, branch)
+        branch = sync.branch(io, delivery, st.data); sync.guard_behind(io, delivery, branch, strict=gated and not no_push)
     try:
         html = io.render_board(st.data)
     except Exception as e:
@@ -447,7 +451,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 _apply_pr_evidence(trial, o)
                 missing = _verify_against_github(trial, ident, target, repo, org, o, io, notes, data=data)
                 missing += rules.check_pr(trial, target, repo, data["prs"], reason=o.reason, awaiting=awaiting, stories=data["stories"])
-                missing += sync.missing_for(delivery, target in HEAD_VERIFIED_TARGETS)
+                gated = target in HEAD_VERIFIED_TARGETS; missing += sync.missing_for(delivery, gated)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = pr["state"]
@@ -536,8 +540,9 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     plan_path = delivery / "plan.md"
                     plan_missing = rules.plan_approval_missing(data, st_mod.digest(plan_path.read_text()) if plan_path.exists() else None)
                 missing = missing_heads + rules.check_story(trial, target, data["prs"], data["stories"], reason=o.reason, bugs=data.get("bugs"),
-                                                            awaiting=awaiting, approved=o.approved, plan_missing=plan_missing, recording_run=recording)
-                missing += sync.missing_for(delivery, target == "DONE")
+                                                            awaiting=awaiting, approved=o.approved, plan_missing=plan_missing, recording_run=recording,
+                                                            flag=data["epic"].get("flag"))
+                gated = target == "DONE"; missing += sync.missing_for(delivery, gated)
                 if missing:
                     print("\n".join(notes + missing)); return 2
                 src = story["state"]
@@ -565,7 +570,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 raise TurnstileError("kind must be pr or story")
             _ensure_start_story_entries(data)
             _recompute_next_actions(data)
-            _side_effects(delivery, st, [summary] + extra, io, o.no_commit, o.no_push)
+            _side_effects(delivery, st, [summary] + extra, io, o.no_commit, o.no_push, gated=gated)
         for n in notes:
             print(n)
         if jira_line:
