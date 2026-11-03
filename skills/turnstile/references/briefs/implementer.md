@@ -5,7 +5,9 @@ Read first: the role rules you were launched with, then this brief, then every f
 
 ## Ticket
 {{ticket_key}} — {{ticket_title}}
-Repo `{{repo}}` (org `{{github_org}}`), worktree `{{worktree}}`, base branch `{{base_branch}}`, branch `{{branch}}`.
+Repo `{{repo}}` (org `{{github_org}}`), worktree `{{repo_path}}`, base branch `{{base_branch}}`, branch `{{branch}}`.
+Work inside that worktree: `git fetch origin {{base_branch}}`, cut `{{branch}}` from `origin/{{base_branch}}` (or check the existing one out and merge
+the base in); never from the worktree's own `ws/*` branch, which is only the workspace's parking branch.
 Read the repo's `CLAUDE.md` and {{repo_guides}} first.
 Feature flag: `{{flag}}` — every behaviour change sits behind it; with the flag off the control behaviour on the base stays as today, proven by a flag-off test (`none` = no flag for this epic).
 

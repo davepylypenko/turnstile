@@ -4,7 +4,7 @@ Epic {{epic_key}} · delivery `{{delivery}}` · report → `{{report_path}}` · 
 Read first: the role rules you were launched with, then this brief, then every file listed below. The brief wins on specifics.
 
 ## Story
-{{story_id}} — {{story_title}} · epic branch `{{epic_branch}}` · story branch `{{story_branch}}` · stack top {{stack_top_pr}} @ `{{head}}` · worktree `{{worktree}}`.
+{{story_id}} — {{story_title}} · epic branch `{{epic_branch}}` · story branch `{{story_branch}}` · stack top {{stack_top_pr}} @ `{{head}}` · worktrees {{repo_paths}}.
 Tickets: {{tickets}}. PRs in merge order: {{prs}}.
 Story review skill: `{{story_review_skill}}` — run it on the stack top after your own reading (the lead's choice via `turnstile config`;
 the repo gate stays separate). If it cannot be invoked, stop with `BLOCKED: review skill {{story_review_skill}} not available`.

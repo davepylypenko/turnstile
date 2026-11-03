@@ -53,18 +53,20 @@ and base from GitHub; refused when the base is not the story branch or another P
 
 ## init (once per epic)
 
-1. `turnstile init --epic <KEY> --workitem <slug> --knowledge <pdffiller-knowledge clone> --lead <login> --lead-github
-   <GitHub login> --github-org <org> --repo '<json>'… --variant <v> --desk <d>` — creates the knowledge worktree on
-   `epic/<key>`, `delivery/`, `.turnstile`, the workspace `CLAUDE.md`. Repo JSON keys: `name, base, epic_branch, slack,
-   gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix`; `--models '{"reviewer":{"effort":"high"}}'`
-   seeds `epic.models` (defaults: `turnstile config list`); then run `## preferences`.
-2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`;
-   write `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400
-   logic lines, test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
-3. `turnstile plan-submitted` → stories enter `PLANNED`, a `plan` entry opens; show the lead the plan summary and the
-   approve line; wait. Without the approval no story leaves `PLANNED` (no `--reason` override).
-4. After the lead approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`,
-   then dispatch implementers per the merge order.
+1. "Start epic MYD-X" comes from the lead in the **clone root** (the folder holding `pdffiller-knowledge/`, `jsfiller/`, …) or inside
+   the knowledge clone. Run there: `turnstile init --epic <KEY> --workitem <slug> --lead <login> --lead-github <GitHub login>
+   --github-org <org> --repo '<json>'… --variant <v> --desk <d>` (`--knowledge <clone>` only when it is not `<root>/pdffiller-knowledge`,
+   `--clone-root <dir>` when run elsewhere). It creates the workspace `<root>/<key-lower>/`: the knowledge worktree on `epic/<key>`, a
+   worktree of every `--repo` clone on `ws/<key-lower>` (from `origin/<base>`; a missing clone is refused with its expected path), `delivery/`,
+   `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths; `brief --var repo=<name>` renders them). Repo JSON keys: `name,
+   base, epic_branch, slack, gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix, path`; `--models '{"reviewer":
+   {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in
+   the new folder; this session stays in the root and cannot drive the epic. Steps 2–4 and `## preferences` run from the new session.
+2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`; write
+   `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400 logic lines,
+   test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
+3. `turnstile plan-submitted` → stories enter `PLANNED`, a `plan` entry opens; show the lead the plan summary and the approve line; wait. Without the approval no story leaves `PLANNED` (no `--reason` override).
+4. After the lead approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`, then dispatch implementers per the merge order.
 
 ## preferences (right after init, and whenever the lead asks)
 
@@ -81,9 +83,10 @@ the story-reviewer's; neither replaces the repo gate (`epic.repos.<r>.gate` / `g
 
 ## attach (continue an epic from another machine)
 
-"Continue epic X" → `turnstile attach --knowledge <clone> --epic <KEY> [--workspace .] [--workitem <name>]`: fetches
-`origin/epic/<key>`, adds the knowledge worktree, writes `.turnstile` and the workspace `CLAUDE.md`, prints `status`. Run
-`## preferences` next (this person's user file may be empty). A worktree behind origin refuses every writer until `turnstile sync`.
+"Continue epic X" → in the person's clone root (or knowledge clone): `turnstile attach --epic <KEY> [--clone-root <dir>] [--knowledge <clone>]
+[--workspace <dir>] [--workitem <name>]`: fetches `origin/epic/<key>`, creates `<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
+worktree per `epic.repos` clone, `.turnstile`, `.workspace.json`, the workspace `CLAUDE.md`, prints `status`. Then `cd <workspace> && claude` (this
+session cannot drive it) and run `## preferences` there (this person's user file may be empty). A worktree behind origin refuses every writer until `turnstile sync`.
 
 ## dispatch <agent> <brief>
 

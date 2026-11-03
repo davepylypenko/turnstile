@@ -34,7 +34,7 @@ class CliSmoke(unittest.TestCase):
         for args, needle in [(["sync", "--help"], "usage: turnstile sync"), (["--help"], "attach"), (["attach", "--help"], "--workitem"), (["pass", "--help"], "--no-push"),
                              (["pr", "add", "--help"], "--no-push"), (["config", "set", "--help"], "--no-push"), (["bug", "add", "--help"], "--no-push"),
                              (["pr", "add", "--help"], "--stacked-on"), (["bug", "add", "--help"], "--arm"), (["pass", "--help"], "--base-heads"),
-                             (["init", "--help"], "--story-mode"), (["init", "--help"], "--flag")]:
+                             (["init", "--help"], "--story-mode"), (["init", "--help"], "--flag"), (["init", "--help"], "--clone-root"), (["attach", "--help"], "--clone-root")]:
             out = subprocess.run([sys.executable, "-m", "turnstile_cli"] + args, cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(out.returncode, 0, out.stderr); self.assertIn(needle, out.stdout, " ".join(args))
     def test_shim_forwards(self):

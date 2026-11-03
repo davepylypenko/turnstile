@@ -4,7 +4,7 @@ Epic {{epic_key}} · delivery `{{delivery}}` · report → `{{report_path}}` · 
 Read first: the role rules you were launched with, then this brief, then every file listed below. The brief wins on specifics.
 
 ## PR
-{{pr_id}} — {{ticket_key}} {{ticket_title}} · head `{{head}}` · base `{{base_branch}}` · worktree `{{worktree}}` · repo gate `{{gate}}` via `{{gate_skill}}`.
+{{pr_id}} — {{ticket_key}} {{ticket_title}} · head `{{head}}` · base `{{base_branch}}` · worktree `{{repo_path}}` · repo gate `{{gate}}` via `{{gate_skill}}`.
 Deep review skill: `{{review_skill}}` — run it on the head after your own reading; it is the lead's choice (`turnstile config`), not a
 replacement for the repo gate above. If it cannot be invoked, stop with `BLOCKED: review skill {{review_skill}} not available`.
 

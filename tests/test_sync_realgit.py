@@ -20,8 +20,11 @@ class RealGit(unittest.TestCase):
         self.bare = self.tmp / "origin.git"; self.git(self.tmp, "init", "-q", "--bare", str(self.bare)); self.git(self.bare, "symbolic-ref", "HEAD", "refs/heads/main")
         seed = self.tmp / "seed"; seed.mkdir(); self.git(seed, "init", "-q"); (seed / "README.md").write_text("k\n")
         self.git(seed, "add", "."); self.git(seed, "commit", "-qm", "seed"); self.git(seed, "push", "-q", str(self.bare), "HEAD:refs/heads/main")
-        self.k1, self.k2 = self.tmp / "k1", self.tmp / "k2"
-        for k in (self.k1, self.k2): self.git(self.tmp, "clone", "-q", str(self.bare), str(k))
+        js = self.tmp / "jsfiller.git"; self.git(self.tmp, "init", "-q", "--bare", str(js)); self.git(js, "symbolic-ref", "HEAD", "refs/heads/develop")
+        self.git(seed, "push", "-q", str(js), "HEAD:refs/heads/develop")
+        self.k1, self.k2 = self.tmp / "m1" / "k1", self.tmp / "m2" / "k2"  # two machines: a clone root each, the knowledge clone and a jsfiller clone in it
+        for k in (self.k1, self.k2):
+            k.parent.mkdir(); self.git(self.tmp, "clone", "-q", str(self.bare), str(k)); self.git(self.tmp, "clone", "-q", str(js), str(k.parent / "jsfiller"))
     def git(self, cwd, *args):
         return subprocess.run(["git"] + list(args), cwd=str(cwd), capture_output=True, text=True, check=True).stdout.strip()
     def origin(self): return self.git(self.bare, "rev-parse", "epic/myd-1")

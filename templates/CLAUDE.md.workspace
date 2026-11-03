@@ -5,6 +5,9 @@ You are the orchestrator of epic **{{epic_key}}**. The delivery state lives in `
 knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first in every session; it starts with
 `turnstile status`. CLI: `{{cli}}` (`turnstile` below means this path when the bare name is not on PATH).
 
+- Repo worktrees in this folder: {{repos}} — each a git worktree of your clone on the per-workspace branch `{{ws_branch}}`.
+  Agents cut ticket branches inside them from `origin/<base>` (or the story branch), never from `{{ws_branch}}`; `turnstile
+  brief … --var repo=<name>` renders the worktree path into the brief (paths per machine: `delivery/.workspace.json`).
 - `state.json` and `ledger.md` are written only by `turnstile` commands; briefs and reports go through the Write tool.
 - The lead approves every send, merge, story start, story completion and every reply on a review thread that needs the
   lead (`needs_lead`) by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt. You report what

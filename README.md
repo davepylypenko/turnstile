@@ -41,19 +41,41 @@ Without the shim the CLI is
 
 ## Getting started (a new lead's first hour)
 
-1. Install (above), then open Claude Code in an empty workspace folder — the plugin's hooks and the `turnstile` skill load.
-2. Create the epic from a terminal (or a `!`-prefixed prompt line). `--knowledge` is a clone of the knowledge repo
-   **outside** the workspace; `init` adds a worktree of it inside the workspace on `epic/<key>`, cut from `origin/main`:
+1. Install (above). Keep your clones side by side in one folder, the **clone root** (e.g. `~/Desktop/pdffiller/` holding
+   `pdffiller-knowledge/`, `jsfiller/`, `docs-platform/`, …).
+2. Create the epic from a terminal **in the clone root** (or inside the knowledge clone). `init` detects the root, creates the
+   workspace folder `<root>/<epic key, lower case>` and fills it: a worktree of the knowledge clone on `epic/<key>` (cut from
+   `origin/main`) and, for every `--repo`, a worktree of `<root>/<name>` on the per-workspace branch `ws/<key>`, cut from
+   `origin/<base>` after a fetch (the shared base is never checked out, so the main clone may hold it). `--knowledge <clone>` is
+   needed only when the clone is not `<root>/pdffiller-knowledge`, `--clone-root <dir>` when you run it elsewhere, `"path"` in a
+   `--repo` JSON when a clone is not `<root>/<name>`:
 
    ```
-   turnstile init --epic MYD-1 --workitem my-epic --knowledge ../knowledge \
+   cd ~/Desktop/pdffiller
+   turnstile init --epic MYD-1 --workitem my-epic \
      --lead you@example.com --lead-github <your login> --github-org <org> \
-     --repo '{"name":"app","base":"main","epic_branch":"epic/myd-1","slack":"C0123456789","gate":"pr-review","gate_check":null}' \
+     --repo '{"name":"jsfiller","base":"develop","slack":"C0123456789","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
      --chat-language English
    ```
 
-   It prints `WORKTREE`, `DELIVERY`, `CLAUDE_MD` and `NEXT`, writes `.turnstile` (workspace → delivery dir) and a workspace
-   `CLAUDE.md` for the orchestrator (with the CLI path), and commits the `delivery/` skeleton.
+   ```
+   ~/Desktop/pdffiller/                ← clone root (run `turnstile init` here)
+     pdffiller-knowledge/  jsfiller/  docs-platform/ …   ← your clones
+     myd-1/                            ← created by init: the workspace you open in Claude Code
+       .turnstile  CLAUDE.md
+       pdffiller-knowledge/            ← worktree epic/myd-1 → context/workitems/my-epic/delivery/
+       jsfiller/                       ← worktree ws/myd-1 from origin/develop
+       docs-platform/                  ← …
+   ```
+
+   It prints `WORKSPACE`, `WORKTREE`, one `REPO:` line per repo, `DELIVERY`, `CLAUDE_MD` and `NEXT`, writes `.turnstile`
+   (workspace → delivery dir), a workspace `CLAUDE.md` for the orchestrator (the CLI path and the repo worktrees), the git-ignored
+   `delivery/.workspace.json` (this machine's absolute paths; `state.json` keeps only the relative names, `epic.repos.<r>.path`) and
+   commits the `delivery/` skeleton. A workspace folder that exists and is not empty is refused, unless it already is this epic's
+   workspace (then `init` attaches); a repo without a clone is refused with the expected path before anything is created.
+   Then open the workspace: `cd ~/Desktop/pdffiller/myd-1 && claude` — the hooks and `.turnstile` live there; the terminal or
+   Claude Code session in the clone root cannot drive the epic. Agents cut ticket branches inside `<workspace>/<repo>` from
+   `origin/<base>` (or the story branch), never from `ws/*`; `turnstile brief … --var repo=<name>` renders that worktree's path.
 3. Write `delivery/plan.md` (`skills/turnstile/references/kickoff.md`; in Claude Code the orchestrator does this from the
    decomposition). The `turnstile-stories` JSON block needs at least `title`, `tickets`, `repos` and `branch` per story.
    Then `turnstile plan-submitted` → `APPROVAL: the lead types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`.
@@ -89,10 +111,13 @@ epics — stack mode behaves exactly as before) and `"control_cases"`. The teste
 
 ## Continuing someone else's epic
 
-`turnstile attach --knowledge ../knowledge --epic MYD-1 [--workspace .] [--workitem my-epic]` fetches `origin/epic/<key>`,
-adds the knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, writes `.turnstile` and
-the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and prints `status`; then the
-skill's `## preferences` step asks for this person's own review skill and models. Every writer first fetches: a worktree
+`turnstile attach --epic MYD-1 [--clone-root <dir>] [--knowledge <clone>] [--workspace <dir>] [--workitem my-epic]`, run in your
+own clone root (or inside your knowledge clone), creates `<root>/<key>` the same way: it fetches `origin/epic/<key>`, adds the
+knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, adds a `ws/<key>` worktree of your
+`<root>/<name>` clone for every `epic.repos` entry (a missing clone is refused with its expected path), writes `.turnstile`,
+`delivery/.workspace.json` and the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and
+prints `status`; then `cd <workspace> && claude`, where the skill's `## preferences` step asks for this person's own review skill
+and models. Every writer first fetches: a worktree
 behind origin is refused (`MISSING: epic branch behind origin by N commits — run: turnstile sync`). `turnstile sync` fetches,
 fast-forwards and pushes — never rebase, never force; diverged histories print both heads and wait for the lead to merge.
 
@@ -148,11 +173,13 @@ turnstile config set models.reviewer=sonnet:medium
 ## Usage
 
 ```
-turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel --knowledge ../pdffiller-knowledge \
+cd ~/Desktop/pdffiller                                     # the clone root: pdffiller-knowledge/, jsfiller/, front-link2fill-app/ … side by side
+turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel \
   --lead davyd.pylypenko --lead-github <login> [--agent-github <login the agents' gh posts as>] --github-org pdffiller \
   --repo '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
   --repo '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}' \
-  --variant l2f-funnel --desk desk05 --chat-language Ukrainian          # the epic branch is cut from origin/<base> after a fetch
+  --variant l2f-funnel --desk desk05 --chat-language Ukrainian          # creates ~/Desktop/pdffiller/myd-16538/ with a worktree per repo (ws/myd-16538 from origin/<base>)
+cd ~/Desktop/pdffiller/myd-16538 && claude                 # the workspace: hooks, .turnstile and the orchestrator CLAUDE.md live here
 # write delivery/plan.md (skill: references/kickoff.md), then
 turnstile plan-submitted                                   # the lead: ! TURNSTILE_LEAD=1 turnstile approve ah-1
 turnstile brief implementer MYD-18075 --var ticket_key=MYD-18075 --var ...   # then Agent(turnstile:implementer, PROMPT line)

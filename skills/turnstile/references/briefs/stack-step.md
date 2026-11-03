@@ -6,7 +6,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 ## Stack (bottom → top)
 {{stack}}
 
-Changed PR: {{changed_pr}} (new head `{{head}}`). Repo `{{repo}}`, worktree `{{worktree}}`, gate `{{gate}}` via `{{gate_skill}}`, Copilot: {{copilot}}.
+Changed PR: {{changed_pr}} (new head `{{head}}`). Repo `{{repo}}`, worktree `{{repo_path}}`, gate `{{gate}}` via `{{gate_skill}}`, Copilot: {{copilot}}.
 
 ## Conflict policy
 {{conflict_policy}}

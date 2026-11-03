@@ -1,15 +1,16 @@
 import os, pathlib, re
 from dataclasses import dataclass
 from typing import Optional
-from . import state as st_mod, sync
-from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md
+from . import state as st_mod, sync, workspace
+from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md, next_lines
 from .errors import TurnstileError
 
 @dataclass
 class AttachOptions:
-    knowledge: str
     epic: str
-    workspace: str = "."
+    knowledge: Optional[str] = None
+    clone_root: Optional[str] = None
+    workspace: Optional[str] = None
     workitem: Optional[str] = None
     chat_language: Optional[str] = None
 
@@ -33,9 +34,9 @@ def run(o: AttachOptions, io: Optional[InitIO] = None) -> int:
     from .reconcile import cli as status_cli
     io = io or InitIO()
     try:
-        ws = pathlib.Path(o.workspace).resolve(); knowledge = pathlib.Path(o.knowledge).resolve()
-        if not (knowledge / ".git").exists():
-            raise TurnstileError("%s is not a git clone (no .git)" % knowledge)
+        cwd = pathlib.Path.cwd(); root = workspace.detect_root(cwd, o.clone_root, o.knowledge, [], io)
+        knowledge = workspace.resolve_knowledge(root, o.knowledge)
+        ws = pathlib.Path(o.workspace).expanduser().resolve() if o.workspace else workspace.default_workspace(root, o.epic)
         branch = epic_branch_name(o.epic); wt = ws / knowledge.name; marker = ws / ".turnstile"
         if marker.exists() and not marker.read_text().strip().startswith(knowledge.name + "/context/workitems/"):
             raise TurnstileError("%s points at another delivery (%s); one epic per workspace" % (marker, marker.read_text().strip()))
@@ -49,23 +50,37 @@ def run(o: AttachOptions, io: Optional[InitIO] = None) -> int:
             if current != branch:
                 raise TurnstileError("%s exists on branch %r, not %s; move it or attach from another workspace" % (wt, current, branch))
             synced = _fast_forward(io, wt, branch)
-        elif io.git(["branch", "--list", branch], knowledge).strip():
-            io.git(["worktree", "add", str(wt), branch], knowledge); synced = _fast_forward(io, wt, branch)
         else:
-            io.git(["worktree", "add", "-b", branch, str(wt), "origin/" + branch], knowledge)
+            ws.mkdir(parents=True, exist_ok=True)
+            if io.git(["branch", "--list", branch], knowledge).strip():
+                io.git(["worktree", "add", str(wt), branch], knowledge); synced = _fast_forward(io, wt, branch)
+            else:
+                io.git(["worktree", "add", "-b", branch, str(wt), "origin/" + branch], knowledge)
         delivery = _find_delivery(wt, o.workitem); rel = os.path.relpath(str(delivery), str(ws))
         if marker.exists() and marker.read_text().strip() != rel:
             raise TurnstileError("%s points at another delivery (%s); one epic per workspace" % (marker, marker.read_text().strip()))
-        data = st_mod.load(delivery / "state.json").data; key = data["epic"].get("key")
+        data = st_mod.load(delivery / "state.json").data; key = data["epic"].get("key"); repos = data["epic"].get("repos") or {}
         if key != o.epic:
             raise TurnstileError("%s belongs to epic %s, not %s" % (delivery, key, o.epic))
+        foreign = workspace.foreign_entries(ws, [knowledge.name] + list(repos))
+        if foreign:
+            raise TurnstileError("%s holds foreign entries (%s); a turnstile workspace holds only the worktrees and its markers" % (ws, ", ".join(foreign[:5])))
+        clones = workspace.clone_paths(root, repos, {})
+        repo_wts = workspace.ensure_repo_worktrees(ws, clones, repos, key, io)
         marker.write_text(rel + "\n")
-        target = write_workspace_claude_md(ws, key, rel, o.chat_language or data["epic"].get("chat_language") or "English")
+        target = write_workspace_claude_md(ws, key, rel, o.chat_language or data["epic"].get("chat_language") or "English",
+                                           workspace.claude_md_repos(repos, repo_wts, key))
+        workspace.record(delivery, ws, root, wt, repo_wts)
         head = io.git(["rev-parse", "HEAD"], wt).strip() or None
         sync.record(delivery, synced, head, None if synced else "not fast-forwarded to origin/%s" % branch)
-        print("WORKTREE: %s (%s)" % (wt, branch)); print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
+        print("WORKSPACE: %s (clone root %s)" % (ws, root)); print("WORKTREE: %s (%s)" % (wt, branch))
+        for line in workspace.repo_lines(repos, repo_wts, key):
+            print(line)
+        print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
               "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
+        for line in next_lines(ws, cwd):
+            print(line)
         print("OK attach %s" % key)
         return status_cli(delivery, status=True)
     except TurnstileError as e:

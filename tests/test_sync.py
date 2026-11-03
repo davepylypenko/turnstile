@@ -24,7 +24,7 @@ class Writers(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
         self.assertEqual(rc, 0, out); self.assertEqual(self.io.fetches, ["epic/myd-1"]); self.assertEqual(self.io.pushes, ["epic/myd-1"])
         self.assertEqual(self.rec()["pushed"], True); self.assertEqual(self.rec()["head"], self.io.head); self.assertNotIn("WARN", out)
-        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json"])
+        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json"])
         d = self.data(); d["epic"]["knowledge"] = {"branch": "epic/other", "remote": "origin"}; (self.d / "state.json").write_text(state.dumps(d)); self.io.branch = "epic/other"
         run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(self.io.pushes[-1], "epic/other")  # the branch init recorded wins over the worktree's current branch
@@ -136,16 +136,18 @@ class SyncCmd(unittest.TestCase):
 
 class FakeGit(init_cmd.InitIO):
     def __init__(self, fail=(), workitems=("demo",), key="MYD-1", current="epic/myd-1", local_branch=False):
-        self.calls = []; self.fail = set(fail); self.workitems = workitems; self.key = key; self.current = current; self.local_branch = local_branch
+        self.calls = []; self.fail = set(fail); self.workitems = workitems; self.key = key; self.current = current; self.local_branch = local_branch; self.branches = {}
     def git(self, args, cwd):
         self.calls.append((args, pathlib.Path(cwd)))
         if args[0] in self.fail:
             raise TurnstileError("git %s failed: simulated" % args[0])
-        if args[:2] == ["branch", "--show-current"]: return self.current + "\n"
-        if args[:2] == ["branch", "--list"]: return ("  %s\n" % args[2]) if self.local_branch else ""
+        if args[:2] == ["branch", "--show-current"]: return self.branches.get(pathlib.Path(cwd), self.current if pathlib.Path(cwd).name == "pdffiller-knowledge" else "ws/myd-1") + "\n"
+        if args[:2] == ["branch", "--list"]: return ("  %s\n" % args[2]) if self.local_branch and args[2].startswith("epic/") else ""
         if args[:1] == ["rev-parse"]: return "abc123\n"
         if args[:2] == ["worktree", "add"]:
-            self.populate(pathlib.Path(args[4] if args[2] == "-b" else args[2]))
+            wt = pathlib.Path(args[4] if args[2] == "-b" else args[2]); self.branches[wt] = args[3]
+            if args[3].startswith("epic/"): self.populate(wt)
+            else: wt.mkdir(parents=True)
         return ""
     def populate(self, wt):
         for w in self.workitems:
@@ -156,6 +158,7 @@ class Attach(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp()).resolve(); self.ws = self.tmp / "ws"; self.ws.mkdir()
         self.knowledge = self.tmp / "pdffiller-knowledge"; (self.knowledge / ".git").mkdir(parents=True)
+        for repo in ("jsfiller", "docs-platform"): (self.tmp / repo / ".git").mkdir(parents=True)
         self.env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": str(self.tmp / "none.json")}); self.env.start(); self.addCleanup(self.env.stop)
         self.gh = mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")); self.gh.start(); self.addCleanup(self.gh.stop)
     def attach(self, git, **kw):
@@ -195,7 +198,11 @@ class Attach(unittest.TestCase):
     def test_attach_reuses_an_existing_worktree_fast_forwards_and_keeps_claude_md(self):
         (self.ws / "CLAUDE.md").write_text("mine\n"); git = FakeGit(); git.populate(self.ws / "pdffiller-knowledge")
         rc, out = self.attach(git); self.assertEqual(rc, 1, out)
-        self.assertFalse(any(c[0][:2] == ["worktree", "add"] for c in git.calls)); self.assertIn((["merge", "-q", "--ff-only", "origin/epic/myd-1"], self.ws / "pdffiller-knowledge"), git.calls)
+        self.assertFalse(any(c[0][:2] == ["worktree", "add"] and c[1] == self.knowledge for c in git.calls)); self.assertIn((["merge", "-q", "--ff-only", "origin/epic/myd-1"], self.ws / "pdffiller-knowledge"), git.calls)
+        for repo, base in (("jsfiller", "develop"), ("docs-platform", "main")):
+            self.assertIn((["worktree", "add", "-b", "ws/myd-1", str(self.ws / repo), "origin/" + base], self.tmp / repo), git.calls)
+        rec = json.loads((self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery" / ".workspace.json").read_text())
+        self.assertEqual((rec["workspace"], rec["clone_root"], rec["repos"]["jsfiller"]), (str(self.ws), str(self.tmp), str(self.ws / "jsfiller")))
         self.assertEqual((self.ws / "CLAUDE.md").read_text(), "mine\n"); self.assertIn("MYD-1", (self.ws / "CLAUDE.md.turnstile").read_text()); self.assertIn("CLAUDE_MD: %s" % (self.ws / "CLAUDE.md.turnstile"), out)
         rc, out = self.attach(FakeGit()); self.assertEqual(rc, 1, out); self.assertIn("MYD-1", (self.ws / "CLAUDE.md.turnstile").read_text())
         (self.ws / "CLAUDE.md.turnstile").write_text("theirs\n"); rc, out = self.attach(FakeGit()); self.assertEqual(rc, 2); self.assertIn("is not turnstile's own", out)

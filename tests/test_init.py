@@ -1,4 +1,4 @@
-import json, os, pathlib, subprocess, tempfile, unittest
+import json, os, pathlib, shutil, subprocess, tempfile, unittest
 from unittest import mock
 from turnstile_cli import init_cmd
 from turnstile_cli.errors import TurnstileError
@@ -16,16 +16,19 @@ def opts(ws, knowledge, **kw):
     base.update(kw); return init_cmd.InitOptions(**base)
 
 class FakeGit(init_cmd.InitIO):
-    def __init__(self, fail=()): self.calls = []; self.fail = set(fail)
+    def __init__(self, fail=()): self.calls = []; self.fail = set(fail); self.branches = {}
     def git(self, args, cwd):
         self.calls.append((args, pathlib.Path(cwd)))
         if args[0] in self.fail:
             raise TurnstileError("git %s failed: simulated" % args[0])
         if args[:2] == ["branch", "--show-current"]:
-            return "epic/myd-1\n"  # an existing worktree made by an earlier run is on the epic branch
+            return self.branches.get(pathlib.Path(cwd), "epic/myd-1" if pathlib.Path(cwd).name == "pdffiller-knowledge" else "ws/myd-1") + "\n"  # an existing worktree made by an earlier run is on its branch
         if args[:2] == ["worktree", "add"]:
-            pathlib.Path(args[4] if args[2] == "-b" else args[2]).mkdir(parents=True)
+            wt = pathlib.Path(args[4] if args[2] == "-b" else args[2]); wt.mkdir(parents=True); self.branches[wt] = args[3]
         return ""
+
+def clones(tmp, *names):
+    for n in names: (tmp / n / ".git").mkdir(parents=True, exist_ok=True)
 
 class ParseRepo(unittest.TestCase):
     def test_defaults_and_required(self):
@@ -50,16 +53,27 @@ class ParseRepo(unittest.TestCase):
 class Init(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp()).resolve(); self.ws = self.tmp / "ws"; self.ws.mkdir()  # resolved: macOS /var → /private/var
-        self.knowledge = self.tmp / "pdffiller-knowledge"; (self.knowledge / ".git").mkdir(parents=True)
+        self.knowledge = self.tmp / "pdffiller-knowledge"; (self.knowledge / ".git").mkdir(parents=True); clones(self.tmp, "jsfiller", "pdffiller")
 
     def test_init_creates_worktree_delivery_marker_and_claude_md(self):
-        io = FakeGit()
-        self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), io), 0)
+        import contextlib, io as _io
+        io = FakeGit(); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), io), 0)
         wt = self.ws / "pdffiller-knowledge"; d = wt / "context" / "workitems" / "demo" / "delivery"
         add = next(c for c in io.calls if c[0][:2] == ["worktree", "add"])  # the branch probe (`git branch --list`) precedes it
         self.assertEqual(add[0], ["worktree", "add", "-b", "epic/myd-1", str(wt), "origin/main"]); self.assertEqual(add[1], self.knowledge)  # minor 12: after a fetch
         self.assertIn((["fetch", "origin", "main"], self.knowledge), io.calls)
+        for repo, base in (("jsfiller", "develop"), ("pdffiller", "master")):  # a worktree of <clone root>/<repo> on the per-workspace branch, cut from the fetched base
+            self.assertIn((["fetch", "origin", base], self.tmp / repo), io.calls)
+            self.assertIn((["worktree", "add", "-b", "ws/myd-1", str(self.ws / repo), "origin/" + base], self.tmp / repo), io.calls)
+            self.assertIn("REPO: %s → %s (ws/myd-1 from origin/%s)" % (repo, self.ws / repo, base), buf.getvalue())
+        rec = json.loads((d / ".workspace.json").read_text())
+        self.assertEqual(rec["repos"], {"jsfiller": str(self.ws / "jsfiller"), "pdffiller": str(self.ws / "pdffiller")})
+        self.assertEqual((rec["workspace"], rec["clone_root"], rec["knowledge"]), (str(self.ws), str(self.tmp), str(wt)))
+        self.assertIn("WORKSPACE: %s (clone root %s)" % (self.ws, self.tmp), buf.getvalue()); self.assertIn("NEXT: cd %s && claude" % self.ws, buf.getvalue())
         data = json.loads((d / "state.json").read_text())
+        self.assertEqual(data["epic"]["repos"]["jsfiller"]["path"], "jsfiller"); self.assertNotIn("workspace", data["epic"])
+        self.assertIn("`jsfiller/` (ws/myd-1 from `origin/develop`)", (self.ws / "CLAUDE.md").read_text()); self.assertIn(".workspace.json", (d / ".gitignore").read_text())
         self.assertEqual((data["epic"]["key"], data["epic"]["github_org"], data["epic"]["roles"]["lead_github"]), ("MYD-1", "pdffiller", "leadlogin"))
         self.assertEqual(data["epic"]["repos"]["pdffiller"]["branch_prefix"], "l2f-myd-")
         self.assertEqual(data["epic"]["repos"]["jsfiller"]["ci_ignore"], ["pdf-review", "gate / gate"])
@@ -177,41 +191,81 @@ class Init(unittest.TestCase):
         init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
         self.assertEqual((self.ws / "CLAUDE.md").read_text(), "mine\n"); self.assertTrue((self.ws / "CLAUDE.md.turnstile").exists())
 
-    def test_init_reuses_worktree_and_refuses_existing_state(self):
-        io = FakeGit(); init_cmd.run(opts(self.ws, self.knowledge), io); n = len(io.calls)
+    def test_init_on_the_same_epic_workspace_attaches_and_refuses_a_cleaned_marker(self):
+        import contextlib, io as _io
+        from turnstile_cli import reconcile
+        io = FakeGit(); init_cmd.run(opts(self.ws, self.knowledge), io); n = len(io.calls); buf = _io.StringIO()
+        with mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")), contextlib.redirect_stdout(buf):
+            self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), io), 0)
+        self.assertIn("already holds epic MYD-1; attaching", buf.getvalue()); self.assertIn("OK attach MYD-1", buf.getvalue())
+        self.assertFalse(any(c[0][:2] == ["worktree", "add"] for c in io.calls[n:])); self.assertFalse(any(c[0][:1] == ["commit"] for c in io.calls[n:]))
+        self.assertIn((["fetch", "origin", "epic/myd-1"], self.knowledge), io.calls[n:])
+        (self.ws / ".turnstile").unlink(); n = len(io.calls)
         self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), io), 2)
-        self.assertFalse(any(c[0][:2] == ["worktree", "add"] for c in io.calls[n:]))
-        self.assertFalse(any(c[0][:1] == ["commit"] for c in io.calls[n:]))
+        self.assertFalse(any(c[0][0] in ("worktree", "commit") for c in io.calls[n:]))
 
     def test_init_validates_before_touching_disk(self):
         io = FakeGit()
         self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge, repos=["{bad"]), io), 2); self.assertEqual(io.calls, [])
-        self.assertEqual(init_cmd.run(opts(self.ws, self.tmp / "nope"), io), 2); self.assertEqual(io.calls, [])
+        self.assertEqual(init_cmd.run(opts(self.ws, self.tmp / "nope"), io), 2); self.assertTrue(all(c[0][0] == "remote" for c in io.calls))
+
+    def test_init_refuses_a_foreign_workspace_and_a_missing_clone_before_any_worktree(self):
+        import contextlib, io as _io
+        (self.ws / "notes.txt").write_text("x"); git = FakeGit(); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge), git)
+        self.assertEqual(rc, 2); self.assertIn("is not empty (notes.txt)", buf.getvalue()); self.assertFalse(any(c[0][0] == "worktree" for c in git.calls))
+        ws2 = self.tmp / "ws2"; git = FakeGit(); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(ws2, self.knowledge, repos=[JS, '{"name":"ghost","base":"main","slack":"C3"}']), git)
+        self.assertEqual(rc, 2); self.assertIn("no clone of ghost at %s" % (self.tmp / "ghost"), buf.getvalue()); self.assertFalse(ws2.exists())
+        self.assertFalse(any(c[0][0] == "worktree" for c in git.calls))
+        other = self.tmp / "elsewhere" / "ghost"; (other / ".git").mkdir(parents=True); git = FakeGit()
+        rc = init_cmd.run(opts(ws2, self.knowledge, repos=[JS, '{"name":"ghost","base":"main","slack":"C3","path":"%s"}' % other]), git)
+        self.assertEqual(rc, 0); self.assertIn((["worktree", "add", "-b", "ws/myd-1", str(ws2 / "ghost"), "origin/main"], other), git.calls)
+        data = json.loads((ws2 / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery" / "state.json").read_text())
+        self.assertEqual(data["epic"]["repos"]["ghost"]["path"], "ghost"); self.assertNotIn(str(other), json.dumps(data))
+
+    def test_init_defaults_the_workspace_to_clone_root_slash_key(self):
+        import contextlib, io as _io
+        git = FakeGit(); buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(None, self.knowledge, workspace=None, clone_root=str(self.tmp), epic="MYD-19001"), git)
+        self.assertEqual(rc, 0, buf.getvalue()); ws = self.tmp / "myd-19001"
+        self.assertTrue((ws / ".turnstile").exists()); self.assertIn((["worktree", "add", "-b", "ws/myd-19001", str(ws / "jsfiller"), "origin/develop"], self.tmp / "jsfiller"), git.calls)
+        self.assertTrue((ws / "pdffiller-knowledge").exists()); self.assertIn("WORKSPACE: %s" % ws, buf.getvalue())
+        rc = init_cmd.run(opts(None, self.knowledge, workspace=None, clone_root=str(self.tmp / "nope"), epic="MYD-2"), FakeGit()); self.assertEqual(rc, 2)
 
     def test_init_with_real_git(self):
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.knowledge, check=True)
         (self.knowledge / "README.md").write_text("k\n")
         g = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
         subprocess.run(g + ["add", "."], cwd=self.knowledge, check=True); subprocess.run(g + ["commit", "-qm", "init"], cwd=self.knowledge, check=True)
+        for repo, base in (("jsfiller", "develop"), ("pdffiller", "master")):
+            shutil.rmtree(self.tmp / repo); subprocess.run(["git", "init", "-q", "-b", base, repo], cwd=self.tmp, check=True); (self.tmp / repo / "a.txt").write_text("a\n")
+            subprocess.run(g + ["add", "."], cwd=self.tmp / repo, check=True); subprocess.run(g + ["commit", "-qm", "seed"], cwd=self.tmp / repo, check=True)
         env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
         class RealGit(init_cmd.InitIO):
             def git(self, args, cwd):
                 out = subprocess.run(["git", "-c", "commit.gpgsign=false"] + args, cwd=str(cwd), capture_output=True, text=True, env=env)
                 if out.returncode != 0: raise TurnstileError(out.stderr)
                 return out.stdout
-        self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), RealGit()), 0)
+        import contextlib, io as _io
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf): self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), RealGit()), 0)
         wt = self.ws / "pdffiller-knowledge"
         self.assertEqual(subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True).stdout.strip(), "epic/myd-1")
+        for repo in ("jsfiller", "pdffiller"):  # no origin: the WARN names the local fallback and the worktree still lands on ws/<key>
+            self.assertEqual(subprocess.run(["git", "branch", "--show-current"], cwd=self.ws / repo, capture_output=True, text=True).stdout.strip(), "ws/myd-1")
+            self.assertTrue((self.ws / repo / "a.txt").exists())
+        self.assertIn("cutting ws/myd-1 for jsfiller from the local develop", buf.getvalue()); self.assertIn("cutting ws/myd-1 for pdffiller from the local master", buf.getvalue())
         self.assertIn("turnstile: init MYD-1", subprocess.run(["git", "log", "--oneline"], cwd=wt, capture_output=True, text=True).stdout)
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout, "")
         rec = json.loads((wt / "context" / "workitems" / "demo" / "delivery" / ".sync.json").read_text()); self.assertFalse(rec["pushed"])  # no origin
 
     def test_init_refuses_knowledge_clone_inside_workspace_and_foreign_marker(self):
-        k = self.ws / "pdffiller-knowledge"
+        k = self.ws / "pdffiller-knowledge"; clones(self.ws, "jsfiller", "pdffiller")
         subprocess.run(["git", "init", "-q", "-b", "main", str(k)], check=True)
         io = init_cmd.InitIO()
         self.assertEqual(init_cmd.run(opts(self.ws, k), io), 2)
-        self.assertFalse((k / "context").exists())
+        self.assertFalse((k / "context").exists()); self.assertFalse((self.ws / ".turnstile").exists())
         (self.ws / ".turnstile").write_text("other/delivery\n")
         self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), FakeGit()), 2)
         self.assertEqual((self.ws / ".turnstile").read_text(), "other/delivery\n")

@@ -4,7 +4,7 @@ Epic {{epic_key}} · delivery `{{delivery}}` · report → `{{report_path}}` · 
 Read first: the role rules you were launched with, then this brief, then every file listed below. The brief wins on specifics.
 
 ## PR
-{{pr_id}} — {{ticket_key}} · head `{{head}}` · worktree `{{worktree}}` · gate `{{gate}}` via `{{gate_skill}}` · Copilot: {{copilot}}.
+{{pr_id}} — {{ticket_key}} · head `{{head}}` · worktree `{{repo_path}}` · gate `{{gate}}` via `{{gate_skill}}` · Copilot: {{copilot}}.
 Sent to humans at {{sent_at}} · rework since {{rework_since}}. Every human thread opened since the send, and every unresolved one,
 needs a reply newer than the reviewer's last comment before the PR goes back to humans.
 

@@ -121,7 +121,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(self.io.renders, 1)
         self.assertEqual(len(self.io.commits), 1)
         self.assertTrue((self.d / ".gitattributes").read_text().startswith("ledger.md merge=union"))
-        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json"])
+        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
     def test_ready_can_declare_companion_prs_on_the_send_entry(self):

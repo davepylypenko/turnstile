@@ -28,6 +28,29 @@ def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Opt
             "skill_dir": str(ROOT / "skills" / "turnstile"),
             "today": datetime.datetime.utcnow().strftime("%Y-%m-%d")}
 
+def repo_vars(delivery: pathlib.Path, data: dict, vars: dict, needed: set) -> dict:
+    from . import workspace
+    ws = workspace.load(delivery); repos = (data.get("epic") or {}).get("repos") or {}; key = (data.get("epic") or {}).get("key") or "<KEY>"
+    hint = "run: turnstile attach --epic %s (from the clone root) or pass --var repo_path=<absolute worktree>" % key
+    out = {}
+    if "repo_paths" in needed and "repo_paths" not in vars:
+        out["repo_paths"] = ", ".join("`%s` → `%s`" % (r, p) for r, p in sorted(ws["repos"].items())) if ws and ws["repos"] else \
+            "none recorded (no %s in the delivery dir — %s)" % (workspace.FILE, hint)
+    if "repo_path" in needed:
+        path = vars.get("repo_path")
+        if path is None and vars.get("repo") is not None:
+            repo = vars["repo"]
+            if repo not in repos:
+                raise TurnstileError("repo %r is not in epic.repos (%s)" % (repo, ", ".join(sorted(repos)) or "none"))
+            if not ws or not ws["repos"].get(repo):
+                raise TurnstileError("no worktree recorded for %s in %s/%s — %s" % (repo, delivery, workspace.FILE, hint))
+            path = ws["repos"][repo]
+        if path is not None:
+            if not pathlib.Path(path).is_dir():
+                raise TurnstileError("repo worktree %s does not exist — %s" % (path, hint))
+            out["repo_path"] = str(pathlib.Path(path).resolve())
+    return out
+
 def parse_vars(var_list: List[str]) -> dict:
     out = {}
     for item in var_list or []:
@@ -58,7 +81,8 @@ def run(delivery, agent: str, name: str, var_list: List[str], force: bool = Fals
                 if missing_plan:
                     raise TurnstileError("no agent but the investigator starts before the lead approved plan.md (spec §4.1): " + missing_plan)
             eff = config.effective(st.data); vars = builtins(st.data, delivery, agent, name, eff); vars.update(parse_vars(var_list))
-            text, missing = render(tpl.read_text(), vars)
+            tpl_text = tpl.read_text(); vars.update(repo_vars(delivery, st.data, vars, set(PLACEHOLDER.findall(tpl_text))))
+            text, missing = render(tpl_text, vars)
             if missing:
                 for m in missing:
                     print("MISSING placeholder %s (pass --var %s=...)" % (m, m))

@@ -57,7 +57,20 @@ class SkillFiles(unittest.TestCase):
         for doc in (text, readme, ws):
             for needle in ["turnstile sync", "SYNC:", "never rebase", "pushe"]: self.assertIn(needle, doc, needle)
         for doc in (text, readme):
-            for needle in ["turnstile attach --knowledge", "--epic", "origin/epic/<key>", "behind origin", "--no-push", "preferences", "pushed"]: self.assertIn(needle, doc, needle)
+            for needle in ["turnstile attach --epic", "--clone-root", "origin/epic/<key>", "behind origin", "--no-push", "preferences", "pushed",
+                           ".workspace.json", "cd <workspace> && claude", "ws/<key"]: self.assertIn(needle, doc, needle)
+    def test_init_from_the_clone_root_is_documented(self):
+        # 2026-11-03: init runs in the clone root, creates <root>/<key> with a worktree per repo; the lead opens that folder
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); ws = (ROOT / "templates" / "CLAUDE.md.workspace").read_text()
+        for doc in (text, readme):
+            for needle in ["clone root", "--clone-root", "ws/<key", "origin/<base>", "cd <workspace> && claude", "cannot drive the epic", ".workspace.json", "--var repo=<name>"]:
+                self.assertIn(needle, doc, needle)
+        for needle in ["← clone root", "← created by init", "worktree ws/myd-1 from origin/develop", "epic.repos.<r>.path", "never from `ws/*`"]: self.assertIn(needle, readme, needle)
+        for needle in ["{{repos}}", "{{ws_branch}}", "never from", "--var repo=<name>"]: self.assertIn(needle, ws, needle)
+        self.assertIn("{{repo_path}}", (REFS / "briefs" / "implementer.md").read_text()); self.assertIn("never from the worktree's own `ws/*`", (REFS / "briefs" / "implementer.md").read_text())
+        for name in ("deployer", "investigator", "tester", "story-reviewer"): self.assertIn("{{repo_paths}}", (REFS / "briefs" / (name + ".md")).read_text(), name)
+        for name in ("reviewer", "stack-step", "comments-handler"): self.assertIn("{{repo_path}}", (REFS / "briefs" / (name + ".md")).read_text(), name)
+        self.assertIn("parked on `ws/<epic>`", (ROOT / "agents" / "implementer.md").read_text())
     def test_trunk_mode_is_documented(self):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); plan = (REFS / "plan.md").read_text()
         life = (REFS / "lifecycle.md").read_text(); recipe = (REFS / "env" / "pdffiller-dev.md").read_text()

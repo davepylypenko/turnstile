@@ -6,7 +6,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 ## Targets
 {{targets}}
 
-Variant `{{variant}}` must keep monolith tag `{{monolith_tag}}` on every `ensure`. Desk `{{desk}}` via {{desk_workflow}}. Stack top to deploy: `{{head}}`.
+Variant `{{variant}}` must keep monolith tag `{{monolith_tag}}` on every `ensure`. Desk `{{desk}}` via {{desk_workflow}}. Stack top to deploy: `{{head}}`. Repo worktrees: {{repo_paths}}.
 
 ## Health checks
 {{health_checks}}

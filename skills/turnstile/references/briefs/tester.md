@@ -6,7 +6,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 ## Story and environment
 {{story_id}} — {{story_title}}. Mode: {{mode}} (`full` or `rerun`; rerun cases: {{rerun_cases}}).
 Feature flag: `{{flag}}` · arm: `{{arm}}` (treatment = flag on, control = flag off; toggle it per the recipe § Feature flag — an unknown toggle method is `BLOCKED`, never a guess; `none` = no flag, single arm).
-Environment: variant `{{variant}}`, desk `{{desk}}`, builds {{builds}} (stack-top head {{stack_head}}). Recipe: `{{skill_dir}}/{{env_recipe}}`. Figma tool mapping: `{{skill_dir}}/references/tools/figma.md` (resolve first; none → BLOCKED). Test user: {{test_user}}. Password: from your environment at login (`$TURNSTILE_TEST_PASSWORD`, else keychain `turnstile-test-password`), per the role rules; never in this brief, the report or any file.
+Environment: variant `{{variant}}`, desk `{{desk}}`, builds {{builds}} (stack-top head {{stack_head}}). Recipe: `{{skill_dir}}/{{env_recipe}}`. Figma tool mapping: `{{skill_dir}}/references/tools/figma.md` (resolve first; none → BLOCKED). Test user: {{test_user}}. Repo worktrees (read-only, for test files and selectors): {{repo_paths}}. Password: from your environment at login (`$TURNSTILE_TEST_PASSWORD`, else keychain `turnstile-test-password`), per the role rules; never in this brief, the report or any file.
 
 ## Test cases
 {{test_cases}}

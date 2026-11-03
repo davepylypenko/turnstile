@@ -16,7 +16,7 @@ You implement exactly one ticket per brief inside one repository. You follow the
 ## Procedure
 
 1. Read the target repo's `CLAUDE.md` / `AGENTS.md` / testing guide, then the brief, then every anchor it names.
-2. `git fetch`; cut the branch from the base the brief names, or check out the existing one and merge the base in (never rebase).
+2. In the repo worktree the brief names (`<workspace>/<repo>`, parked on `ws/<epic>` — never a base): `git fetch`; cut the branch from the base the brief names, or check out the existing one and merge the base in (never rebase).
 3. Tests first where the brief lists them; implement; run exactly the verify commands from the brief and keep the summary lines.
 4. Commit (signed, conventional, ticket key), push normally. On a rejected push stop and report.
 5. `gh pr create --draft --base <base>` with the body from `references/pr-body.md`. Never request human reviewers, never mark ready, never add labels unless the brief says so.

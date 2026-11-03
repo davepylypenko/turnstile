@@ -5,7 +5,7 @@ from . import state as st_mod, rules, ledger, threads, sync
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
-GITIGNORE = ".*.tmp\n.sync.json\n"
+GITIGNORE = ".*.tmp\n.sync.json\n.workspace.json\n"
 HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
 APPROVED_VIA = "lead-terminal"  # the lead types the approve command in the Claude Code prompt with the `!` prefix
 

@@ -57,19 +57,24 @@ def build_parser():
     for c in (cs, cu):
         c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file"); c.add_argument("--no-commit", action="store_true")
     sub.add_parser("sync", help="fetch origin, fast-forward the epic branch and push it (never rebase or force); refuses diverged histories")
-    at = sub.add_parser("attach", help="continue an existing epic from another machine: worktree of origin/epic/<key>, .turnstile, workspace CLAUDE.md, status")
-    for flag, kw in [("--knowledge", {"required": True}), ("--epic", {"required": True}), ("--workspace", {"default": "."}),
+    at = sub.add_parser("attach", help="continue an existing epic from another machine: <clone root>/<key> with the knowledge worktree of origin/epic/<key>, a worktree per repo, .turnstile, workspace CLAUDE.md, status")
+    for flag, kw in [("--epic", {"required": True}), ("--knowledge", {"help": "the knowledge clone (default: <clone root>/pdffiller-knowledge)"}),
+                     ("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd — the knowledge clone's parent, or the cwd when it holds a named clone)"}),
+                     ("--workspace", {"help": "the workspace folder to create (default: <clone root>/<epic key, lower case>)"}),
                      ("--workitem", {"help": "the workitem folder (needed when the epic branch holds several deliveries)"}),
                      ("--chat-language", {"help": "default: the epic's recorded chat_language"})]:
         at.add_argument(flag, **kw)
     for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
         sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
-    ini = sub.add_parser("init", help="create the knowledge worktree and the delivery/ skeleton for an epic")
-    for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}), ("--knowledge", {"required": True}),
+    ini = sub.add_parser("init", help="create the epic workspace <clone root>/<key>: the knowledge worktree, a worktree per repo and the delivery/ skeleton")
+    for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}),
+                     ("--knowledge", {"help": "the knowledge clone (default: <clone root>/pdffiller-knowledge)"}),
+                     ("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd — the knowledge clone's parent, or the cwd when it holds a named clone)"}),
                      ("--lead", {"required": True}), ("--lead-github", {"required": True}), ("--github-org", {"required": True}),
                      ("--agent-github", {"help": "GitHub login the agents post thread replies as (default: --lead-github)"}),
-                     ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, slack[, epic_branch, gate, gate_check, ci_ignore, copilot, branch_prefix]}; repeatable"}),
-                     ("--variant", {}), ("--desk", {}), ("--board-url", {}), ("--workspace", {"default": "."}),
+                     ("--repo", {"action": "append", "default": [], "dest": "repos", "help": "JSON: {name, base, slack[, epic_branch, gate, gate_check, ci_ignore, copilot, branch_prefix, path]}; repeatable; path = the clone when it is not <clone root>/<name>"}),
+                     ("--variant", {}), ("--desk", {}), ("--board-url", {}),
+                     ("--workspace", {"help": "the workspace folder to create (default: <clone root>/<epic key, lower case>)"}),
                      ("--knowledge-base", {"default": "main"}), ("--pm", {}), ("--design", {}),
                      ("--recipe", {"default": "references/env/pdffiller-dev.md"}),
                      ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"}),

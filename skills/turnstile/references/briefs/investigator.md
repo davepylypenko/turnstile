@@ -8,6 +8,7 @@ Read first: the role rules you were launched with, then this brief, then every f
 
 ## Where to look
 {{where}}
+Repo worktrees (read-only): {{repo_paths}}.
 
 ## Hypotheses already on the table
 {{hypotheses}}

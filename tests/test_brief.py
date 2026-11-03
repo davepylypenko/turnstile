@@ -43,7 +43,7 @@ class Run(unittest.TestCase):
         return rc, buf.getvalue()
     def all_vars(self, agent):
         builtin = brief_cmd.builtins(json.loads(FIX.read_text()), self.d, agent, "X")
-        return ["%s=v-%s" % (p, p) for p in placeholders((BRIEFS / (agent + ".md")).read_text()) if p not in builtin]
+        return [("repo_path=" + str(self.d.parent)) if p == "repo_path" else "%s=v-%s" % (p, p) for p in placeholders((BRIEFS / (agent + ".md")).read_text()) if p not in builtin]
     def test_every_template_renders_with_builtins_plus_vars(self):
         for p in BRIEFS.glob("*.md"):
             rc, out = self.run_brief(p.stem, "T-" + p.stem, self.all_vars(p.stem)); self.assertEqual(rc, 0, out)
