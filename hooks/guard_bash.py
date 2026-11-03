@@ -120,34 +120,41 @@ def _delivery_matcher(cwd: str):
     """Returns mention(text) -> str: the delivery reference found in `text` ('' when none). `mention.paths(seg)` lists the
     paths relative to the delivery dir that the segment's words name ('' for the dir itself); `mention.abs_path` is the
     resolved delivery dir when it could be found."""
-    name, abs_path = "delivery", None
+    name, abs_path, spellings = "delivery", None, ()
     try:
         from _common import delivery_dir
-        d = delivery_dir(cwd); name, abs_path = d.name, str(d)
+        d = delivery_dir(cwd); name, abs_path = d.name, str(d); spellings = tuple({abs_path, os.path.realpath(abs_path)})
     except Exception:
         pass
     token = re.compile(r"(?<![\w.-])%s(?=/|\s|$)" % re.escape(name), re.M)
+    def hit(w: str):
+        """The path under the delivery dir that word `w` names ('' for the dir itself), None when it names none. Without a
+        workspace the bare word protects nothing; an absolute spelling must resolve to the delivery dir; a relative one is taken as it."""
+        if abs_path is None:
+            return None
+        for s in spellings:
+            if s in w:
+                return w[w.index(s) + len(s):].lstrip("/")
+        m = token.search(w)
+        if not m:
+            return None
+        prefix = m.string[:m.end()].lstrip("\"'")
+        if prefix.startswith(("/", "~", "$HOME/")):
+            if UNSAFE_PATH.search(prefix.replace("$HOME/", "", 1).replace("~", "", 1)):
+                return w[m.end():].lstrip("/")
+            real = os.path.realpath(os.path.expanduser(prefix.replace("$HOME/", "~/", 1)))
+            return w[m.end():].lstrip("/") if real in (os.path.realpath(abs_path), abs_path) else None
+        return w[m.end():].lstrip("/")
     def mention(text: str) -> str:
         if STATE_GLOB.search(text):
             return "state.json"
-        if abs_path and abs_path in text:
-            return abs_path
-        if token.search(text):
-            return name + "/"
+        for w in text.split():
+            rel = hit(w)
+            if rel is not None:
+                return abs_path if any(s in w for s in spellings) else name + "/"
         return ""
     def paths(seg: str):
-        out = []
-        for w in seg.split():
-            rel = None
-            if abs_path and abs_path in w:
-                rel = w[w.index(abs_path) + len(abs_path):]
-            else:
-                m = token.search(w)
-                if m:
-                    rel = w[m.end():]
-            if rel is not None:
-                out.append(rel.lstrip("/"))
-        return out
+        return [rel for rel in (hit(w) for w in seg.split()) if rel is not None]
     mention.paths = paths; mention.abs_path = abs_path
     return mention
 

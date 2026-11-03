@@ -206,6 +206,47 @@ class BashGuard(unittest.TestCase):
                             "tar -xPf /tmp/evil.tar -C delivery/evidence/S1", "sh delivery/evidence/run.sh", "bash delivery/evidence/S1/x.sh"], "delivery-write")
         self.assertAllowed(["node shot.mjs --out delivery/evidence/S1/TP-1/env.png", "tar -xf /tmp/a.tar -C delivery/evidence/S1"])
 
+    def test_delivery_write_keys_on_the_resolved_dir_not_the_bare_word(self):
+        # 2026-11-03: without a workspace the word `delivery/` in a command protects nothing; with one, every spelling of the
+        # resolved delivery dir is a write and an unrelated …/delivery/ elsewhere on disk is not
+        other = pathlib.Path(tempfile.mkdtemp()); (other / "MYD-docs").mkdir()
+        def at(cwd, cmd, env=None):
+            return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}, cwd, env=env)
+        for cmd in ["printf '%%s\\n' 'ledger: see delivery/ for the state; the board | notes' >> %s/MYD-docs/ledger.md" % other, "rm -rf delivery/",
+                    "mkdir -p delivery/evidence", "echo x > delivery/ledger.md", "git -C delivery worktree add ../x", "cd delivery && rm ledger.md"]:
+            r = at(other, cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
+        self.assertEqual(at(other, "echo '{}' > state.json").returncode, 2); self.assertEqual(at(other, "cp x delivery/state.json").returncode, 2)
+        d = self.ws / "delivery"; real = os.path.realpath(str(d))
+        self.assertBlocked(["echo x > %s/ledger.md" % d, "echo x > %s/ledger.md" % real, "echo x > delivery/ledger.md", "echo x > ./delivery/ledger.md",
+                            "cp /tmp/x ../%s/delivery/ledger.md" % self.ws.name, "git -C %s worktree add ../x" % d, "git worktree add %s/x" % d,
+                            "printf 'see delivery/ notes' >> %s/ledger.md" % d, "cd %s && echo x > ledger.md" % real], "delivery-write")
+        home = {"HOME": str(self.ws.parent)}
+        for cmd in ["echo x > ~/%s/delivery/ledger.md" % self.ws.name, "echo x > $HOME/%s/delivery/ledger.md" % self.ws.name]:
+            r = at(self.ws, cmd, env=home); self.assertEqual(r.returncode, 2, cmd); self.assertIn("delivery-write", r.stderr)
+        elsewhere = pathlib.Path(tempfile.mkdtemp()) / "delivery"; elsewhere.mkdir()
+        self.assertAllowed(["echo x > %s/notes.md" % elsewhere, "mkdir -p %s/evidence" % elsewhere, "rm -rf %s" % elsewhere, "cp a %s/ledger.md" % elsewhere,
+                            "printf 'see delivery/ notes' >> %s/ledger.md" % elsewhere.parent, "git -C %s checkout -- ." % elsewhere.parent,
+                            "git -C %s worktree add ../x" % elsewhere, "echo x > ~/%s/notes.md" % elsewhere.parent.name])
+        r = at(self.ws, "echo x > ~/%s/delivery/notes.md" % elsewhere.parent.name, env={"HOME": str(elsewhere.parent.parent)}); self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_turnstile_init_and_attach_pass_while_model_worktrees_on_the_delivery_dir_do_not(self):
+        self.assertAllowed(["turnstile init --epic MYD-1 --workitem demo --lead a --lead-github b --github-org o --repo '{\"name\":\"app\",\"base\":\"main\",\"slack\":\"C1\"}'",
+                            "turnstile init --epic MYD-1 --workitem demo --clone-root ~/Desktop/pdffiller --knowledge ../pdffiller-knowledge --lead a --lead-github b --github-org o",
+                            "turnstile attach --epic MYD-1 --clone-root .", "cd ~/Desktop/pdffiller && turnstile attach --epic MYD-1",
+                            "git worktree add ../myd-1/jsfiller -b ws/myd-1 origin/develop", "git -C /tmp/jsfiller worktree list"])
+        self.assertBlocked(["git -C delivery worktree add ../x", "git worktree add %s/wt" % (self.ws / "delivery"), "cd delivery && git worktree add ../x",
+                            "git -C %s worktree remove x" % (self.ws / "delivery")], "delivery-write")
+        ws = pathlib.Path(tempfile.mkdtemp()); kn = ws / "pdffiller-knowledge"; d = kn / "context" / "workitems" / "demo" / "delivery"; d.mkdir(parents=True)
+        shutil.copy(FIX, d / "state.json"); (ws / ".turnstile").write_text("pdffiller-knowledge/context/workitems/demo/delivery\n")
+        (kn / ".git").write_text("gitdir: /x\n"); (ws / "jsfiller").mkdir(); (ws / "jsfiller" / ".git").write_text("gitdir: /y\n")
+        def at(cwd, cmd):
+            return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}, cwd)
+        for cmd in ["git checkout -- .", "git reset --hard origin/develop", "git checkout -b feature/MYD-2-x origin/develop", "git stash"]:
+            self.assertEqual(at(ws / "jsfiller", cmd).returncode, 0, cmd)
+            r = at(kn, cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("knowledge-worktree-reset", r.stderr)
+        r = at(ws / "jsfiller", "echo x > ../pdffiller-knowledge/context/workitems/demo/delivery/ledger.md"); self.assertEqual(r.returncode, 2); self.assertIn("delivery-write", r.stderr)
+        self.assertEqual(at(ws / "jsfiller", "echo x > ../pdffiller-knowledge/context/workitems/demo/delivery/reports/R.md").returncode, 0)
+
     def test_approve_and_lead_markers_are_blocked_in_every_form(self):
         # R2-1: the lead approves only from the Claude Code prompt with the `!` prefix, outside the model's tool calls.
         # Any model-issued command that carries the approve command or the lead/migration markers is refused.
