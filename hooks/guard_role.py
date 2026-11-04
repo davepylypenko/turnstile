@@ -3,10 +3,12 @@ and records them with `turnstile jira-synced`; a turnstile agent (role from TURN
 frontmatter hooks, or the agent name in the payload) is refused. Round 2 R2-12."""
 import sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, block, agent_role
+from _common import read_payload, block, agent_role, managed
 
 def main():
     p = read_payload()
+    if not managed(p.get("cwd") or "."):
+        sys.exit(0)
     role = agent_role(p) or ("subagent %s" % (p.get("agent_type") or "?") if p.get("agent_id") else "")  # round 3: any subagent
     if role and role != "orchestrator":
         block("blocked by rule role-jira. The %s role cannot write Jira (%s): report the transition in your reply; the orchestrator performs "

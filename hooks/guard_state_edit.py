@@ -1,21 +1,24 @@
 import os, pathlib, sys
 sys.path.insert(0, os.path.dirname(__file__))
-from _common import read_payload, block
+from _common import read_payload, block, managed
 
 # 2026-10-14 finding 1: inside the delivery dir the Write/Edit tools may touch evidence/, reports/, briefs/ (the tester's
 # figma.png from the Figma MCP result lands here), plus plan.md and decisions.md (the orchestrator's). Everything else in
-# the delivery dir (state.json, ledger.md, board.html, .state.lock, the root) is the CLI's. Outside it, only the two
-# names stay refused (defence in depth). Paths are resolved, so `..` and symlinks cannot reach the root.
+# the delivery dir (state.json, ledger.md, board.html, .state.lock, the root) is the CLI's. Elsewhere in the workspace, only
+# the two names stay refused (defence in depth); outside a workspace the guard is inert (2026-11-04). Paths are resolved,
+# so `..` and symlinks cannot reach the root.
 WRITABLE_SUBDIRS = ("evidence", "reports", "briefs")
 ROOT_FILES = {"plan.md", "decisions.md"}
 NAMES_ANYWHERE = ("state.json", "ledger.md")
 
 def _refusal(fp: str, cwd: str):
+    target = fp if os.path.isabs(fp) else os.path.join(cwd or ".", fp)
+    if not managed(cwd, os.path.dirname(target)):
+        return None
     name = pathlib.PurePath(fp).name
     if name in NAMES_ANYWHERE:
         return "%s is written only by 'turnstile pass' (state changes only through a transition)" % name
     from _common import delivery_dir
-    target = fp if os.path.isabs(fp) else os.path.join(cwd or ".", fp)
     root = None
     for start in (cwd or ".", os.path.dirname(target)):  # round 2: a cwd outside the workspace must not unlock board.html/.state.lock
         try:

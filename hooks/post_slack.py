@@ -3,7 +3,7 @@ allowed it is marked used (one send per approval), a ledger line is written, the
 Without a message_ts nothing is recorded: the approval stays usable (R2-4, R2-14)."""
 import datetime, json, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, delivery_dir, plugin_root
+from _common import read_payload, delivery_dir, plugin_root, managed
 from _slack import prs_in, choose, message_text, channel_of
 
 TS_RX = re.compile(r"message_ts\W{1,8}(\d+\.\d+)")
@@ -18,7 +18,7 @@ def fail(msg: str) -> None:
 
 def main():
     p = read_payload(); ti = p.get("tool_input") or {}
-    if not isinstance(ti, dict):
+    if not isinstance(ti, dict) or not managed(p.get("cwd") or "."):
         sys.exit(0)
     ts = message_ts(p.get("tool_response"))
     if not ts:

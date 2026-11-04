@@ -1,6 +1,6 @@
 import os, pathlib, posixpath, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, block, agent_role, plugin_root, load_state
+from _common import read_payload, block, agent_role, plugin_root, load_state, managed
 
 # global options that may sit between the binary and its subcommand: git -C dir / -c k=v / --opt[=v]; gh -R / --repo owner/repo
 GIT = r"\bgit(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+)|--?[\w.-]+(?:=\S+)?))*\s+"
@@ -20,6 +20,9 @@ RULES = [
     ("empty-variant-tag", r"service_github_tag=(?:''|\"\"|(?=[\"']?(?:\s|&|$)))|service_github_tag\s+(?:''|\"\")"),
     ("graphql-file", r"\bgraphql\b[^\n;&|]*(?:query=@|--input\b)|(?:query=@|--input\b)[^\n;&|]*\bgraphql\b"),
 ]
+# 2026-11-04: outside a turnstile workspace (no `.turnstile` above the project dir, the cwd or a dir the command enters) the guard
+# is inert except for these; they protect shared branches and signed history everywhere
+UNIVERSAL = {"force-push", "rebase", "unsigned"}
 FILE_ARG = re.compile(r"(?:^|\s)(?:-F|--file|--body-file|--input)(?:=|\s+)[\"']?([^\s\"']+)")
 FIELD_FILE_ARG = re.compile(r"(?:^|\s)(?:-F|--field)(?:=|\s+)[\"']?[\w\[\]]+=@([^\s\"']+)")  # gh api -F body=@file
 # a PR/commit write: the only places where a trailer or the footer can land
@@ -27,9 +30,10 @@ WRITE_CTX = re.compile(GIT + r"commit\b|" + GH + PR + r"(?:create|edit)\b|" + GH
 CONTENT_RULES = [("trailer", r"Co-Authored-By"), ("footer", r"Generated with \[Claude Code\]")]
 # the lead's actions never pass through the model's tool calls: the lead types `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
 # in the Claude Code prompt (the `!` prefix runs outside the hooks). Any model-issued command that carries the approve
-# command or the lead/migration markers, in any quoting/env/export/bash -c/heredoc form, is refused on the substring.
-LEAD_ONLY = [("lead-approve", "turnstile approve"), ("lead-approve", "TURNSTILE_LEAD"), ("lead-migration", "TURNSTILE_MIGRATION"),
-             ("lead-config", "TURNSTILE_USER_CONFIG")]
+# command or the migration/config markers, in any quoting/env/export/bash -c/heredoc form, is refused on the substring.
+# The lead marker itself is refused only as an assignment or a use (2026-11-04): a bare `TURNSTILE_LEAD` in a note is prose.
+LEAD_ONLY = [("lead-approve", "turnstile approve"), ("lead-migration", "TURNSTILE_MIGRATION"), ("lead-config", "TURNSTILE_USER_CONFIG")]
+LEAD_MARKER = re.compile(r"(?<![\w.-])TURNSTILE_LEAD=|\$\{?TURNSTILE_LEAD\b|\b(?:export|unset|declare|typeset|readonly|local)\s+(?:-\w+\s+)*TURNSTILE_LEAD\b")
 APPROVE = [r"(?:\bturnstile|turnstile_cli)\s+(?:--delivery[=\s]\S+\s+)?approve\b", r"turnstile_cli[^\n]*\bapprove\s*\("]
 LEAD_HINT = ("The lead approves by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt themself "
              "(the `!` prefix runs outside the model's tool calls). Ask the lead; never run it.")
@@ -276,10 +280,31 @@ def _file_contents(flat: str, cwd: str):
         except OSError:
             continue
 
+def _command_dirs(flat: str, cwd: str):
+    """Directories the command enters (`cd`/`pushd`) or points git at (`-C`, `--work-tree`, `GIT_WORK_TREE`), against the cwd."""
+    out, seg_cwd = [], cwd or "."
+    for seg in _segments(flat):
+        m = re.match(r"\(?\s*(?:cd|pushd)\s+(\S+)", seg)
+        if m:
+            seg_cwd = os.path.join(seg_cwd, os.path.expanduser(m.group(1).rstrip(")"))); out.append(seg_cwd); continue
+        call = _git_call(seg)
+        if call and call[2]:
+            out.append(os.path.join(seg_cwd, os.path.expanduser(call[2])))
+    return out
+
+def _universal(flats) -> None:
+    for flat in flats:
+        for name, rx in RULES:
+            if name in UNIVERSAL and re.search(rx, flat, re.I | re.M):
+                block("blocked by rule %s. Refused everywhere, also outside a turnstile workspace: the lead performs this action." % name)
+
 def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
-    for flat in (joined, stripped, re.sub(r"\s+", " ", stripped)):
+    flats = (joined, stripped, re.sub(r"\s+", " ", stripped))
+    if not managed(cwd, *_command_dirs(re.sub(r"[ \t]+", " ", stripped), cwd)):
+        _universal(flats); return
+    for flat in flats:
         _check(flat, role)
     _review_writes(stripped, cwd)
     _reviewer_requests(re.sub(r"[ \t]+", " ", stripped), cwd)
@@ -354,6 +379,8 @@ def _check(flat: str, role: str = "") -> None:
     for name, needle in LEAD_ONLY:
         if needle in flat:
             block("blocked by rule %s. `%s` is the lead's marker. %s" % (name, needle, LEAD_HINT))
+    if LEAD_MARKER.search(flat):
+        block("blocked by rule lead-approve. `TURNSTILE_LEAD` is set or read only by the lead. " + LEAD_HINT)
     for rx in APPROVE:
         if re.search(rx, flat):
             block("blocked by rule lead-approve. 'turnstile approve' is the lead's action. " + LEAD_HINT)
@@ -727,10 +754,12 @@ def _interpreter_heredocs(joined: str) -> None:
 
 def main():
     p = read_payload()
-    ti = p.get("tool_input")
+    ti = p.get("tool_input"); cwd = p.get("cwd") or "."
     if not isinstance(ti, dict) or not isinstance(ti.get("command"), str):
-        block("malformed hook payload (no tool_input.command); failing closed.")
-    check(ti["command"], p.get("cwd") or ".", agent_role(p))
+        if managed(cwd):
+            block("malformed hook payload (no tool_input.command); failing closed.")
+        sys.exit(0)
+    check(ti["command"], cwd, agent_role(p))
     sys.exit(0)
 
 if __name__ == "__main__":

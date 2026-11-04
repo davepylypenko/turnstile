@@ -28,6 +28,22 @@ def delivery_dir(cwd: str) -> pathlib.Path:
             pass
     return paths.find_delivery(pathlib.Path(cwd or "."), None)
 
+def managed(cwd: str, *starts) -> bool:
+    """True inside a turnstile workspace: a `.turnstile` marker on or above the session's project dir (`CLAUDE_PROJECT_DIR`), the
+    cwd or any extra start. Outside one every guard is inert (2026-11-04, lead's decision); a marker that is present but broken
+    keeps the guards failing closed, so only the marker's existence is asked here."""
+    sys.path.insert(0, str(plugin_root()))
+    from turnstile_cli.paths import MARKER
+    anchor = os.environ.get("CLAUDE_PROJECT_DIR")
+    for s in ([anchor] if anchor else []) + [cwd or "."] + [x for x in starts if x]:
+        try:
+            cur = pathlib.Path(os.path.expanduser(s)).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if any((d / MARKER).exists() for d in [cur] + list(cur.parents)):
+            return True
+    return False
+
 def load_state(cwd: str):
     sys.path.insert(0, str(plugin_root()))
     from turnstile_cli import state

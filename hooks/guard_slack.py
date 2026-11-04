@@ -2,11 +2,13 @@
 so a denied or failed send leaves the approval intact (R2-4)."""
 import json, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
-from _common import read_payload, block, delivery_dir, plugin_root
+from _common import read_payload, block, delivery_dir, plugin_root, managed
 from _slack import prs_in, choose, message_text, channel_of
 
 def main():
     p = read_payload(); ti = p.get("tool_input") or {}
+    if not managed(p.get("cwd") or "."):
+        sys.exit(0)
     if not isinstance(ti, dict):
         block("malformed hook payload; failing closed.")
     if "schedule" in str(p.get("tool_name") or ""):

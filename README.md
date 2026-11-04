@@ -299,7 +299,8 @@ The lead approves an `awaiting_human` entry **only by typing the command themsel
 
 The `!` prefix runs the line in the user's shell, outside the model's tool calls, so no hook sees it and no agent can
 issue it. `approve` records `approved_via: "lead-terminal"` on the entry and the ledger line says so. The Bash hook
-blocks **any** model-issued command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION`, in
+blocks **any** model-issued command that contains `turnstile approve` or `TURNSTILE_MIGRATION`, or that sets or reads
+`TURNSTILE_LEAD` (`TURNSTILE_LEAD=…`, `export TURNSTILE_LEAD`, `$TURNSTILE_LEAD`; a bare mention in a note is prose), in
 any quoting, `env`, `export`, `bash -c` or heredoc form (the check runs on the command with quotes and backslashes
 stripped and whitespace collapsed), and the CLI keeps refusing `approve` without `TURNSTILE_LEAD=1` in its environment.
 The orchestrator's job is to report what awaits the lead (`turnstile status`) and ask the lead to run that line; it
@@ -322,7 +323,10 @@ relative to `delivery/` and must exist.
 ### Hooks
 
 `hooks/hooks.json`, PreToolUse plus one PostToolUse, apply to subagents too, and fail closed (a crash, a malformed payload or a missing
-`python3` blocks the call):
+`python3` blocks the call). **They guard a turnstile workspace (2026-11-04):** when no `.turnstile` marker is found upward from the
+session's project dir (`CLAUDE_PROJECT_DIR`), the cwd or a directory the command enters (`cd`, `git -C`, `--work-tree`), every hook is
+inert — exit 0, nothing checked — except the Bash guard's universal safety rules, which stay on everywhere: force-push, `git rebase` /
+`pull --rebase` / `pull.rebase true`, `--no-gpg-sign` / `commit.gpgsign=false`. The hook list below describes a workspace session:
 
 - `guard_bash.py` blocks `gh pr merge|ready`, `--add-reviewer`, `gh pr create --reviewer|-r`, human `requested_reviewers`
   requests (the Copilot bot may be requested; `--input` bodies, team reviewers and computed logins or routes are refused; the
@@ -332,8 +336,8 @@ relative to `delivery/` and must exist.
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
   `gh api` call — also when they sit in a file given with `-F`/`--file`/`--body-file`/`--input` (the hook reads it) —
   `gh api graphql` with `query=@file` or `--input` (a mutation in a file), `git config pull.rebase true`, the spaced
-  `service_github_tag ''` form, every command that contains `turnstile approve`, `TURNSTILE_LEAD` or `TURNSTILE_MIGRATION` (the
-  lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
+  `service_github_tag ''` form, every command that contains `turnstile approve` or `TURNSTILE_MIGRATION` or sets or reads
+  `TURNSTILE_LEAD` (the lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
   the delivery dir and is not read-only** — read-only means every pipeline segment starts with `cat`, `less`, `head`,
   `tail`, `grep`, `jq`, `ls`, `find` without `-exec|-delete`, `sort` without `-o`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
   `turnstile …` / `python3 -m turnstile_cli …`, and no redirect writes into the delivery dir. `perl -pi`, `node -e`,
@@ -378,8 +382,8 @@ relative to `delivery/` and must exist.
   `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
   of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's
   `used_at` and a permalink of the form `https://<workspace>.slack.com/archives/…`.
-- `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` and `ledger.md` unless the environment has
-  `TURNSTILE_MIGRATION=1`.
+- `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` and `ledger.md` (anywhere in a workspace session, or when the
+  target lies in a workspace) unless the environment has `TURNSTILE_MIGRATION=1`.
 
 ### Threat model
 

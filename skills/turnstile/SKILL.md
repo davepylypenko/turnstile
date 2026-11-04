@@ -61,7 +61,7 @@ and base from GitHub; refused when the base is not the story branch or another P
    `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths; `brief --var repo=<name>` renders them). Repo JSON keys: `name,
    base, epic_branch, slack, gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix, path`; `--models '{"reviewer":
    {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in
-   the new folder; this session stays in the root and cannot drive the epic. Steps 2–4 and `## preferences` run from the new session.
+   the new folder; this session stays in the root and cannot drive the epic (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run from the new session.
 2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`; write
    `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400 logic lines,
    test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.

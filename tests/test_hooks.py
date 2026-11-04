@@ -215,7 +215,9 @@ class BashGuard(unittest.TestCase):
         for cmd in ["printf '%%s\\n' 'ledger: see delivery/ for the state; the board | notes' >> %s/MYD-docs/ledger.md" % other, "rm -rf delivery/",
                     "mkdir -p delivery/evidence", "echo x > delivery/ledger.md", "git -C delivery worktree add ../x", "cd delivery && rm ledger.md"]:
             r = at(other, cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
-        self.assertEqual(at(other, "echo '{}' > state.json").returncode, 2); self.assertEqual(at(other, "cp x delivery/state.json").returncode, 2)
+        # 2026-11-04: outside a workspace the guard is inert, so a state.json name alone no longer blocks either
+        self.assertEqual(at(other, "echo '{}' > state.json").returncode, 0); self.assertEqual(at(other, "cp x delivery/state.json").returncode, 0)
+        self.assertBlocked(["echo '{}' > state.json", "cp x delivery/state.json"], "delivery-write")
         d = self.ws / "delivery"; real = os.path.realpath(str(d))
         self.assertBlocked(["echo x > %s/ledger.md" % d, "echo x > %s/ledger.md" % real, "echo x > delivery/ledger.md", "echo x > ./delivery/ledger.md",
                             "cp /tmp/x ../%s/delivery/ledger.md" % self.ws.name, "git -C %s worktree add ../x" % d, "git worktree add %s/x" % d,
@@ -268,6 +270,16 @@ class BashGuard(unittest.TestCase):
                             "turnstile brief tester ENV-S1 --var story_id=S1", "turnstile config list", "turnstile config set models.reviewer=sonnet:medium",
                             "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11",
                             "turnstile sync", "turnstile attach --knowledge ../k --epic MYD-1 --workspace ."])
+
+    def test_lead_marker_is_refused_as_an_assignment_or_use_not_as_prose(self):
+        # 2026-11-04: a ledger note that merely mentions the marker is prose; setting, exporting or reading the variable is the lead's
+        self.assertAllowed(["printf '%s\\n' 'ledger: the lead approves from the prompt (TURNSTILE_LEAD); see README' >> notes.md",
+                            "echo 'TURNSTILE_LEAD marker documented' > notes.md", "grep -rn TURNSTILE_LEAD README.md", "git log --grep TURNSTILE_LEAD",
+                            "cat > notes.md <<'EOF'\nthe lead types the TURNSTILE_LEAD line themself\nEOF"])
+        self.assertBlocked(["TURNSTILE_LEAD=1 turnstile status", "env TURNSTILE_LEAD=1 turnstile status", "export TURNSTILE_LEAD", "export TURNSTILE_LEAD=1",
+                            "echo ${TURNSTILE_LEAD}", "echo $TURNSTILE_LEAD", "bash -c 'TURNSTILE_LEAD=1 turnstile status'", "printf 'x' | TURNSTILE_LEAD=1 cat",
+                            "declare -x TURNSTILE_LEAD=1", "unset TURNSTILE_LEAD", "\"TURNSTILE_LEAD\"=1 turnstile status", "T\\URNSTILE_LEAD=1 turnstile status",
+                            "printf '%s\\n' 'TURNSTILE_LEAD=1 turnstile approve ah-3' >> notes.md"], "lead-approve")
 
     def test_sync_git_traffic_keeps_todays_verdicts(self):
         # the CLI itself fetches, fast-forwards and pushes; a model-issued push/fetch was already read-only for the guard, a merge inside
@@ -553,7 +565,8 @@ class RoleGuard(unittest.TestCase):
     """Round 2 R2-12: Jira writes through any MCP prefix are the orchestrator's; a turnstile agent (role from the env the
     agent's own hook sets, or the agent name in the payload) is refused."""
     def setUp(self):
-        self.ws = pathlib.Path(tempfile.mkdtemp())
+        self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
+        shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
 
     def jira(self, tool="mcp__claude_ai_Atlassian__transitionJiraIssue", env=None, **payload):
         p = {"tool_name": tool, "tool_input": {"issueIdOrKey": "MYD-1"}, "cwd": str(self.ws)}; p.update(payload)
@@ -884,3 +897,78 @@ class ThreadRulesBypasses(unittest.TestCase):
         env = {"PATH": os.pathsep.join([str(self.r.bin), "/usr/bin", "/bin"]), "CLAUDE_PROJECT_DIR": str(self.ws)}
         r = hook("guard_bash.py", p, fake, env=env); self.assertEqual(r.returncode, 2); self.assertIn("reply-needs-lead", r.stderr)
         env.pop("CLAUDE_PROJECT_DIR"); self.assertEqual(hook("guard_bash.py", p, fake, env=env).returncode, 0)  # the residual without the anchor
+
+class OutsideWorkspace(unittest.TestCase):
+    """2026-11-04 (lead's decision): the hooks guard a turnstile workspace. With no `.turnstile` above the project dir, the cwd or a
+    directory the command enters, every hook is inert; only the Bash guard's universal safety rules stay on everywhere."""
+    def setUp(self):
+        self.plain = pathlib.Path(tempfile.mkdtemp()); (self.plain / "notes").mkdir()
+        self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir(); (self.ws / "jsfiller").mkdir()
+        shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
+
+    def bash(self, cmd, cwd=None, env=None, **payload):
+        cwd = cwd or self.plain
+        p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}; p.update(payload)
+        return hook("guard_bash.py", p, cwd, env=env)
+
+    GUARDED = ["gh pr ready 13", "gh pr merge 13", "gh pr edit 13 --add-reviewer x", "gh pr comment 13 --body x", "gh pr review 13 --approve",
+               "gh api -X POST repos/pdffiller/jsfiller/pulls/13/comments/201/replies -f body=x",
+               "gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t=PRRT_x",
+               "gh api -X POST repos/pdffiller/jsfiller/pulls/13/requested_reviewers -f 'reviewers[]=isachivka'",
+               "printf '%s\\n' 'ledger: the lead approves with TURNSTILE_LEAD=1 turnstile approve ah-3' >> notes/ledger.md",
+               "TURNSTILE_MIGRATION=1 cp new.json delivery/state.json", "echo '{}' > state.json", "echo x > delivery/ledger.md",
+               "gh workflow run x -f service_github_tag= -f y=1", "git commit -m 'x' -m 'Co-Authored-By: a'", "gh alias set c 'pr comment'"]
+    UNIVERSAL = ["git push --force origin x", "git push -f", "git push origin +x", "git rebase develop", "git pull --rebase", "git config pull.rebase true",
+                 "git commit --no-gpg-sign -m x", "git -c commit.gpgsign=false commit -m x"]
+
+    def test_bash_guard_is_inert_except_the_universal_rules(self):
+        for cmd in self.GUARDED:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr); self.assertEqual(r.stdout, "")
+        r = self.bash("git push origin x", env={"TURNSTILE_ROLE": "tester"}); self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.bash("git push origin x", agent_type="turnstile:tester"); self.assertEqual(r.returncode, 0, r.stderr)
+        for cmd in self.UNIVERSAL:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
+        for payload in ("{}", "not json", json.dumps({"tool_input": {"command": 5}, "cwd": str(self.plain)})):
+            self.assertEqual(hook("guard_bash.py", payload, self.plain).returncode, 0, payload)
+
+    def test_bash_guard_wakes_for_a_workspace_by_cwd_project_dir_or_the_dir_entered(self):
+        for cmd in self.GUARDED:
+            r = self.bash(cmd, cwd=self.ws / "jsfiller"); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
+        r = self.bash("gh pr ready 13", env={"CLAUDE_PROJECT_DIR": str(self.ws)}); self.assertEqual(r.returncode, 2); self.assertIn("rule ready", r.stderr)
+        for cmd in ["cd %s && gh pr ready 13" % self.ws, "git -C %s push origin x && gh pr merge 13" % self.ws, "(cd %s/jsfiller; gh pr merge 13)" % self.ws,
+                    "GIT_WORK_TREE=%s git status && gh pr ready 13" % self.ws, "git --work-tree=%s status; gh pr merge 13" % self.ws]:
+            r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
+        self.assertEqual(hook("guard_bash.py", "{}", self.ws).returncode, 2)
+
+    MSG = "PR: <https://github.com/pdffiller/jsfiller/pull/1>"
+
+    def slack(self, name, cwd, tool="mcp__plugin_slack_slack__slack_send_message", text=MSG, **payload):
+        p = {"tool_name": tool, "tool_input": {"channel_id": "C1", "text": text}, "cwd": str(cwd)}; p.update(payload)
+        return hook(name, p, cwd)
+
+    def test_slack_guards_are_inert(self):
+        sent = {"tool_response": '{"ok":true,"message_ts":"1760000000.1"}'}
+        for tool in ("mcp__plugin_slack_slack__slack_send_message", "mcp__plugin_slack_slack__slack_schedule_message"):
+            r = self.slack("guard_slack.py", self.plain, tool); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, "")
+        self.assertEqual(self.slack("guard_slack.py", self.plain, text="hello").returncode, 0)
+        r = self.slack("post_slack.py", self.plain, **sent); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(p.name for p in self.plain.iterdir()), ["notes"])
+        self.assertEqual(self.slack("guard_slack.py", self.ws / "jsfiller").returncode, 2)
+        r = self.slack("post_slack.py", self.ws / "jsfiller", **sent); self.assertEqual(r.returncode, 2); self.assertIn("no usable", r.stderr)
+
+    def test_role_guard_is_inert(self):
+        p = {"tool_name": "mcp__claude_ai_Atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "MYD-1"}, "cwd": str(self.plain),
+             "agent_id": "a1", "agent_type": "turnstile:tester"}
+        self.assertEqual(hook("guard_role.py", p, self.plain, env={"TURNSTILE_ROLE": "tester"}).returncode, 0)
+        p["cwd"] = str(self.ws / "jsfiller")
+        r = hook("guard_role.py", p, self.ws, env={"TURNSTILE_ROLE": "tester"}); self.assertEqual(r.returncode, 2); self.assertIn("role-jira", r.stderr)
+
+    def test_state_edit_guard_is_inert(self):
+        def edit(fp, cwd):
+            return hook("guard_state_edit.py", {"tool_name": "Write", "tool_input": {"file_path": fp}, "cwd": str(cwd)}, cwd)
+        for name in ("state.json", "ledger.md", "delivery/state.json", "delivery/board.html"):
+            r = edit(str(self.plain / name), self.plain); self.assertEqual(r.returncode, 0, name + "\n" + r.stderr)
+        self.assertEqual(edit("state.json", self.plain).returncode, 0)
+        self.assertEqual(edit(str(self.ws / "delivery" / "state.json"), self.plain).returncode, 2)  # the target lies in a workspace
+        self.assertEqual(edit(str(self.ws / "delivery" / "reports" / "R.md"), self.plain).returncode, 0)
+        self.assertEqual(edit(str(self.plain / "state.json"), self.ws / "jsfiller").returncode, 2)  # a workspace session keeps the name rule
