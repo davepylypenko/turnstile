@@ -94,7 +94,7 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
         u = (user.get("models") or {}).get(agent); e = (epic.get("models") or {}).get(agent)
         if u is not None:
             entry, source = _model_entry(u, default, "user config models.%s" % agent), "user"
-        elif e is not None and _model_entry(e, default, "epic.models.%s" % agent) != default:
+        elif e is not None and _model_entry(e, default, "epic.models.%s" % agent) not in [default] + models.PREVIOUS_DEFAULTS.get(agent, []):
             entry, source = _model_entry(e, default, "epic.models.%s" % agent), "epic"
         else:
             entry, source = dict(default), "default"

@@ -8,6 +8,7 @@ DEFAULTS = {"implementer": {"model": "sonnet", "effort": None}, "deployer": {"mo
             "tester": {"model": "sonnet", "effort": None}, "stack-step": {"model": "haiku", "effort": None},
             "comments-handler": {"model": "haiku", "effort": None}, "investigator": {"model": "haiku", "effort": None},
             "reviewer": {"model": "opus", "effort": "xhigh"}, "story-reviewer": {"model": "opus", "effort": "xhigh"}}
+PREVIOUS_DEFAULTS = {"reviewer": [{"model": "opus", "effort": "medium"}], "story-reviewer": [{"model": "opus", "effort": "high"}]}
 
 def defaults() -> dict:
     return {k: dict(v) for k, v in DEFAULTS.items()}
@@ -34,6 +35,14 @@ def parse(spec: Optional[str]) -> dict:
         out[agent].update(cfg)
     return out
 
+def overrides(spec: Optional[str]) -> dict:
+    full = parse(spec)
+    return {agent: full[agent] for agent in (json.loads(spec) if spec else {})}
+
+def resolved_effort(agent: str, cfg: dict) -> Optional[str]:
+    return cfg.get("effort") or DEFAULTS.get(agent, {}).get("effort")
+
 def agent_line(agent: str, cfg: dict) -> str:
     line = "AGENT: turnstile:%s model=%s" % (agent, cfg["model"])
-    return line + (" effort=%s" % cfg["effort"] if cfg.get("effort") else "")
+    effort = resolved_effort(agent, cfg)
+    return line + (" effort=%s" % effort if effort else "")

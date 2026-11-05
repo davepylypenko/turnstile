@@ -113,12 +113,11 @@ class Init(unittest.TestCase):
         init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
         d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
         written = json.loads((d / "state.json").read_text())["epic"]["models"]
-        self.assertEqual(written, models.DEFAULTS); self.assertEqual(written["reviewer"], {"model": "opus", "effort": "xhigh"})
-        self.assertEqual(written["story-reviewer"], {"model": "opus", "effort": "xhigh"}); self.assertEqual(written["investigator"]["model"], "haiku")
+        self.assertEqual(written, {})
         m = init_cmd.build_state(opts(self.ws, self.knowledge, models='{"reviewer":{"model":"opus","effort":"high"},"tester":{"model":"opus"}}'))["epic"]["models"]
-        self.assertEqual(m["reviewer"], {"model": "opus", "effort": "high"}); self.assertEqual(m["tester"], {"model": "opus", "effort": None})
-        self.assertEqual(m["implementer"], models.DEFAULTS["implementer"]); self.assertEqual(sorted(m), sorted(models.DEFAULTS))
+        self.assertEqual(m, {"reviewer": {"model": "opus", "effort": "high"}, "tester": {"model": "opus", "effort": None}})
         self.assertEqual(models.parse('{"reviewer":{"effort":null}}')["reviewer"], {"model": "opus", "effort": None})
+        self.assertEqual(models.overrides('{"reviewer":{"effort":null}}'), {"reviewer": {"model": "opus", "effort": None}}); self.assertEqual(models.overrides(None), {})
         for bad in ["not json", "[]", '{"nobody":{"model":"opus"}}', '{"reviewer":{"model":"gpt"}}', '{"reviewer":{"effort":"max"}}',
                     '{"reviewer":{"tools":"x"}}', '{"reviewer":{}}', '{"reviewer":"opus"}']:
             with self.assertRaises(TurnstileError, msg=bad): models.parse(bad)

@@ -81,11 +81,11 @@ class Run(unittest.TestCase):
         from turnstile_cli import state
         rc, out = self.run_brief("reviewer", "REVIEW-1", self.all_vars("reviewer")); self.assertEqual(rc, 0)
         self.assertIn("AGENT: turnstile:reviewer model=opus effort=xhigh\n", out)  # no epic.models in the fixture: defaults
-        self.assertIn("Deep review skill: `/code-review xhigh` — invoke it with that level", (self.d / "briefs" / "REVIEW-1.md").read_text())
+        self.assertIn("Deep review skill: `/code-review xhigh` — invoke it as written", (self.d / "briefs" / "REVIEW-1.md").read_text())
         rc, out = self.run_brief("implementer", "MYD-10", self.all_vars("implementer")); self.assertIn("AGENT: turnstile:implementer model=sonnet\n", out)
         rc, out = self.run_brief("investigator", "I", self.all_vars("investigator")); self.assertIn("AGENT: turnstile:investigator model=haiku\n", out)
         rc, out = self.run_brief("story-reviewer", "STORY-S1-review", self.all_vars("story-reviewer")); self.assertIn("model=opus effort=xhigh\n", out)
-        self.assertIn("Story review skill: `/code-review xhigh` — invoke it with that level", (self.d / "briefs" / "STORY-S1-review.md").read_text())
+        self.assertIn("Story review skill: `/code-review xhigh` — invoke it as written", (self.d / "briefs" / "STORY-S1-review.md").read_text())
         d = json.loads((self.d / "state.json").read_text()); d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "high"}, "implementer": {"model": "haiku", "effort": "low"}}
         (self.d / "state.json").write_text(state.dumps(d))
         rc, out = self.run_brief("reviewer", "REVIEW-1-r2", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=opus effort=high\n", out)
@@ -108,14 +108,41 @@ class Run(unittest.TestCase):
         (self.d / "state.json").write_text(state.dumps(d))
         config.save_user({"review_skill": "/my-review", "story_review_skill": "/my-story-review", "models": {"reviewer": {"model": "sonnet", "effort": "low"}}})
         rc, out = self.run_brief("reviewer", "REVIEW-3", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
-        text = (self.d / "briefs" / "REVIEW-3.md").read_text(); self.assertIn("Deep review skill: `/my-review low`", text); self.assertNotIn("/pdf-review:run", text)
-        self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=low\n", out)
+        text = (self.d / "briefs" / "REVIEW-3.md").read_text(); self.assertIn("Deep review skill: `/my-review` — invoke it as written", text); self.assertNotIn("/pdf-review:run", text)
+        self.assertNotIn("/my-review low", text); self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=low\n", out)
         rc, out = self.run_brief("story-reviewer", "STORY-S1-review-r2", self.all_vars("story-reviewer"))
-        self.assertIn("Story review skill: `/my-story-review xhigh`", (self.d / "briefs" / "STORY-S1-review-r2.md").read_text())
+        story = (self.d / "briefs" / "STORY-S1-review-r2.md").read_text(); self.assertIn("Story review skill: `/my-story-review` — invoke it as written", story); self.assertNotIn("xhigh", story)
+        self.assertIn("AGENT: turnstile:story-reviewer model=opus effort=xhigh\n", out)
         config.save_user({"models": {"reviewer": {"model": "sonnet", "effort": None}}})
-        rc, out = self.run_brief("reviewer", "REVIEW-4", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=sonnet\n", out)
-        self.assertIn("Deep review skill: `/pdf-review:run ` — invoke", (self.d / "briefs" / "REVIEW-4.md").read_text())
+        rc, out = self.run_brief("reviewer", "REVIEW-4", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=xhigh\n", out)
+        self.assertIn("Deep review skill: `/pdf-review:run` — invoke it as written", (self.d / "briefs" / "REVIEW-4.md").read_text())
+        config.save_user({"models": {"reviewer": {"model": "sonnet", "effort": None}}, "review_skill": "/code-review"})
+        rc, out = self.run_brief("reviewer", "REVIEW-5", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=sonnet effort=xhigh\n", out)
+        self.assertIn("Deep review skill: `/code-review xhigh` — invoke it as written", (self.d / "briefs" / "REVIEW-5.md").read_text())
+        config.save_user({"models": {"story-reviewer": {"model": "opus", "effort": "high"}}})
+        rc, out = self.run_brief("story-reviewer", "STORY-S1-review-r3", self.all_vars("story-reviewer"))
+        self.assertIn("Story review skill: `/code-review high` — invoke", (self.d / "briefs" / "STORY-S1-review-r3.md").read_text()); self.assertIn("effort=high\n", out)
         self.assertFalse(any(p.name.endswith(".json") and p.name not in ("state.json", ".sync.json") for p in self.d.iterdir()))
+    def test_pre_041_epic_models_render_the_current_reviewer_defaults(self):
+        from turnstile_cli import state
+        d = json.loads((self.d / "state.json").read_text())
+        d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "medium"}, "story-reviewer": {"model": "opus", "effort": "high"}}
+        (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = self.run_brief("reviewer", "REVIEW-OLD", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
+        self.assertIn("Deep review skill: `/code-review xhigh`", (self.d / "briefs" / "REVIEW-OLD.md").read_text()); self.assertIn("AGENT: turnstile:reviewer model=opus effort=xhigh\n", out)
+        rc, out = self.run_brief("story-reviewer", "STORY-OLD", self.all_vars("story-reviewer")); self.assertEqual(rc, 0, out)
+        self.assertIn("Story review skill: `/code-review xhigh`", (self.d / "briefs" / "STORY-OLD.md").read_text()); self.assertIn("AGENT: turnstile:story-reviewer model=opus effort=xhigh\n", out)
+        d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "high"}}; (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = self.run_brief("reviewer", "REVIEW-EPIC", self.all_vars("reviewer")); self.assertIn("AGENT: turnstile:reviewer model=opus effort=high\n", out)
+        self.assertIn("Deep review skill: `/code-review high`", (self.d / "briefs" / "REVIEW-EPIC.md").read_text())
+    def test_var_cannot_override_the_review_skill_or_its_level(self):
+        from turnstile_cli.errors import TurnstileError
+        for key in ("review_skill", "story_review_skill", "review_effort"):
+            with self.assertRaises(TurnstileError) as cm: brief_cmd.parse_vars(["%s=/evil" % key])
+            self.assertIn("--var %s is not accepted" % key, str(cm.exception)); self.assertIn("turnstile config", str(cm.exception))
+            rc, out = self.run_brief("reviewer", "REVIEW-VAR-" + key, self.all_vars("reviewer") + ["%s=/evil" % key])
+            self.assertEqual(rc, 2); self.assertIn("MISSING --var %s is not accepted" % key, out); self.assertFalse((self.d / "briefs" / ("REVIEW-VAR-%s.md" % key)).exists())
+        self.assertEqual(brief_cmd.parse_vars(["scope=x"]), {"scope": "x"})
     def test_tester_brief_requires_test_user(self):
         rc, out = self.run_brief("tester", "ENV-S1", [v for v in self.all_vars("tester") if not v.startswith("test_user=")])
         self.assertEqual(rc, 2); self.assertIn("MISSING placeholder test_user", out)

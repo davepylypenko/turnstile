@@ -305,6 +305,10 @@ class BashGuard(unittest.TestCase):
     def test_malformed_payload_blocks(self):
         for payload in ("{}", "[]", "not json", json.dumps({"tool_input": {"command": 5}}), json.dumps({"tool_input": "x"})):
             self.assertEqual(hook("guard_bash.py", payload, self.ws).returncode, 2, payload)
+        for cwd in (7, True, [str(self.ws)], {"a": 1}):
+            for where in (self.ws, pathlib.Path(tempfile.mkdtemp())):
+                r = hook("guard_bash.py", json.dumps({"tool_input": {"command": "ls"}, "cwd": cwd}), where)
+                self.assertEqual(r.returncode, 2, (cwd, where)); self.assertIn("guard crashed", r.stderr)
 
     def test_hooks_json_wraps_commands_to_fail_closed(self):
         h = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
@@ -450,15 +454,43 @@ class SlackRecorder(unittest.TestCase):
         r = hook("post_slack.py", {"tool_input": {"channel_id": None, "message": self.MSG}, "tool_response": self.OK, "cwd": str(self.ws)}, self.ws, env=self.git)
         self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("slack send to ? ts 1760000000.123456 for jsfiller#1", self.ledger())
 
-    def test_held_lock_warns_and_records_nothing(self):
-        import fcntl
+    def test_held_lock_is_retried_then_reported_as_unrecorded(self):
+        import fcntl, threading, time
         with open(str(self.ws / "delivery" / ".state.lock"), "a") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            r = self.post(self.MSG)
-        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("holds the state lock", r.stderr); self.assertIn("1760000000.123456", r.stderr)
-        self.assertEqual(self.ledger(), ""); self.assertEqual(self.state()["awaiting_human"], [])
-        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
+            t0 = time.monotonic(); r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="0.6")); waited = time.monotonic() - t0
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertGreaterEqual(waited, 0.6)
+        msg = json.loads(r.stdout)["systemMessage"]
+        self.assertTrue(msg.startswith("turnstile: Slack message sent (ts 1760000000.123456) but not recorded: state lock not acquired within 0.6s"), msg)
+        self.assertIn("TurnstileError: another turnstile process holds", msg); self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
+        self.assertIn("not recorded", r.stderr); self.assertEqual(self.ledger(), ""); self.assertEqual(self.state()["awaiting_human"], [])
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, ""); self.assertEqual(r.stdout, "")
         self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1", self.ledger())
+        with open(str(self.ws / "delivery" / ".state.lock"), "a") as f:  # released inside the window: the send is recorded
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            threading.Timer(0.4, lambda: fcntl.flock(f.fileno(), fcntl.LOCK_UN)).start()
+            r = hook("post_slack.py", self.payload(self.MSG + " again"), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="3"))
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, ""); self.assertEqual(self.ledger().count("slack send"), 2)
+
+    def test_lock_failure_other_than_contention_names_the_exception(self):
+        (self.ws / "delivery" / ".state.lock").mkdir()
+        r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="0.3"))
+        self.assertEqual(r.returncode, 0, r.stderr); msg = json.loads(r.stdout)["systemMessage"]
+        self.assertIn("IsADirectoryError", msg); self.assertNotIn("another turnstile process", msg); self.assertEqual(self.ledger(), "")
+
+    def payload(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
+        return {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "tool_response": self.OK, "cwd": str(self.ws)}
+
+    def test_real_hook_command_with_a_crashing_recorder_exits_zero_and_reports_the_send(self):
+        cmd = [x["command"] for m in json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]["PostToolUse"] for x in m["hooks"]][0]
+        (self.ws / "delivery" / "ledger.md").mkdir()  # ledger.append raises after the lock is taken
+        env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(ROOT), **self.git); env.pop("CLAUDE_PROJECT_DIR", None)
+        r = subprocess.run(["sh", "-c", cmd + " "], input=json.dumps(self.payload(self.MSG)), cwd=self.ws, capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("crashed", r.stderr)
+        msg = json.loads(r.stdout)["systemMessage"]; self.assertIn("sent (ts 1760000000.123456) but not recorded: post-send hook crashed (IsADirectoryError", msg)
+        self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
+        r = subprocess.run(["sh", "-c", cmd + " "], input=json.dumps(self.payload(self.MSG)), cwd=self.ws, capture_output=True, text=True, env=dict(env, CLAUDE_PLUGIN_ROOT="/nonexistent"))
+        self.assertEqual(r.returncode, 0)
 
     def test_commit_failure_is_a_warning_not_a_block(self):
         shutil.rmtree(self.ws / ".git")

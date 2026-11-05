@@ -8,16 +8,7 @@
     "github_org": null,
     "key": null,
     "knowledge": { "branch": null, "remote": "origin" },
-    "models": {
-      "comments-handler": { "effort": null, "model": "haiku" },
-      "deployer": { "effort": null, "model": "sonnet" },
-      "implementer": { "effort": null, "model": "sonnet" },
-      "investigator": { "effort": null, "model": "haiku" },
-      "reviewer": { "effort": "xhigh", "model": "opus" },
-      "stack-step": { "effort": null, "model": "haiku" },
-      "story-reviewer": { "effort": "xhigh", "model": "opus" },
-      "tester": { "effort": null, "model": "sonnet" }
-    },
+    "models": {},
     "plan": { "digest": null, "path": "plan.md", "submitted_at": null },
     "repos": {},
     "review_skill": null,

@@ -340,7 +340,7 @@ def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> N
 def _recompute_next_actions(data: dict) -> None:
     for pid, pr in data["prs"].items():
         repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-        pr["next_action"] = rules.next_action_pr(pr, repo)
+        pr["next_action"] = rules.next_action_pr(pr, repo, data["stories"].get(pr.get("story")))
     for sid, s in data["stories"].items():
         s["next_action"] = rules.next_action_story(s, data["prs"])
 

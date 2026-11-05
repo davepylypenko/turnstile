@@ -86,7 +86,7 @@ def build_state(o: InitOptions) -> dict:
     e["chat_language"] = o.chat_language
     e["board"] = {"artifact_url": o.board_url, "capabilities": ["db", "user"]}
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
-    e["models"] = models.parse(o.models)
+    e["models"] = models.overrides(o.models)
     e["knowledge"] = {"branch": epic_branch_name(o.epic), "remote": "origin"}
     if o.story_mode not in ("stack", "trunk"):
         raise TurnstileError("--story-mode must be stack or trunk (got %r)" % o.story_mode)

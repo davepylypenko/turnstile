@@ -49,7 +49,10 @@ class SkillFiles(unittest.TestCase):
         for name in ("reviewer", "story-reviewer"):
             agent = (ROOT / "agents" / (name + ".md")).read_text(); brief = (REFS / "briefs" / (name + ".md")).read_text()
             self.assertIn("BLOCKED: review skill", agent); self.assertIn("BLOCKED: review skill", brief)
-        self.assertIn("{{review_skill}} {{review_effort}}", (REFS / "briefs" / "reviewer.md").read_text()); self.assertIn("{{story_review_skill}} {{review_effort}}", (REFS / "briefs" / "story-reviewer.md").read_text())
+        self.assertIn("`{{review_skill}}{{review_effort}}` — invoke it as written", (REFS / "briefs" / "reviewer.md").read_text())
+        self.assertIn("`{{story_review_skill}}{{review_effort}}` — invoke it as written", (REFS / "briefs" / "story-reviewer.md").read_text())
+        for doc in (text, readme): self.assertIn("other skill", doc)
+        self.assertIn("resolved effort", text)
         self.assertIn("turnstile config", (ROOT / "templates" / "CLAUDE.md.workspace").read_text())
     def test_attach_and_sync_are_documented(self):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); ws = (ROOT / "templates" / "CLAUDE.md.workspace").read_text()

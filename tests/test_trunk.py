@@ -84,6 +84,10 @@ class TrunkRules(unittest.TestCase):
         out = rules.check_story(s, "DONE", merged(), FIXD["stories"], bugs=[], awaiting=[DONE], flag="pwr-x"); self.assertTrue(any("control-arm run" in m for m in out), out)
         s = reviewed(env_runs=[run("treatment"), run("control")])
         self.assertEqual(rules.check_story(s, "DONE", merged(), FIXD["stories"], bugs=[], awaiting=[DONE], flag="pwr-x"), [])
+    def test_ready_pr_in_a_trunk_story_is_told_to_send_without_waiting(self):
+        p = {"_id": "jsfiller#1", "state": "READY", "story": "S1", "head": H, "evidence": {}}
+        self.assertNotIn("once story", rules.next_action_pr(p, FIXD["epic"]["repos"]["jsfiller"], trunk_story("IN_PROGRESS")))
+        self.assertIn("once story S1 is DONE", rules.next_action_pr(p, FIXD["epic"]["repos"]["jsfiller"], story("IN_PROGRESS")))
     def test_next_actions_and_stack_mode_untouched(self):
         self.assertIn("MERGED", rules.next_action_story(trunk_story("IN_PROGRESS"), {})); self.assertIn("both arms", rules.next_action_story(trunk_story("ENV_TESTING"), {}))
         self.assertIn("deploy the stack top", rules.next_action_story(story("IN_PROGRESS"), {}))

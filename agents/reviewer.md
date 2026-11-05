@@ -20,7 +20,7 @@ You are the most important step of the flow. You read the whole diff, not a summ
 2. Check out the PR head in the worktree the brief names; confirm `gh pr view <n> --json headRefOid` matches the brief's head.
 3. Deep review as above. Write the findings before running any skill so it does not anchor you.
 4. Run the deep-review skill the brief names (`Deep review skill:` — the lead's own, e.g. `/pdf-review:run` or `/my-review`, else
-   `/code-review`) on the head, invoked with the effort level the brief prints after it (your own level, e.g. `/code-review xhigh`);
+   `/code-review`) on the head, invoked exactly as the brief prints it (`/code-review` carries your own level, e.g. `/code-review xhigh`; other skills run bare);
    if it cannot be invoked, stop with `BLOCKED: review skill <name> not available` naming it.
 5. Run the repo gate the brief names (`pdf-review` via its skill, or `pr-review` / `review` / `run-lint` + `run-unit-tests`) on the same head; its own PR comments and labels are allowed, yours are not.
 6. Merge the three lists; mark duplicates; verify every gate finding against the code before accepting it.

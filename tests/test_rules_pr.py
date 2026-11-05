@@ -192,3 +192,13 @@ class NextAction(unittest.TestCase):
         repo = FIX["epic"]["repos"]["jsfiller"]
         p = pr_with(); self.assertIn("deep review", rules.next_action_pr(p, repo))
         p = pr_with(**FULL); p["state"] = "READY"; self.assertIn("lead", rules.next_action_pr(p, repo))
+    def test_ready_hint_waits_for_the_story_only_in_stack_mode(self):
+        repo = FIX["epic"]["repos"]["jsfiller"]; p = pr_with(**FULL); p["state"] = "READY"
+        send = "send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
+        stack = dict(FIX["stories"]["S1"], state="IN_PROGRESS")
+        self.assertEqual(rules.next_action_pr(p, repo, stack), "once story S1 is DONE (or `human_review: per_pr`), " + send)
+        self.assertEqual(rules.next_action_pr(p, repo, dict(stack, state="ENV_TESTING")), "once story S1 is DONE (or `human_review: per_pr`), " + send)
+        for story in (dict(stack, mode="trunk"), dict(stack, mode="trunk", state="ENV_TESTING"), dict(stack, state="DONE"), dict(stack, human_review="per_pr"), None):
+            self.assertEqual(rules.next_action_pr(p, repo, story), send, story)
+        p["blocked_by"] = "jsfiller#0"
+        self.assertEqual(rules.next_action_pr(p, repo, dict(stack, mode="trunk")), send + " (blocked by jsfiller#0)")

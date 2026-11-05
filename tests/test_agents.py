@@ -29,7 +29,7 @@ class Agents(unittest.TestCase):
         # lead rules 2026-10-19 / 2026-10-26: cheapest model that does the job; the frontmatter and epic.models say the same thing
         self.assertEqual({k: (v["model"], v["effort"]) for k, v in models.DEFAULTS.items()}, EXPECTED)
         template = json.loads((ROOT / "templates" / "state.json").read_text())["epic"]["models"]
-        self.assertEqual(template, models.DEFAULTS)
+        self.assertEqual(template, {})
         for p in AGENTS.glob("*.md"):
             fm = parse_frontmatter(p.read_text())
             self.assertIn(fm["model"], models.MODELS, p.name)

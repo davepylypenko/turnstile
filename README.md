@@ -162,7 +162,7 @@ type `config` (old and new value) that the lead approves with the usual line, af
 it; `turnstile config unset <key> [--epic]` (or `=default`) resets. `TURNSTILE_USER_CONFIG` is the lead's shell variable: the Bash
 guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
-the story-reviewer's; each is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default); neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+the story-reviewer's; `/code-review` is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default), any other skill bare, exactly as the brief prints it; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
 
 ```

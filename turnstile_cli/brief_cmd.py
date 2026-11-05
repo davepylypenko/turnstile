@@ -18,10 +18,17 @@ def render(template: str, vars: dict) -> Tuple[str, List[str]]:
         missing.add(k); return m.group(0)
     return PLACEHOLDER.sub(sub, template), sorted(missing)
 
+RESERVED_VARS = ("review_skill", "story_review_skill", "review_effort")
+
+def review_effort(eff: dict, agent: str) -> str:
+    skill = eff["story_review_skill" if agent == "story-reviewer" else "review_skill"]["value"]
+    effort = models.resolved_effort(agent, eff["models"][agent])
+    return " " + effort if effort and skill == config.DEFAULT_REVIEW_SKILL else ""
+
 def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Optional[dict] = None) -> dict:
     epic = data.get("epic") or {}; env = epic.get("environment") or {}; eff = eff or config.effective(data)
     return {"review_skill": eff["review_skill"]["value"], "story_review_skill": eff["story_review_skill"]["value"],
-            "review_effort": eff["models"][agent]["effort"] or "",
+            "review_effort": review_effort(eff, agent),
             "flag": epic.get("flag") or "none", "arm": "treatment",
             "epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
             "variant": env.get("variant") or "", "desk": env.get("desk") or "", "env_recipe": env.get("recipe") or "", "agent": agent,
@@ -60,6 +67,8 @@ def parse_vars(var_list: List[str]) -> dict:
         k, v = item.split("=", 1)
         if not PLACEHOLDER.match("{{%s}}" % k):
             raise TurnstileError("bad placeholder name %r" % k)
+        if k in RESERVED_VARS:
+            raise TurnstileError("--var %s is not accepted: the review skill and its level come from `turnstile config` (user or --epic layer)" % k)
         out[k] = v
     return out
 
