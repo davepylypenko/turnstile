@@ -73,3 +73,12 @@ class E2E(unittest.TestCase):
         (self.ws / "delivery" / "ledger.md").write_text("- stray\n")
         r = sh(["status"], cwd=self.ws, env=self.gh_env)
         self.assertIn("uncommitted changes in delivery (1 file(s)): ledger.md", r.stdout)
+
+    def test_status_hides_an_old_open_send_entry(self):
+        # 2026-11-05: `send` entries are no longer opened or approved; one left in a pre-0.4.1 state file is not pending
+        p = self.ws / "delivery" / "state.json"; d = json.loads(p.read_text())
+        d["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "created_at": "x", "payload": None},
+                               {"id": "ah-2", "owner": "lead", "type": "merge", "pr": "jsfiller#1", "created_at": "x", "payload": None}]
+        p.write_text(json.dumps(d))
+        r = sh(["status"], cwd=self.ws, env=self.gh_env)
+        self.assertIn("awaiting humans: 1\n  ah-2 lead merge jsfiller#1", r.stdout); self.assertNotIn("ah-1", r.stdout)

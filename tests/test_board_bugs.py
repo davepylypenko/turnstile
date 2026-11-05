@@ -23,7 +23,7 @@ class BoardBugs(unittest.TestCase):
         self.assertIn("ts(o.updatedAt) > ts(b.updated_at || b.created_at)", html)
         self.assertNotIn("bugOverrides[b.id] && BUG_STATES.includes(bugOverrides[b.id].status)) ? bugOverrides[b.id].status : b.state", html)
     def test_awaiting_tile_counts_only_open_entries(self):
-        self.assertIn("filter(a => !a.approved_at && !a.voided_at && !a.consumed_at).length", self.html())
+        self.assertIn("filter(a => a.type !== 'send' && !a.approved_at && !a.voided_at && !a.consumed_at).length", self.html())
     def test_snapshot_does_not_destroy_an_open_dropdown(self):
         html = self.html()
         self.assertIn("document.activeElement", html); self.assertIn("matches('select.bug')", html); self.assertIn("renderPending", html)

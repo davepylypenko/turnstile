@@ -40,7 +40,8 @@ class Board(unittest.TestCase):
         for s in ("h.reviewer_notified === false", "reviewers not notified (push-only rework: the lead decides)", "'re-requested ' + ", "re-request the thread authors"):
             self.assertIn(s, tpl, s)
         for s in ("Jira mapping", "reviewer not notified", "role=\"tablist\"", "aria-selected", "PLANNED:'var(--planned)'", "todo:'var(--todo)'",
-                  "(r.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563"):
+                  "(r.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563",
+                  "a.type !== 'send' && !a.approved_at", "a.type === 'send' ? '<span class=\"muted\">legacy send entry</span>'"):
             self.assertIn(s, tpl, s)
         d = pathlib.Path(tempfile.mkdtemp())
         data = json.loads(json.dumps(FIX)); data["stories"]["S1"]["evidence"] = {"env_test": {"report": "r"}}

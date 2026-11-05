@@ -18,7 +18,7 @@ def open_send_entry(data: dict, pid: str):
     return None
 
 def message_text(ti: dict) -> str:
-    return ti.get("text") or ti.get("message") or ""
+    return str(ti.get("text") or ti.get("message") or "")
 
 def channel_of(ti: dict) -> str:
-    return ti.get("channel_id") or ti.get("channel") or ""
+    return str(ti.get("channel_id") or ti.get("channel") or "")

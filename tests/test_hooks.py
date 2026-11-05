@@ -308,10 +308,12 @@ class BashGuard(unittest.TestCase):
 
     def test_hooks_json_wraps_commands_to_fail_closed(self):
         h = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
-        cmds = [x["command"] for ev in h.values() for m in ev for x in m["hooks"]]
-        self.assertTrue(cmds)
-        for c in cmds:
+        pre = [x["command"] for m in h["PreToolUse"] for x in m["hooks"]]
+        self.assertTrue(pre)
+        for c in pre:
             self.assertTrue(c.endswith("|| exit 2"), c)
+        for c in [x["command"] for m in h["PostToolUse"] for x in m["hooks"]]:
+            self.assertTrue(c.endswith("|| exit 0"), c)  # a recorder error after a successful send never reaches the model as a block
         matchers = [m["matcher"] for m in h["PreToolUse"]]
         self.assertIn("Edit|Write|MultiEdit", matchers)
         self.assertEqual([m for m in matchers if "slack" in m.lower()], [])  # 2026-11-05: no PreToolUse gate on Slack sends
@@ -434,8 +436,29 @@ class SlackRecorder(unittest.TestCase):
         r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
         shutil.rmtree(self.ws / "delivery")
         r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
-        for payload in ("{}", "[]", "not json", json.dumps({"tool_input": "x", "cwd": str(self.ws)})):
-            self.assertEqual(hook("post_slack.py", payload, self.ws).returncode, 0, payload)
+        for payload in ("{}", "[]", "not json", json.dumps({"tool_input": "x", "cwd": str(self.ws)}),
+                        json.dumps({"tool_input": None, "tool_response": self.OK, "cwd": str(self.ws)}),
+                        json.dumps({"tool_input": {"channel_id": None, "message": self.MSG}, "tool_response": self.OK, "cwd": str(self.ws)}),
+                        json.dumps({"tool_input": {"channel_id": "C1", "text": self.MSG}, "tool_response": self.OK}),
+                        json.dumps({"tool_input": {"channel_id": ["C1"], "text": {"a": 1}}, "tool_response": self.OK, "cwd": 7})):
+            r = hook("post_slack.py", payload, self.ws); self.assertEqual(r.returncode, 0, payload); self.assertEqual(r.stderr, "", payload)
+
+    def test_non_string_text_and_channel_still_record(self):
+        r = hook("post_slack.py", {"tool_input": {"channel_id": 12, "text": 34}, "tool_response": self.OK, "cwd": str(self.ws)}, self.ws, env=self.git)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
+        self.assertIn("slack send to 12 ts 1760000000.123456\n", self.ledger())
+        r = hook("post_slack.py", {"tool_input": {"channel_id": None, "message": self.MSG}, "tool_response": self.OK, "cwd": str(self.ws)}, self.ws, env=self.git)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("slack send to ? ts 1760000000.123456 for jsfiller#1", self.ledger())
+
+    def test_held_lock_warns_and_records_nothing(self):
+        import fcntl
+        with open(str(self.ws / "delivery" / ".state.lock"), "a") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            r = self.post(self.MSG)
+        self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("holds the state lock", r.stderr); self.assertIn("1760000000.123456", r.stderr)
+        self.assertEqual(self.ledger(), ""); self.assertEqual(self.state()["awaiting_human"], [])
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
+        self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1", self.ledger())
 
     def test_commit_failure_is_a_warning_not_a_block(self):
         shutil.rmtree(self.ws / ".git")

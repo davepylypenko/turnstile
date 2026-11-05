@@ -58,7 +58,7 @@ function tiles() {
   const prs = Object.values(STATE.prs || {});
   const t = PR_STATES.map(s => ({ n: prs.filter(p => p.state === s).length, l: s }));
   t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: openBugs(), l: 'Open bugs' },
-         { n: (STATE.awaiting_human || []).filter(a => !a.approved_at && !a.voided_at && !a.consumed_at).length, l: 'Awaiting humans' });
+         { n: (STATE.awaiting_human || []).filter(a => a.type !== 'send' && !a.approved_at && !a.voided_at && !a.consumed_at).length, l: 'Awaiting humans' });
   document.getElementById('tiles').innerHTML = t.map(x => '<div class="tile"><b>' + x.n + '</b><span>' + esc(x.l) + '</span></div>').join('');
 }
 function gateCell(p) {
@@ -140,7 +140,7 @@ async function connectBugsDb() {
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
-    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tabs button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });

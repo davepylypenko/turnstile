@@ -118,7 +118,7 @@ class SkillFiles(unittest.TestCase):
         for name, doc in docs.items():
             self.assertIn("lead's word in chat", doc, name); self.assertIn("never blocks", doc, name)
             for stale in ["guard_slack", "--companions", "--approved <ah-id>` (READY", "Slack stays lead-approved", "Slack messages always wait for the lead",
-                          "permissionDecision", "one send per approval", "One approval = one message", "`send` on READY", "opens `send`"]:
+                          "permissionDecision", "one send per approval", "One approval = one message", "`send` on READY", "opens `send`", "block sends"]:
                 self.assertNotIn(stale, doc, "%s still says %r" % (name, stale))
         for name in ("README", "SKILL", "lifecycle"):
             self.assertIn("--slack <permalink> --reviewers", docs[name], name)

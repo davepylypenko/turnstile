@@ -108,7 +108,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pr["evidence"]["gate"], {"name": "pdf-review", "head": H, "result": "pass", "run": "https://r/1"})
         self.assertEqual(pr["evidence"]["head_verified"]["verified"], True)
         self.assertEqual(pr["evidence"]["head_verified"]["head"], H)
-        self.assertEqual(pr["next_action"], "send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertEqual(pr["next_action"], "once the story is DONE (or `per_pr`), send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
         self.assertEqual(data["awaiting_human"], [])  # 2026-11-05: no send entry; the lead's word in chat is the only gate on Slack
         self.assertIn("READY", (self.d / "ledger.md").read_text())
         self.assertEqual((self.d / "board.html").read_text(), "<html>0</html>")

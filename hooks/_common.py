@@ -37,7 +37,7 @@ def managed(cwd: str, *starts) -> bool:
     anchor = os.environ.get("CLAUDE_PROJECT_DIR")
     for s in ([anchor] if anchor else []) + [cwd or "."] + [x for x in starts if x]:
         try:
-            cur = pathlib.Path(os.path.expanduser(s)).resolve()
+            cur = pathlib.Path(os.path.expanduser(str(s))).resolve()
         except (OSError, RuntimeError, ValueError):
             continue
         if any((d / MARKER).exists() for d in [cur] + list(cur.parents)):

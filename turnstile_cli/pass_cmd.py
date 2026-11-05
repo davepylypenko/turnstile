@@ -614,7 +614,7 @@ def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
             if entry is None:
                 raise TurnstileError("unknown awaiting_human id %s" % ah_id)
             if entry.get("voided_at"):
-                raise TurnstileError("%s was voided at %s (head changed); a new entry is opened on the next READY" % (ah_id, entry["voided_at"]))
+                raise TurnstileError("%s was voided at %s (head changed); the next pass that needs the lead opens a new entry" % (ah_id, entry["voided_at"]))
             if entry.get("approved_at"):
                 print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
             entry["approved_at"] = _now()

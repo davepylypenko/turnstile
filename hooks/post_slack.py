@@ -1,7 +1,7 @@
 """PostToolUse for Slack sends: a recorder, never a gate. When the tool result carries a message_ts the message went out, so a
 ledger line is written, an open `send` entry of a mentioned PR (old state files) is marked used, the board rendered and
 delivery/ committed. Outside a workspace, without a message_ts or with unreadable state nothing is recorded. Exit code is always 0."""
-import datetime, json, re, sys
+import contextlib, datetime, json, re, sys
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 from _common import read_payload, delivery_dir, plugin_root, managed
 from _slack import prs_in, open_send_entry, message_text, channel_of
@@ -32,7 +32,11 @@ def main():
             return
     except Exception:
         return
-    with st_mod.locked(delivery):
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(st_mod.locked(delivery, wait=False))
+        except Exception:
+            warn("another turnstile process holds the state lock; the message is sent but unrecorded (ts %s)." % ts); return
         try:
             st = st_mod.load(delivery / "state.json")
         except Exception:

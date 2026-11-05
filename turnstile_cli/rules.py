@@ -221,7 +221,7 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
             return "request Copilot review, close its threads"
         return "pass READY"
     if s == "READY":
-        return ("send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
+        return ("once the story is DONE (or `per_pr`), send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
                 + (" (blocked by %s)" % pr["blocked_by"] if pr.get("blocked_by") else ""))
     if s == "ON_HUMAN_REVIEW":
         if ((pr.get("evidence") or {}).get("human") or {}).get("reviewer_notified") is False:

@@ -139,8 +139,8 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
 - Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
   Tester credentials never touch a file: the tester reads `TURNSTILE_TEST_PASSWORD` or the keychain item
   `turnstile-test-password` at login (`skills/turnstile/references/env/pdffiller-dev.md` § Credentials).
-- Hooks that block sends, merges, reviewer requests, force pushes, PR comments, review submissions, resolving human
-  threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
+- Hooks that record Slack sends (never blocking them) and block merges, reviewer requests, force pushes, PR comments,
+  review submissions, resolving human threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
   a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead), and the re-request
   of a REWORK PR's thread authors passes once every thread has its reply and the head is clean (lead rule 2026-10-14).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
