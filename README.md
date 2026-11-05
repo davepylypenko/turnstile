@@ -147,7 +147,7 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
   anything reaches human review.
 - Token discipline (lead rules 2026-10-19, 2026-10-26): every agent's model and effort come from `epic.models`
   (`init --models`, defaults: implementer, deployer, tester sonnet; stack-step, comments-handler, investigator haiku;
-  reviewer opus medium; story-reviewer opus high) and `turnstile brief` prints them on its `AGENT:` line; agents start
+  reviewer opus xhigh; story-reviewer opus xhigh) and `turnstile brief` prints them on its `AGENT:` line; agents start
   one at a time, in parallel only across different repositories; waiting on GitHub or CI goes through `Monitor` or a background command,
   never a cron or watchdog, with no interim "still waiting" messages to the lead; the repo gate runs once per head and is
   re-run only for P1/P2 findings; the orchestrator dispatches and never reads diffs or runs suites itself.
@@ -162,7 +162,7 @@ type `config` (old and new value) that the lead approves with the usual line, af
 it; `turnstile config unset <key> [--epic]` (or `=default`) resets. `TURNSTILE_USER_CONFIG` is the lead's shell variable: the Bash
 guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
-the story-reviewer's; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+the story-reviewer's; each is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default); neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
 
 ```
@@ -284,7 +284,7 @@ when any differs (a push without `pass pr` leaves `state.json` stale); `--offlin
 and DONE refuses it.
 
 Agents (`agents/`): implementer, deployer, tester (sonnet; the tester does Figma parity), stack-step, comments-handler,
-investigator (haiku), reviewer (opus, medium), story-reviewer (opus, high); the frontmatter defaults equal `epic.models`,
+investigator (haiku), reviewer (opus, xhigh), story-reviewer (opus, xhigh); the frontmatter defaults equal `epic.models`,
 which `init --models '{"<agent>":{"model":…,"effort":…}}'` overrides per epic (model `haiku|sonnet|opus|fable`, effort
 `low|medium|high|xhigh`). Launched as `turnstile:<name>` with the model and effort from the `AGENT:` line of
 `turnstile brief`.

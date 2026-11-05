@@ -7,7 +7,7 @@ EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULTS = {"implementer": {"model": "sonnet", "effort": None}, "deployer": {"model": "sonnet", "effort": None},
             "tester": {"model": "sonnet", "effort": None}, "stack-step": {"model": "haiku", "effort": None},
             "comments-handler": {"model": "haiku", "effort": None}, "investigator": {"model": "haiku", "effort": None},
-            "reviewer": {"model": "opus", "effort": "medium"}, "story-reviewer": {"model": "opus", "effort": "high"}}
+            "reviewer": {"model": "opus", "effort": "xhigh"}, "story-reviewer": {"model": "opus", "effort": "xhigh"}}
 
 def defaults() -> dict:
     return {k: dict(v) for k, v in DEFAULTS.items()}

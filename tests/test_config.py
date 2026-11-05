@@ -95,7 +95,7 @@ class Config(unittest.TestCase):
         self.assertEqual(self.io.commits, []); self.assertNotIn("models", self.data()["epic"]); self.assertNotIn("review_skill", self.data()["epic"])
         self.assertEqual([p.name for p in self.d.iterdir()], [".state.lock", "state.json"]); self.assertFalse((self.d / "ledger.md").exists())
         self.assertFalse(str(self.user).startswith(str(self.d)))
-        rc, out = out_of(config_cmd.unset, self.d, "models.reviewer", io=self.io); self.assertEqual(rc, 0); self.assertIn("models.reviewer = opus:medium (default)", out)
+        rc, out = out_of(config_cmd.unset, self.d, "models.reviewer", io=self.io); self.assertEqual(rc, 0); self.assertIn("models.reviewer = opus:xhigh (default)", out)
         self.assertEqual(json.loads(self.user.read_text()), {"review_skill": "/my-review"})
         rc, out = out_of(config_cmd.set_, self.d, "review_skill=default", io=self.io); self.assertEqual(json.loads(self.user.read_text()), {})
 

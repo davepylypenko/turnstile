@@ -27,7 +27,7 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "--help"], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("--epic", out.stdout)
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
-        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:medium (default)", out.stdout)
+        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:xhigh (default)", out.stdout)
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "review_skill=/x", "--epic"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
         self.assertEqual(out.returncode, 2); self.assertIn("MISSING no .turnstile", out.stdout)
     def test_sync_attach_and_no_push_are_wired(self):
