@@ -21,6 +21,7 @@ def render(template: str, vars: dict) -> Tuple[str, List[str]]:
 def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Optional[dict] = None) -> dict:
     epic = data.get("epic") or {}; env = epic.get("environment") or {}; eff = eff or config.effective(data)
     return {"review_skill": eff["review_skill"]["value"], "story_review_skill": eff["story_review_skill"]["value"],
+            "review_effort": eff["models"][agent]["effort"] or "",
             "flag": epic.get("flag") or "none", "arm": "treatment",
             "epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
             "variant": env.get("variant") or "", "desk": env.get("desk") or "", "env_recipe": env.get("recipe") or "", "agent": agent,

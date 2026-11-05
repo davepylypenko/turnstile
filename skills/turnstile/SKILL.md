@@ -79,7 +79,7 @@ for the whole epic or team, opens a `config` entry — the lead approves it with
 `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions ("use my
 /x-review skill", "reviewer on sonnet") map to the same commands; never ask what the user file already answers; `turnstile status`
 prints the effective line. `review_skill` is what the `reviewer` runs for the deep review (`--deep-review` report), `story_review_skill`
-the story-reviewer's; neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+the story-reviewer's, each invoked at the agent's effort (`/code-review xhigh` by default); neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 
 ## attach (continue an epic from another machine)
 
@@ -102,8 +102,8 @@ session cannot drive it) and run `## preferences` there (this person's user file
    `TURNSTILE_TEST_PASSWORD` or the keychain item `turnstile-test-password` itself at login (`references/env/pdffiller-dev.md`
    § Credentials); the tester resolves its Figma tools per `references/tools/figma.md` and comes back `BLOCKED` when the
    environment has none. Model and effort come from the `AGENT:` line the command printed (`AGENT: turnstile:reviewer
-   model=opus effort=medium`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
-   Agent tool — never pick a model yourself. The reviewer briefs carry the resolved review skill. One agent per task;
+   model=opus effort=xhigh`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
+   Agent tool — never pick a model yourself. The reviewer briefs carry the resolved review skill and the agent's effort as its argument. One agent per task;
    parallel agents only across different repositories (`## Token discipline`).
 3. On return read the ≤ 8-line reply (the report is in `reports/`), record the facts with `turnstile pass` / `bug`,
    then reply to the lead. Never paste agent output into the chat.

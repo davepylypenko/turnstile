@@ -34,8 +34,8 @@ class SkillFiles(unittest.TestCase):
                            "epic.models", "--models", "AGENT:"]:
                 self.assertIn(needle, doc, needle)
             self.assertNotIn("xhigh, story-reviewer fable", doc); self.assertNotIn("the rest opus", doc)
-        self.assertIn("model=opus effort=medium", text); self.assertNotIn("reviewer opus xhigh", text)
-        self.assertNotIn("reviewer (opus, xhigh)", readme); self.assertIn("story-reviewer (opus, high)", readme)
+        self.assertIn("model=opus effort=xhigh", text); self.assertNotIn("effort=medium", text)
+        self.assertIn("reviewer (opus, xhigh)", readme); self.assertIn("story-reviewer (opus, xhigh)", readme); self.assertNotIn("story-reviewer opus high", readme)
     def test_preferences_section_three_layers_and_review_skill_semantics(self):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
         self.assertIn("## preferences", text); self.assertIn("### Per-person overrides", readme)
@@ -49,7 +49,7 @@ class SkillFiles(unittest.TestCase):
         for name in ("reviewer", "story-reviewer"):
             agent = (ROOT / "agents" / (name + ".md")).read_text(); brief = (REFS / "briefs" / (name + ".md")).read_text()
             self.assertIn("BLOCKED: review skill", agent); self.assertIn("BLOCKED: review skill", brief)
-        self.assertIn("{{review_skill}}", (REFS / "briefs" / "reviewer.md").read_text()); self.assertIn("{{story_review_skill}}", (REFS / "briefs" / "story-reviewer.md").read_text())
+        self.assertIn("{{review_skill}} {{review_effort}}", (REFS / "briefs" / "reviewer.md").read_text()); self.assertIn("{{story_review_skill}} {{review_effort}}", (REFS / "briefs" / "story-reviewer.md").read_text())
         self.assertIn("turnstile config", (ROOT / "templates" / "CLAUDE.md.workspace").read_text())
     def test_attach_and_sync_are_documented(self):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); ws = (ROOT / "templates" / "CLAUDE.md.workspace").read_text()

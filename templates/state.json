@@ -13,9 +13,9 @@
       "deployer": { "effort": null, "model": "sonnet" },
       "implementer": { "effort": null, "model": "sonnet" },
       "investigator": { "effort": null, "model": "haiku" },
-      "reviewer": { "effort": "medium", "model": "opus" },
+      "reviewer": { "effort": "xhigh", "model": "opus" },
       "stack-step": { "effort": null, "model": "haiku" },
-      "story-reviewer": { "effort": "high", "model": "opus" },
+      "story-reviewer": { "effort": "xhigh", "model": "opus" },
       "tester": { "effort": null, "model": "sonnet" }
     },
     "plan": { "digest": null, "path": "plan.md", "submitted_at": null },
