@@ -433,13 +433,35 @@ class SlackRecorder(unittest.TestCase):
         self.assertIn("for jsfiller#1, locales#5", text); self.assertIn("for jsfiller#1, jsfiller#99", text)
         self.assertEqual(text.count("slack send"), len(cases))
 
-    def test_unreadable_state_records_nothing_and_exits_zero(self):
+    def unrecorded(self, r, reason):
+        self.assertEqual(r.returncode, 0, r.stderr); out = json.loads(r.stdout); msg = out["systemMessage"]
+        self.assertIn("Slack message sent (ts 1760000000.123456) but not recorded: " + reason, msg); self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
+        self.assertEqual(out["hookSpecificOutput"], {"hookEventName": "PostToolUse", "additionalContext": msg}); self.assertIn("not recorded", r.stderr)
+        self.assertEqual(self.ledger(), "")
+
+    def test_unreadable_state_is_reported_and_an_absent_one_is_silent(self):
         (self.ws / "delivery" / "state.json").write_text("{not json")
-        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, ""); self.assertEqual(self.ledger(), "")
+        self.unrecorded(self.post(self.MSG), "state.json unreadable (TurnstileError: state file is not valid JSON")
+        (self.ws / "delivery" / "state.json").write_text("")
+        self.unrecorded(self.post(self.MSG), "state.json unreadable (TurnstileError")
+        (self.ws / "delivery" / "state.json").unlink(); (self.ws / "delivery" / "state.json").mkdir()
+        self.unrecorded(self.post(self.MSG), "state.json unreadable (IsADirectoryError")
+        (self.ws / "delivery" / "state.json").rmdir()
         self.write({"prs": [], "awaiting_human": [{"pr": "jsfiller#1", "type": "send", "approved_at": "x"}]})
         r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
         shutil.rmtree(self.ws / "delivery")
-        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, ""); self.assertEqual(r.stdout, "")
+        (self.ws / ".turnstile").write_text("")
+        self.unrecorded(self.post(self.MSG), "state.json unreadable (TurnstileError: ")
+        self.assertIn("is empty", json.loads(self.post(self.MSG).stdout)["systemMessage"])
+
+    def test_import_failure_after_the_ts_is_read_is_reported(self):
+        root = pathlib.Path(tempfile.mkdtemp()); shutil.copytree(ROOT / "hooks", root / "hooks"); shutil.copytree(ROOT / "turnstile_cli", root / "turnstile_cli")
+        (root / "turnstile_cli" / "pass_cmd.py").unlink()
+        r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, CLAUDE_PLUGIN_ROOT=str(root)))
+        self.unrecorded(r, "state.json unreadable (ImportError: cannot import name 'pass_cmd'")
+
+    def test_malformed_payloads_are_silent(self):
         for payload in ("{}", "[]", "not json", json.dumps({"tool_input": "x", "cwd": str(self.ws)}),
                         json.dumps({"tool_input": None, "tool_response": self.OK, "cwd": str(self.ws)}),
                         json.dumps({"tool_input": {"channel_id": None, "message": self.MSG}, "tool_response": self.OK, "cwd": str(self.ws)}),
@@ -462,7 +484,8 @@ class SlackRecorder(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr); self.assertGreaterEqual(waited, 0.6)
         msg = json.loads(r.stdout)["systemMessage"]
         self.assertTrue(msg.startswith("turnstile: Slack message sent (ts 1760000000.123456) but not recorded: state lock not acquired within 0.6s"), msg)
-        self.assertIn("TurnstileError: another turnstile process holds", msg); self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
+        self.assertIn("LockHeld: another turnstile process holds", msg); self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"], {"hookEventName": "PostToolUse", "additionalContext": msg})
         self.assertIn("not recorded", r.stderr); self.assertEqual(self.ledger(), ""); self.assertEqual(self.state()["awaiting_human"], [])
         r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, ""); self.assertEqual(r.stdout, "")
         self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1", self.ledger())
@@ -472,11 +495,17 @@ class SlackRecorder(unittest.TestCase):
             r = hook("post_slack.py", self.payload(self.MSG + " again"), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="3"))
         self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, ""); self.assertEqual(self.ledger().count("slack send"), 2)
 
-    def test_lock_failure_other_than_contention_names_the_exception(self):
-        (self.ws / "delivery" / ".state.lock").mkdir()
-        r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="0.3"))
-        self.assertEqual(r.returncode, 0, r.stderr); msg = json.loads(r.stdout)["systemMessage"]
-        self.assertIn("IsADirectoryError", msg); self.assertNotIn("another turnstile process", msg); self.assertEqual(self.ledger(), "")
+    def test_lock_failure_other_than_contention_is_reported_at_once(self):
+        import time
+        lock = self.ws / "delivery" / ".state.lock"; lock.mkdir()
+        t0 = time.monotonic(); r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="3")); waited = time.monotonic() - t0
+        self.unrecorded(r, "state lock not acquired within 3.0s (IsADirectoryError"); self.assertLess(waited, 2.0)
+        self.assertNotIn("another turnstile process", r.stdout)
+        lock.rmdir(); lock.touch(); lock.chmod(0o444)
+        if os.geteuid() != 0:
+            t0 = time.monotonic(); r = hook("post_slack.py", self.payload(self.MSG), self.ws, env=dict(self.git, TURNSTILE_LOCK_WAIT="3")); waited = time.monotonic() - t0
+            self.unrecorded(r, "state lock not acquired within 3.0s (PermissionError"); self.assertLess(waited, 2.0)
+        lock.chmod(0o644)
 
     def payload(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
         return {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "tool_response": self.OK, "cwd": str(self.ws)}
@@ -491,6 +520,9 @@ class SlackRecorder(unittest.TestCase):
         self.assertTrue(msg.endswith("; add the ledger line by hand"), msg)
         r = subprocess.run(["sh", "-c", cmd + " "], input=json.dumps(self.payload(self.MSG)), cwd=self.ws, capture_output=True, text=True, env=dict(env, CLAUDE_PLUGIN_ROOT="/nonexistent"))
         self.assertEqual(r.returncode, 0)
+        root = pathlib.Path(tempfile.mkdtemp()); shutil.copytree(ROOT / "hooks", root / "hooks")  # no turnstile_cli: managed() crashes before the ts is read
+        r = subprocess.run(["sh", "-c", cmd + " "], input=json.dumps(self.payload(self.MSG)), cwd=self.ws, capture_output=True, text=True, env=dict(env, CLAUDE_PLUGIN_ROOT=str(root)))
+        self.assertEqual(r.returncode, 0); self.assertEqual(r.stdout, ""); self.assertIn("crashed (ModuleNotFoundError", r.stderr); self.assertNotIn("sent (ts", r.stderr)
 
     def test_commit_failure_is_a_warning_not_a_block(self):
         shutil.rmtree(self.ws / ".git")

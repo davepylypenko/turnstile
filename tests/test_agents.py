@@ -26,7 +26,7 @@ class Agents(unittest.TestCase):
             self.assertEqual(fm["name"], name); self.assertEqual(fm["model"], model, name); self.assertEqual(fm.get("effort"), effort, name)
             self.assertTrue(len(fm["description"]) > 40, name); self.assertTrue("tools" in fm or "disallowedTools" in fm, name)
     def test_frontmatter_matches_epic_models_defaults_and_the_allowed_set(self):
-        # lead rules 2026-10-19 / 2026-10-26: cheapest model that does the job; the frontmatter and epic.models say the same thing
+        # lead rules 2026-10-19 / 2026-10-26: cheapest model that does the job; the frontmatter equals models.DEFAULTS, epic.models holds only overrides
         self.assertEqual({k: (v["model"], v["effort"]) for k, v in models.DEFAULTS.items()}, EXPECTED)
         template = json.loads((ROOT / "templates" / "state.json").read_text())["epic"]["models"]
         self.assertEqual(template, {})

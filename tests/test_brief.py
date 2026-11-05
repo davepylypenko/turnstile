@@ -126,7 +126,8 @@ class Run(unittest.TestCase):
     def test_pre_041_epic_models_render_the_current_reviewer_defaults(self):
         from turnstile_cli import state
         d = json.loads((self.d / "state.json").read_text())
-        d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "medium"}, "story-reviewer": {"model": "opus", "effort": "high"}}
+        from turnstile_cli import models
+        d["epic"]["models"] = dict(models.defaults(), reviewer={"model": "opus", "effort": "medium"}, **{"story-reviewer": {"model": "opus", "effort": "high"}})
         (self.d / "state.json").write_text(state.dumps(d))
         rc, out = self.run_brief("reviewer", "REVIEW-OLD", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
         self.assertIn("Deep review skill: `/code-review xhigh`", (self.d / "briefs" / "REVIEW-OLD.md").read_text()); self.assertIn("AGENT: turnstile:reviewer model=opus effort=xhigh\n", out)

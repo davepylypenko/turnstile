@@ -1,6 +1,6 @@
 import contextlib, fcntl, hashlib, json, os, pathlib, tempfile
 from dataclasses import dataclass
-from .errors import TurnstileError, StaleStateError
+from .errors import TurnstileError, StaleStateError, LockHeld
 
 
 @dataclass
@@ -71,7 +71,7 @@ def locked(delivery: pathlib.Path, wait: bool = True):
         try:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except OSError:
-            raise TurnstileError("another turnstile process holds %s; retry" % path)
+            raise LockHeld("another turnstile process holds %s; retry" % path)
         try:
             yield
         finally:

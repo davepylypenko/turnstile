@@ -1,7 +1,8 @@
 """PostToolUse for Slack sends: a recorder, never a gate. When the tool result carries a message_ts the message went out, so a
 ledger line is written, an open `send` entry of a mentioned PR (old state files) is marked used, the board rendered and
-delivery/ committed. Outside a workspace, without a message_ts or with unreadable state nothing is recorded. A send that went
-out but could not be recorded is reported to the model as a systemMessage. Exit code is always 0."""
+delivery/ committed. Outside a workspace, without a message_ts or without a state.json nothing is recorded. A send that went
+out but could not be recorded (state.json unreadable, lock not acquired, crash) is reported to the user as a systemMessage
+and to the model as PostToolUse additionalContext. Exit code is always 0."""
 import contextlib, datetime, json, os, re, sys, time
 sys.path.insert(0, os.path.dirname(__file__))
 from _common import read_payload, delivery_dir, plugin_root, managed
@@ -23,7 +24,11 @@ def warn(msg: str) -> None:
 
 def unrecorded(ts: str, reason: str) -> None:
     warn("Slack message sent (ts %s) but not recorded: %s" % (ts, reason))
-    print(json.dumps({"systemMessage": "turnstile: Slack message sent (ts %s) but not recorded: %s; add the ledger line by hand" % (ts, reason)}))
+    text = "turnstile: Slack message sent (ts %s) but not recorded: %s; add the ledger line by hand" % (ts, reason)
+    print(json.dumps({"systemMessage": text, "hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
+
+def unreadable(ts: str, e: Exception) -> None:
+    unrecorded(ts, "state.json unreadable (%s: %s)" % (type(e).__name__, e))
 
 def lock_wait() -> float:
     try:
@@ -31,15 +36,17 @@ def lock_wait() -> float:
     except ValueError:
         return LOCK_WAIT_DEFAULT
 
-def acquire(stack, st_mod, delivery):
+def acquire(stack, st_mod, held, delivery):
     deadline = time.monotonic() + lock_wait()
     while True:
         try:
             stack.enter_context(st_mod.locked(delivery, wait=False)); return None
-        except Exception as e:
+        except held as e:
             if time.monotonic() >= deadline:
                 return "%s: %s" % (type(e).__name__, e)
             time.sleep(LOCK_POLL)
+        except Exception as e:
+            return "%s: %s" % (type(e).__name__, e)
 
 def main():
     p = read_payload(); ti = p.get("tool_input") or {}
@@ -54,18 +61,20 @@ def main():
         delivery = delivery_dir(cwd)
         sys.path.insert(0, str(plugin_root()))
         from turnstile_cli import state as st_mod, ledger, pass_cmd
-        if not (delivery / "state.json").exists():
-            return
-    except Exception:
+        from turnstile_cli.errors import LockHeld
+        present = (delivery / "state.json").exists()
+    except Exception as e:
+        unreadable(ts, e); return
+    if not present:
         return
     with contextlib.ExitStack() as stack:
-        reason = acquire(stack, st_mod, delivery)
+        reason = acquire(stack, st_mod, LockHeld, delivery)
         if reason:
             unrecorded(ts, "state lock not acquired within %.1fs (%s)" % (lock_wait(), reason)); return
         try:
             st = st_mod.load(delivery / "state.json")
-        except Exception:
-            return
+        except Exception as e:
+            unreadable(ts, e); return
         now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ")
         line = "slack send to %s ts %s" % (channel, ts) + (" for %s" % ", ".join(ids) if ids else "")
         for pid in ids:
@@ -89,5 +98,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        unrecorded(SEEN["ts"] or "?", "post-send hook crashed (%s: %s)" % (type(e).__name__, e))
+        reason = "post-send hook crashed (%s: %s)" % (type(e).__name__, e)
+        unrecorded(SEEN["ts"], reason) if SEEN["ts"] else warn(reason)
     sys.exit(0)

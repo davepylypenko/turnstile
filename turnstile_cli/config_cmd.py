@@ -22,6 +22,7 @@ def list_(delivery: Optional[pathlib.Path]) -> int:
 def _apply_epic(e: dict, key: str, parsed, reset: bool) -> None:
     section, agent = config.parse_key(key)
     if section == "models":
+        config.drop_frozen_defaults(e)
         m = e.setdefault("models", {})
         if reset:
             m.pop(agent, None)

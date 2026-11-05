@@ -86,15 +86,32 @@ def _model_entry(raw, default: dict, where: str) -> dict:
         raise TurnstileError("%s holds an invalid model entry %r" % (where, raw))
     return entry
 
+def _is_default(agent: str, entry: dict) -> bool:
+    return entry in [models.DEFAULTS[agent]] + models.PREVIOUS_DEFAULTS.get(agent, [])
+
+def is_frozen_set(epic_models) -> bool:
+    """Before 0.4.1 `init` wrote every agent's then default into epic.models; only that full-set shape reads default-valued
+    entries as defaults, a partial set holds deliberate overrides."""
+    return isinstance(epic_models, dict) and set(models.DEFAULTS) <= set(epic_models)
+
+def drop_frozen_defaults(epic: dict) -> None:
+    m = epic.get("models")
+    if not is_frozen_set(m):
+        return
+    for agent in list(m):
+        if agent in models.DEFAULTS and _is_default(agent, _model_entry(m[agent], models.DEFAULTS[agent], "epic.models.%s" % agent)):
+            del m[agent]
+
 def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
     user = load_user() if user is None else user
     epic = (data or {}).get("epic") or {}
+    frozen = is_frozen_set(epic.get("models"))
     out = {"models": {}}
     for agent, default in models.DEFAULTS.items():
         u = (user.get("models") or {}).get(agent); e = (epic.get("models") or {}).get(agent)
         if u is not None:
             entry, source = _model_entry(u, default, "user config models.%s" % agent), "user"
-        elif e is not None and _model_entry(e, default, "epic.models.%s" % agent) not in [default] + models.PREVIOUS_DEFAULTS.get(agent, []):
+        elif e is not None and not (frozen and _is_default(agent, _model_entry(e, default, "epic.models.%s" % agent))):
             entry, source = _model_entry(e, default, "epic.models.%s" % agent), "epic"
         else:
             entry, source = dict(default), "default"
@@ -112,13 +129,20 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
 def fmt_model(entry: dict) -> str:
     return entry["model"] + (":" + entry["effort"] if entry.get("effort") else "")
 
+def fmt_resolved(agent: str, entry: dict) -> str:
+    return fmt_model(dict(entry, effort=models.resolved_effort(agent, entry)))
+
+def _source_note(agent: str, entry: dict) -> str:
+    inherited = not entry.get("effort") and models.resolved_effort(agent, entry)
+    return entry["source"] + ("; effort = agent default" if inherited else "")
+
 def lines(eff: dict) -> list:
-    out = ["models.%s = %s (%s)" % (a, fmt_model(m), m["source"]) for a, m in eff["models"].items()]
+    out = ["models.%s = %s (%s)" % (a, fmt_resolved(a, m), _source_note(a, m)) for a, m in eff["models"].items()]
     return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
 
 def one_line(eff: dict) -> str:
     overrides = ["%s models.%s" % (m["source"], a) for a, m in eff["models"].items() if m["source"] != "default"]
     overrides += ["%s %s" % (eff[k]["source"], k) for k in SKILL_KEYS if eff[k]["source"] != "default"]
-    return "models %s · %s · flag=%s (%s)" % (" ".join("%s=%s" % (a, fmt_model(m)) for a, m in eff["models"].items()),
+    return "models %s · %s · flag=%s (%s)" % (" ".join("%s=%s" % (a, fmt_resolved(a, m)) for a, m in eff["models"].items()),
                                              " · ".join("%s=%s" % (k, eff[k]["value"]) for k in SKILL_KEYS), eff["flag"]["value"] or "none",
                                              "overrides: " + ", ".join(overrides) if overrides else "all defaults")

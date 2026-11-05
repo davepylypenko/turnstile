@@ -1,8 +1,9 @@
 import contextlib, io, json, os, pathlib, shutil, tempfile, unittest
 from unittest import mock
-from turnstile_cli import config, config_cmd, models, pass_cmd, reconcile, state
+from turnstile_cli import brief_cmd, config, config_cmd, init_cmd, models, pass_cmd, reconcile, state
 from turnstile_cli.errors import TurnstileError
 from tests.test_pass import FakeIO
+from tests.test_init import opts as init_opts
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "state_min.json"
@@ -29,8 +30,8 @@ class Config(unittest.TestCase):
         eff = config.effective(epic, {})
         self.assertEqual((eff["models"]["reviewer"]["effort"], eff["models"]["reviewer"]["source"]), ("high", "epic"))
         self.assertEqual(eff["models"]["implementer"]["source"], "default")  # equal to the default: not an override
-        old = {"epic": {"models": {"reviewer": {"model": "opus", "effort": "medium"}, "story-reviewer": {"model": "opus", "effort": "high"}}}}
-        for agent in ("reviewer", "story-reviewer"):  # an epic created before 0.4.1 froze the then defaults; they read as the current default
+        old = {"epic": {"models": dict(models.defaults(), reviewer={"model": "opus", "effort": "medium"}, **{"story-reviewer": {"model": "opus", "effort": "high"}})}}
+        for agent in ("reviewer", "story-reviewer"):  # an epic created before 0.4.1 froze every then default; the full set reads as the current defaults
             self.assertEqual(config.effective(old, {})["models"][agent], {"model": "opus", "effort": "xhigh", "source": "default"})
         self.assertIn("models.reviewer = opus:xhigh (default)", config.lines(config.effective(old, {}))); self.assertIn("(all defaults)", config.one_line(config.effective(old, {})))
         explicit = {"epic": {"models": {"reviewer": {"model": "opus", "effort": "high"}}}}
@@ -141,12 +142,62 @@ class Config(unittest.TestCase):
         rc, out = out_of(config_cmd.list_, self.d); self.assertIn("review_skill = /my-review (user)", out); self.assertIn("USER_CONFIG: %s" % self.user, out)
         rc, out = out_of(config_cmd.apply, None, "ah-1", io=self.io); self.assertEqual(rc, 2); self.assertIn("needs a delivery", out)
 
+    OLD_SET = dict(models.defaults(), reviewer={"model": "opus", "effort": "medium"}, **{"story-reviewer": {"model": "opus", "effort": "high"}})
+
+    def test_only_a_frozen_full_set_reads_old_defaults_as_defaults(self):
+        for agent, raw in [("reviewer", {"model": "opus", "effort": "medium"}), ("story-reviewer", {"model": "opus", "effort": "high"}), ("implementer", {"model": "sonnet", "effort": None})]:
+            eff = config.effective({"epic": {"models": {agent: raw}}}, {})["models"][agent]
+            self.assertEqual(eff, dict(raw, source="epic"), agent)
+        eff = config.effective({"epic": {"models": self.OLD_SET}}, {})["models"]
+        self.assertEqual({a: (m["effort"], m["source"]) for a, m in eff.items() if a in models.PREVIOUS_DEFAULTS}, {"reviewer": ("xhigh", "default"), "story-reviewer": ("xhigh", "default")})
+        self.assertTrue(all(m["source"] == "default" for m in eff.values()))
+        self.assertTrue(config.is_frozen_set(self.OLD_SET)); self.assertFalse(config.is_frozen_set({"reviewer": {"model": "opus", "effort": "medium"}})); self.assertFalse(config.is_frozen_set(None))
+        e = {"models": dict(self.OLD_SET, tester={"model": "opus", "effort": None})}; config.drop_frozen_defaults(e)
+        self.assertEqual(e["models"], {"tester": {"model": "opus", "effort": None}})
+        e = {"models": {"reviewer": {"model": "opus", "effort": "medium"}}}; config.drop_frozen_defaults(e); self.assertEqual(e["models"], {"reviewer": {"model": "opus", "effort": "medium"}})
+
+    def test_init_models_with_an_old_default_value_is_stored_and_honoured(self):
+        data = init_cmd.build_state(init_opts(self.tmp / "ws2", self.tmp / "kn", models='{"reviewer":{"effort":"medium"},"story-reviewer":{"model":"opus","effort":"high"}}'))
+        self.assertEqual(data["epic"]["models"], {"reviewer": {"model": "opus", "effort": "medium"}, "story-reviewer": {"model": "opus", "effort": "high"}})
+        eff = config.effective(data, {})
+        self.assertEqual(eff["models"]["reviewer"], {"model": "opus", "effort": "medium", "source": "epic"}); self.assertEqual(eff["models"]["story-reviewer"]["effort"], "high")
+        self.assertEqual(brief_cmd.builtins(data, self.d, "reviewer", "x", eff)["review_effort"], " medium")
+        self.assertIn("overrides: epic models.reviewer, epic models.story-reviewer", config.one_line(eff))
+
     def test_explicit_epic_override_beats_the_previous_default_rule(self):
-        d = self.data(); d["epic"]["models"] = {"reviewer": {"model": "opus", "effort": "medium"}}; (self.d / "state.json").write_text(state.dumps(d))
-        rc, out = out_of(config_cmd.list_, self.d); self.assertIn("models.reviewer = opus:xhigh (default)", out)
+        d = self.data(); d["epic"]["models"] = dict(self.OLD_SET); (self.d / "state.json").write_text(state.dumps(d))
+        rc, out = out_of(config_cmd.list_, self.d); self.assertIn("models.reviewer = opus:xhigh (default)", out); self.assertIn("models.story-reviewer = opus:xhigh (default)", out)
         out_of(config_cmd.set_, self.d, "models.reviewer=opus:high", epic=True, io=self.io); self.approve("ah-1")
         rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 0, out); self.assertIn("models.reviewer = opus:high (epic)", out)
         self.assertEqual(self.data()["epic"]["models"], {"reviewer": {"model": "opus", "effort": "high"}})
+        d = self.data(); d["epic"]["models"] = dict(self.OLD_SET); (self.d / "state.json").write_text(state.dumps(d))
+        out_of(config_cmd.set_, self.d, "models.story-reviewer=opus:high", epic=True, io=self.io); self.approve("ah-2")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 0, out); self.assertIn("models.story-reviewer = opus:high (epic)", out)
+        self.assertEqual(self.data()["epic"]["models"], {"story-reviewer": {"model": "opus", "effort": "high"}})
+        self.assertEqual(config.effective(self.data(), {})["models"]["reviewer"]["effort"], "xhigh")
+        d = self.data(); d["epic"]["models"] = dict(self.OLD_SET); (self.d / "state.json").write_text(state.dumps(d))
+        out_of(config_cmd.unset, self.d, "models.reviewer", epic=True, io=self.io); self.approve("ah-3")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-3", io=self.io); self.assertEqual(rc, 0, out); self.assertEqual(self.data()["epic"]["models"], {})
+
+    def test_story_reviewer_old_default_set_on_a_fresh_epic_is_honoured(self):
+        out_of(config_cmd.set_, self.d, "models.story-reviewer=opus:high", epic=True, io=self.io); self.approve("ah-1")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 0, out); self.assertIn("models.story-reviewer = opus:high (epic)", out)
+        self.assertEqual(self.data()["epic"]["models"], {"story-reviewer": {"model": "opus", "effort": "high"}})
+        eff = config.effective(self.data(), {}); self.assertEqual(eff["models"]["story-reviewer"], {"model": "opus", "effort": "high", "source": "epic"})
+        self.assertEqual(brief_cmd.builtins(self.data(), self.d, "story-reviewer", "x", eff)["review_effort"], " high")
+
+    def test_list_shows_the_resolved_effort_like_the_agent_line(self):
+        out_of(config_cmd.set_, self.d, "models.reviewer=sonnet", io=self.io); out_of(config_cmd.set_, self.d, "models.tester=haiku", io=self.io)
+        rc, out = out_of(config_cmd.list_, self.d)
+        self.assertIn("models.reviewer = sonnet:xhigh (user; effort = agent default)", out); self.assertIn("models.tester = haiku (user)", out)
+        self.assertIn("models.story-reviewer = opus:xhigh (default)", out)
+        eff = config.effective(self.data())
+        self.assertIn("reviewer=sonnet:xhigh", config.one_line(eff)); self.assertIn("tester=haiku ", config.one_line(eff))
+        self.assertEqual(models.agent_line("reviewer", eff["models"]["reviewer"]), "AGENT: turnstile:reviewer model=sonnet effort=xhigh")
+        out_of(config_cmd.set_, self.d, "models.reviewer=sonnet:low", io=self.io)
+        rc, out = out_of(config_cmd.list_, self.d); self.assertIn("models.reviewer = sonnet:low (user)", out)
+        self.assertIn("models.reviewer = sonnet:xhigh (user; effort = agent default)", "\n".join(config.lines(config.effective(None, {"models": {"reviewer": {"model": "sonnet", "effort": None}}}))))
+        self.assertIn("models.reviewer = sonnet:xhigh (user)", "\n".join(config.lines(config.effective(None, {"models": {"reviewer": {"model": "sonnet"}}}))))
     def test_flag_is_epic_only(self):
         rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", io=self.io); self.assertEqual(rc, 2); self.assertIn("flag is epic state", out); self.assertFalse(self.user.exists())
         rc, out = out_of(config_cmd.set_, self.d, "flag=pwr-l2f", epic=True, io=self.io); self.assertEqual(rc, 0, out); self.approve("ah-1")
