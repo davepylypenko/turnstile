@@ -20,9 +20,10 @@ the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHE
 - The lead's word is an `awaiting_human` entry approved **by the lead typing** `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
   in the Claude Code prompt (the `!` runs outside the model). You report the pending ids (`turnstile status`) and ask
   for that line; you never run it, no agent runs it, and the Bash guard refuses any spelling of it.
-- Send, a reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
-  A Slack send also gets a UI confirmation from the lead (the Slack guard answers `ask`), and must go through the real
-  send tool so the PostToolUse hook records `used_at` — drafts and scheduled sends never count.
+- A reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
+- Slack sends are gated by the lead's word in chat only (2026-11-05): compose the message, show it, send it when the lead
+  says so. The plugin records the send (a ledger line from the PostToolUse hook, `send` evidence via `pass … --slack`) and
+  never blocks, asks or demands a command before it.
 - A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). So does the GitHub re-request of
   the thread authors once every thread has its reply and the head is clean (lead rule 2026-10-14). Issue comments, review
   submissions, resolving a human thread and every other human reviewer request are refused for everyone (the repo gate's marker
@@ -47,7 +48,6 @@ On `OK` it prints `JIRA: <ticket> → <status>` (perform it through the Atlassia
 `turnstile jira-synced <repo#n> "<status>"`) and `BOARD: publish <path> → <url>` (publish the file with the Artifact tool
 and that `url`; a first publish loads the `artifact-capabilities` skill, declares `db` + `user`, and the url is recorded
 at `init --board-url` or by the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate.
-READY with a paired PR outside the epic (locales): `--companions locales#5` so one Slack message may mention both.
 A PR the implementer opened enters the state as `DEV` with `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch
 and base from GitHub; refused when the base is not the story branch or another PR of the story, or the brief is missing).
 
@@ -132,10 +132,10 @@ is deployed to the story's slot (dispatch `deployer`).
 5. `turnstile pass story S DONE --approved <story_done ah-id>` — needs the last run `--full` with 0 fails, parity pass,
    `env_test.head == deploy.head ==` the current stack top, every bug of the story `done`, every PR ≥ READY. Steps 1, 3, 4
    and 5 ask GitHub for the head of every PR in `deploy.heads` and refuse on any drift (never `--offline` at DONE).
-6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story and the sends of this
-   story's units wait for the lead's words (`start_story` / `send` entries — there is no `--reason` way to start a story,
-   and a parallel start needs `parallel_with` in the approved plan; then `pass pr … ON_HUMAN_REVIEW --head …
-   --slack <permalink> --reviewers a,b --approved <ah-id>` after the message went out).
+6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story waits for the lead's
+   `start_story` entry (there is no `--reason` way to start a story, and a parallel start needs `parallel_with` in the
+   approved plan); the sends of this story's units go out on the lead's word in chat, then `pass pr … ON_HUMAN_REVIEW
+   --head … --slack <permalink> --reviewers a,b` records each one.
 
 ## trunk mode (`stories.<S>.mode: trunk`, `epic.flag`)
 
@@ -167,8 +167,8 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
    green on it), `turnstile status` prints the exact `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f
    'reviewers[]=<login>'` for the thread authors (the reviewers who commented on the threads in this round). The comments-handler
    (or you) runs it — no lead approval; the guard allows exactly that request and refuses non-authors, an open Copilot thread, a
-   stale head and any other human request. Slack stays lead-approved.
-5. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` — no Slack, no `--approved`: the replies
+   stale head and any other human request. Slack sends go out on the lead's word in chat only.
+5. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` — no Slack message, no `--slack`: the replies
    and the re-request are the notification; the pass checks GitHub (`reviewRequests`, request newer than the replies). A push-only
    rework (no reviewer comment since the PR last went to humans) takes no `--rerequested`: it records `reviewer_notified: false`,
    the board reads "reviewers not notified", and you tell the lead, who decides whether to ping.

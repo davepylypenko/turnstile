@@ -98,31 +98,20 @@ class ToHuman(unittest.TestCase):
         p = pr_with(**FULL); p["state"] = "READY"; return p
     def human(self, approved="ah-1"):
         return {"head": H, "slack_permalink": PERMALINK, "sent_head": H, "approved": approved, "open_threads": 0, "approvals": []}
-    def test_needs_permalink_and_approval(self):
+    def test_needs_permalink_only(self):
         out = rules.check_pr(self.ready(), "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])
         self.assertTrue(any("slack_permalink" in m for m in out))
-        self.assertTrue(any("approved" in m for m in out))
-    def test_approved_entry_must_exist_match_and_be_approved(self):
-        p = self.ready(); p["evidence"]["human"] = self.human("ah-NOPE")
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND])
-        self.assertTrue(any("ah-NOPE" in m for m in out), out)
-        p["evidence"]["human"] = self.human("ah-1")
-        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=DONE_STORIES), [])
-        unapproved = dict(SEND, approved_at=None)
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[unapproved])
-        self.assertTrue(any("approved_at" in m for m in out), out)
-        other_pr = dict(SEND, pr="docs-platform#2")
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[other_pr])
-        self.assertTrue(any("ah-1" in m for m in out), out)
-        wrong_type = dict(SEND, type="merge")
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[wrong_type])
-        self.assertTrue(any("type send" in m for m in out), out)
-        consumed = dict(SEND, consumed_at="x")
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[consumed])
-        self.assertTrue(any("consumed" in m for m in out), out)
-        voided = dict(SEND, voided_at="x")
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[voided])
-        self.assertTrue(any("voided" in m for m in out), out)
+        self.assertFalse(any("approved" in m for m in out), out)
+    def test_no_send_entry_is_required(self):
+        # 2026-11-05: Slack sends are gated by the lead's word in chat only; no awaiting_human entry, no --approved
+        p = self.ready(); p["evidence"]["human"] = self.human(None)
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[], stories=DONE_STORIES), [])
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=None, stories=DONE_STORIES), [])
+        p["evidence"]["human"] = self.human("ah-NOPE")
+        self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[], stories=DONE_STORIES), [])
+        for old in (dict(SEND, approved_at=None), dict(SEND, consumed_at="x"), dict(SEND, voided_at="x"), dict(SEND, head=H2), dict(SEND, used_at=None)):
+            p["evidence"]["human"] = self.human("ah-1")
+            self.assertEqual(rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[old], stories=DONE_STORIES), [], old)
     def test_story_must_be_done_before_human_review_unless_per_pr(self):
         # R2-3: human review receives only stories that passed the story gates (spec §1.4, §4.2)
         p = self.ready(); p["evidence"]["human"] = self.human()
@@ -170,12 +159,8 @@ class ToHuman(unittest.TestCase):
         out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[REPLY])
         self.assertTrue(any("deep_review" in m for m in out), out)
 
-    def test_message_must_have_been_sent_through_the_guard(self):
-        # R2-13: the entry's used_at (set by the Slack PostToolUse hook on a real message_ts) and a Slack permalink
+    def test_permalink_must_be_a_slack_archive_url(self):
         p = self.ready(); p["evidence"]["human"] = self.human()
-        unused = dict(SEND); del unused["used_at"]
-        out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[unused], stories=DONE_STORIES)
-        self.assertEqual(out, ["MISSING awaiting_human ah-1 used_at (no Slack message went through the guarded tool for it)"])
         for bad in ("https://x", "http://pdffiller.slack.com/archives/C1/p1", "https://evil.com/pdffiller.slack.com/archives/C1/p1", "slack.com/archives/C1/p1"):
             p["evidence"]["human"]["slack_permalink"] = bad
             out = rules.check_pr(p, "ON_HUMAN_REVIEW", self.repo, FIX["prs"], awaiting=[SEND], stories=DONE_STORIES)

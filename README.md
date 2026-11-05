@@ -17,7 +17,7 @@ command, role-scoped agents and hooks that physically block forbidden actions.
 - git with **SSH commit signing** on (`gpg.format=ssh`, `commit.gpgsign=true`, a signing key): the Bash guard refuses
   `--no-gpg-sign`, and `pass` refuses a PR with an unsigned commit. `gpg.ssh.allowedSignersFile` is not needed.
 - A **knowledge repository** (any git clone with an `origin`) that will hold `delivery/` on an epic branch.
-- Optional, only if sends are to be guarded: Slack through an MCP whose tools match `mcp__*slack_send_message*` /
+- Optional, only if sends are to be recorded: Slack through an MCP whose tools match `mcp__*slack_send_message*` /
   `slack_schedule_message` (the `slack` plugin of the official marketplace does); Jira through an MCP exposing
   `transitionJiraIssue` / `editJiraIssue` / `createJiraIssue` / `addCommentToJiraIssue` (the Atlassian connector does).
 
@@ -193,15 +193,15 @@ turnstile status                                # reconcile with GitHub + where 
 turnstile pr add jsfiller#13222 --story S1 --ticket MYD-18075   # a new draft PR enters as DEV (head, branch, base from GitHub)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
-! TURNSTILE_LEAD=1 turnstile approve ah-3       # the lead types this in the Claude Code prompt; agents never do
-turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka --approved ah-3
+# the lead says "send" in chat; the message goes out through the Slack tool (the PostToolUse hook records it), then
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka
 turnstile jira-synced jsfiller#13222 "On Review"
 turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"      # opens no entry
 turnstile threads jsfiller#13222 --self-resolved PRRT_kwDOa --needs-lead PRRT_kwDOc --report reports/COMMENTS-13222.md   # one 'reply' entry per needs_lead thread
 gh api -X POST repos/pdffiller/jsfiller/pulls/13222/comments/2412345678/replies -f body='Fixed in 9f1c2a3b'   # self_resolved: at once
-! TURNSTILE_LEAD=1 turnstile approve ah-5       # the lead's word on the needs_lead thread; then its reply goes out the same way
+! TURNSTILE_LEAD=1 turnstile approve ah-3       # the lead's word on the needs_lead thread (typed in the Claude Code prompt; agents never do); then its reply goes out
 gh api -X POST repos/pdffiller/jsfiller/pulls/13222/requested_reviewers -f 'reviewers[]=isachivka'   # all replied + head clean: re-request the thread authors
-turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --rerequested isachivka   # no --slack/--approved from REWORK
+turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head 9f1c2a3b --ci success --gate pdf-review:pass --rerequested isachivka   # no --slack from REWORK
 turnstile pass pr jsfiller#13222 APPROVED --approvals isachivka --open-threads 0
 turnstile pass pr jsfiller#13222 MERGED --merged-sha <sha>
 turnstile pass story S1 IN_PROGRESS --approved ah-1                              # the lead's start_story word; no --reason bypass
@@ -252,18 +252,19 @@ reviewer's last comment; a newer one needs a new classification (which voids a `
 re-request): once every human thread in scope has our latest reply and Copilot reviewed the current head with 0 open threads (repos
 without Copilot: the gate check green on the head), the agents re-request review on GitHub from the reviewers who commented on the
 threads in this round — `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'`, no lead
-approval; Slack stays lead-approved. `turnstile status` prints that exact command while it has not happened for the head, then the
+approval; Slack sends are gated by the lead's word in chat only. `turnstile status` prints that exact command while it has not happened for the head, then the
 `--rerequested` pass. A push-only rework (no reviewer comment since the PR last went to humans) pings nobody: the return records
 `reviewer_notified: false`, the board reads "reviewers not notified", and the lead decides.
 
 ### The lead's word (`awaiting_human`)
 
-`pass` opens entries for the lead: `send` on READY, `merge` on APPROVED, `story_done` when a story
-enters ENV_TESTING, `start_story` for every PLANNED story whose `after` stories are DONE. Only the lead approves them
-(see "How the lead approves"). `pass … --approved <ah-id>` then requires an entry of the right type for that
-PR/story that is approved, not consumed and not voided; the pass consumes it. A `send` is voided when the PR drops
-back to AI_REVIEW (the word was for the old head). One approval allows exactly one Slack message, and the message must
-have gone out through the guarded tool (`used_at`) before the PR can be passed to ON_HUMAN_REVIEW. `plan` entries are
+`pass` opens entries for the lead: `merge` on APPROVED, `story_done` when a story enters ENV_TESTING, `start_story`
+for every PLANNED story whose `after` stories are DONE. Only the lead approves them (see "How the lead approves").
+`pass … --approved <ah-id>` then requires an entry of the right type for that PR/story that is approved, not consumed
+and not voided; the pass consumes it. Slack sends are gated by the lead's word in chat only (2026-11-05): READY opens no
+entry, the plugin records the send (a ledger line from the PostToolUse hook, `evidence.human` via `pass … --slack`) and
+never blocks it; a `send` entry left in an older state file is consumed or voided on the pass and never required (its
+`used_at` is still marked by the recorder). `plan` entries are
 opened by `plan-submitted`; no story leaves PLANNED until the newest one is approved and `plan.md` is unchanged. `reply`
 entries are opened by `turnstile threads`, one per `needs_lead` thread; each allows the GitHub replies on that thread only,
 never a Slack message, and is consumed when the PR returns to ON_HUMAN_REVIEW (voided on REWORK → DEV or a re-classification).
@@ -313,8 +314,8 @@ GitHub facts), `jira-synced` (validated against the PR's state), `brief` (render
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
-`--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b
---approved <ah-id>` (READY → ON_HUMAN_REVIEW only), `--rerequested a,b` (REWORK → ON_HUMAN_REVIEW only), `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--companions locales#5` (on READY), `--offline`, `--no-commit`.
+`--gate <name>:<pass|fail>[:<run-url>]`, `--copilot <open-threads>`, `--slack <permalink> --reviewers a,b`
+(READY → ON_HUMAN_REVIEW only), `--rerequested a,b` (REWORK → ON_HUMAN_REVIEW only), `--approvals a,b --open-threads N`, `--merged-sha`, `--reason`, `--offline`, `--no-commit`.
 `pass story` flags: `--approved`, `--reason`, `--build --head`, `--report --head --rounds [--not-clean]`,
 `--report --cases-pass N --cases-fail N [--cases-not-testable N] [--failed-cases a,b] --figma-parity pass|fail|not_testable_here --build --head [--full]`
 (a `--full` run's three counts must add up to `stories.<S>.test_cases`). Report paths are
@@ -371,17 +372,13 @@ inert — exit 0, nothing checked — except the Bash guard's universal safety r
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
   refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
   main-thread orchestrator (no `agent_id`) passes and records with `jira-synced`.
-- `guard_slack.py` (PreToolUse) blocks every Slack send/draft/schedule unless each PR it mentions has an approved,
-  unused `send` entry (PR `READY`) in `awaiting_human` (a `reply` entry never unlocks Slack) and the channel is that repo's review
-  channel (`epic.repos.<repo>.slack`). A paired PR the same message mentions (a `locales` PR, a repo outside
-  `epic.repos`) needs no entry of its own when the send entry lists it in `companions` (`pass pr <main> READY
-  --companions locales#5`); every refusal names the id it is about. For a DONE story it also asks GitHub for the head of
-  every PR in the story's `deploy.heads` and refuses when one moved (a push without `pass pr`); `gh` failing fails closed. It
-  only checks; missing or broken state fails closed.
-- `post_slack.py` (PostToolUse, same matcher) records the send once the tool result carries a `message_ts`: `used_at`,
-  `used_channel` and `message_ts` on the entry (one send per approval), a ledger line, a board render and a git commit
-  of `delivery/`. A denied or failed send leaves the approval usable. `pass … ON_HUMAN_REVIEW` requires the entry's
-  `used_at` and a permalink of the form `https://<workspace>.slack.com/archives/…`.
+- Slack sends are gated by the lead's word in chat only (2026-11-05); the plugin records them and never blocks. There is
+  no PreToolUse hook on Slack. `post_slack.py` (PostToolUse, matcher `mcp__.*slack_(send|schedule)_message.*`) records a
+  send once the tool result carries a `message_ts`: a ledger line `slack send to <channel> ts <ts>` plus ` for <pr ids>`
+  when the text mentions PRs, an old open `send` entry of a mentioned PR marked `used_at`/`used_channel`/`message_ts`, a
+  board render and a git commit of `delivery/`. It exits 0 in every case: outside a workspace, without a `message_ts`,
+  for any channel or text, and when the state cannot be read (then nothing is recorded). `pass … ON_HUMAN_REVIEW` requires
+  a permalink of the form `https://<workspace>.slack.com/archives/…`.
 - `guard_state_edit.py` blocks Edit/Write/MultiEdit on `state.json` and `ledger.md` (anywhere in a workspace session, or when the
   target lies in a workspace) unless the environment has `TURNSTILE_MIGRATION=1`.
 
@@ -396,9 +393,9 @@ only blocked for commands that pass through the model's tool calls. What holds t
   so a write that did not come through them is visible as drift: `turnstile reconcile` flags every `approved_at` whose
   ledger line is missing or lacks `approved_via: lead-terminal` (`approval_unlogged`), heads, checks, approvals and
   threads are compared with GitHub, and `status` lists uncommitted changes in `delivery/`;
-- the Slack guard checks the state **and** returns `permissionDecision: "ask"`, so the lead confirms every send in the UI;
-  a forged approval still needs the lead to click. This is the one control an agent cannot forge; approvals of
-  `start_story`/`story_done`/`send` entries in `state.json` are forgeable by a script file the guard never sees.
+- Slack sends are not gated by the plugin at all (2026-11-05): the lead's word in chat is the only gate, the PostToolUse
+  hook records every send that went out, and the ledger shows them. Approvals of `start_story`/`story_done` entries in
+  `state.json` are forgeable by a script file the guard never sees.
 
 The residual risk (same OS user, an unrecognised write path) is accepted; it is reviewed, not prevented. The thread
 rule adds three accepted limits: the `self_resolved` / `needs_lead` call is the agent's judgment (the hook enforces that a

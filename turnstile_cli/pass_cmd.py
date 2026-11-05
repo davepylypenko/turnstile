@@ -32,7 +32,6 @@ class Options:
     cases_not_testable: Optional[int] = None
     figma_parity: Optional[str] = None
     failed_cases: Optional[str] = None
-    companions: Optional[str] = None
     rerequested: Optional[str] = None
     offline: bool = False
     full: bool = False
@@ -466,7 +465,9 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     pr["jira"] = {"status": jira_target, "synced": False}
                     jira_line = "JIRA: %s → %s" % (pr["ticket"], jira_target)
                 if target == "ON_HUMAN_REVIEW" and src == "READY":
-                    rules.find_entry(awaiting, o.approved)["consumed_at"] = _now()
+                    for a in awaiting:
+                        if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
+                            a["consumed_at" if a.get("approved_at") else "voided_at"] = _now()
                 if target == "ON_HUMAN_REVIEW" and src == "REWORK":  # back to the same reviewers: the replies + the re-request notified them
                     human = pr.setdefault("evidence", {}).setdefault("human", {})
                     human["sent_head"] = pr.get("head"); human["returned_at"] = _now_s()
@@ -484,9 +485,6 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                             else:
                                 a["voided_at"] = _now()
                                 extra.append("voided %s (reply for %s thread %s: the thread was answered without it)" % (a["id"], ident, a.get("thread")))
-                if target == "READY" and not _has_open_entry(data, "send", "pr", ident):
-                    extra_keys = {"companions": [x for x in o.companions.split(",") if x]} if o.companions else {}
-                    _open_entry(data, "send", pr=ident, head=pr.get("head"), **extra_keys)
                 if target == "AI_REVIEW" and src == "READY":
                     for a in awaiting:
                         if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):

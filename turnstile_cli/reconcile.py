@@ -237,7 +237,7 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
             print("story %s [%s]%s %s — %s" % (sid, s.get("state"), " (trunk)" if rules.is_trunk(s) else "", s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():
             print("pr %-28s [%s] %s" % (pid, pr.get("state"), pr.get("next_action", "")))
-        pending = [a for a in st.data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at")]
+        pending = [a for a in st.data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at") and a.get("type") != "send"]
         print("awaiting humans: %d" % len(pending))
         for a in pending:
             print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story") or a.get("payload") or ""))

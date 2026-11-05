@@ -81,22 +81,17 @@ class PassCmd(unittest.TestCase):
     def story(self, **fields):
         data = self.data(); data["stories"]["S1"].update(fields); self.write(data)
 
-    def sent(self, ah):
-        """What the Slack PostToolUse hook records after a real send."""
+    def old_send_entry(self, ah="ah-1", **fields):
+        """A `send` entry from a state file written before 2026-11-05 (pass READY no longer opens one)."""
         data = self.data()
-        e = next(a for a in data["awaiting_human"] if a["id"] == ah); e["used_at"] = "2026-10-13T10:05Z"; e["message_ts"] = "1.2"
-        self.write(data)
+        e = {"id": ah, "owner": "lead", "type": "send", "pr": "jsfiller#1", "head": H, "created_at": "x", "payload": None, "approved_at": None}
+        e.update(fields); data["awaiting_human"].append(e); self.write(data)
 
     def to_human(self):
         self.to_ready()
         self.story(state="DONE")
-        ah = self.data()["awaiting_human"][0]["id"]
-        with env(TURNSTILE_LEAD="1"):
-            self.assertEqual(pass_cmd.approve(self.d, ah, self.io), 0)
-        self.sent(ah)
-        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io)
         self.assertEqual(rc, 0)
-        return ah
 
     def test_refuses_without_evidence_and_writes_nothing(self):
         before = (self.d / "state.json").read_text()
@@ -113,9 +108,8 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pr["evidence"]["gate"], {"name": "pdf-review", "head": H, "result": "pass", "run": "https://r/1"})
         self.assertEqual(pr["evidence"]["head_verified"]["verified"], True)
         self.assertEqual(pr["evidence"]["head_verified"]["head"], H)
-        self.assertEqual(pr["next_action"], "wait for the lead's word to send")
-        ah = data["awaiting_human"][0]
-        self.assertEqual((ah["type"], ah["pr"], ah["head"], ah["approved_at"]), ("send", "jsfiller#1", H, None))
+        self.assertEqual(pr["next_action"], "send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertEqual(data["awaiting_human"], [])  # 2026-11-05: no send entry; the lead's word in chat is the only gate on Slack
         self.assertIn("READY", (self.d / "ledger.md").read_text())
         self.assertEqual((self.d / "board.html").read_text(), "<html>0</html>")
         self.assertEqual(self.io.renders, 1)
@@ -124,13 +118,8 @@ class PassCmd(unittest.TestCase):
         self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
-    def test_ready_can_declare_companion_prs_on_the_send_entry(self):
-        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "READY", opts(companions="locales#5,locales#6", **READY_OPTS), self.io)
-        self.assertEqual(rc, 0)
-        self.assertEqual(self.data()["awaiting_human"][0]["companions"], ["locales#5", "locales#6"])
-
-    def test_head_change_voids_old_evidence_and_open_send(self):
-        self.to_ready()
+    def test_head_change_voids_old_evidence_and_an_old_open_send(self):
+        self.to_ready(); self.old_send_entry()
         self.io.heads["jsfiller#1"] = H2
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "AI_REVIEW", opts(head=H2, ci="success"), self.io)
         self.assertEqual(rc, 0)
@@ -232,8 +221,10 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(rc, 2); self.assertIn("MISSING report file reports/NOPE.md", out)
 
     def test_approve_needs_lead_env_and_sets_approved_at(self):
-        self.to_ready()
-        ah = self.data()["awaiting_human"][0]
+        self.to_human()
+        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
+        self.assertEqual(rc, 0)
+        ah = self.data()["awaiting_human"][0]; self.assertEqual(ah["type"], "merge")
         self.assertIsNone(ah["approved_at"])
         with env(TURNSTILE_LEAD=None):
             buf = _io.StringIO()
@@ -248,35 +239,29 @@ class PassCmd(unittest.TestCase):
         self.assertTrue(entry["approved_at"]); self.assertEqual(entry["approved_via"], "lead-terminal")
         line = next(l for l in (self.d / "ledger.md").read_text().splitlines() if "approved " + ah["id"] in l)
         self.assertIn("approved_via: lead-terminal", line)
-        self.assertEqual(len(self.io.commits), 2)
+        self.assertEqual(len(self.io.commits), 4)  # READY, ON_HUMAN_REVIEW, APPROVED, approve
 
-    def test_on_human_review_requires_a_lead_approved_entry_and_consumes_it(self):
+    def test_on_human_review_needs_no_entry_and_settles_old_send_entries(self):
+        # 2026-11-05: the lead's word in chat is the only gate on a send; --approved is neither required nor checked
         self.to_ready(); self.story(state="DONE")
-        ah = self.data()["awaiting_human"][0]["id"]
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, approved="ah-NOPE"), self.io)
-        self.assertEqual(rc, 2); self.assertIn("ah-NOPE", out)
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, approved=ah), self.io)
-        self.assertEqual(rc, 2); self.assertIn("approved_at", out)
-        self.assertIsNone(self.data()["awaiting_human"][0]["approved_at"])  # pass never approves
-        with env(TURNSTILE_LEAD="1"):
-            pass_cmd.approve(self.d, ah, self.io)
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
-        self.assertEqual(rc, 2); self.assertIn("used_at", out)  # approved but no message went through the guard
-        self.sent(ah)
-        rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved=ah), self.io)
-        self.assertEqual(rc, 0)
-        data = self.data()
-        self.assertTrue(data["awaiting_human"][0]["consumed_at"])
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, reviewers="isachivka"), self.io)
+        self.assertEqual(rc, 2); self.assertIn("slack_permalink", out); self.assertNotIn("approved", out)
+        self.old_send_entry("ah-1", approved_at="2026-10-13T10:00Z"); self.old_send_entry("ah-2"); self.old_send_entry("ah-3", voided_at="x")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io)
+        self.assertEqual(rc, 0, out)
+        data = self.data(); by_id = {a["id"]: a for a in data["awaiting_human"]}
+        self.assertTrue(by_id["ah-1"]["consumed_at"]); self.assertTrue(by_id["ah-2"]["voided_at"]); self.assertNotIn("consumed_at", by_id["ah-3"])
         self.assertEqual(data["prs"]["jsfiller#1"]["evidence"]["human"]["sent_head"], H)
         self.assertEqual(data["prs"]["jsfiller#1"]["jira"], {"status": "On Review", "synced": False})
 
+    def test_on_human_review_with_an_unknown_approved_id_still_passes(self):
+        self.to_ready(); self.story(state="DONE")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka", approved="ah-NOPE"), self.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.data()["awaiting_human"], [])
+
     def test_on_human_review_requires_the_story_done_or_per_pr(self):
         self.to_ready()
-        ah = self.data()["awaiting_human"][0]["id"]
-        with env(TURNSTILE_LEAD="1"):
-            pass_cmd.approve(self.d, ah, self.io)
-        self.sent(ah)
-        send = opts(head=H, slack=LINK, reviewers="isachivka", approved=ah)
+        send = opts(head=H, slack=LINK, reviewers="isachivka")
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", send, self.io)
         self.assertEqual(rc, 2); self.assertIn("MISSING story S1 to be DONE (is IN_PROGRESS)", out)
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "READY")
@@ -303,7 +288,7 @@ class PassCmd(unittest.TestCase):
         self.to_human()
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
         self.assertEqual(rc, 0)
-        self.assertEqual([a["type"] for a in self.data()["awaiting_human"]], ["send", "merge"])
+        self.assertEqual([a["type"] for a in self.data()["awaiting_human"]], ["merge"])
         self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
         self.assertEqual(rc, 0)
@@ -441,17 +426,6 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.run(self.d, "story", "S2", "IN_PROGRESS", opts(approved=ah), self.io)
         self.assertEqual(rc, 0)
         self.assertTrue(self.data()["awaiting_human"][1]["consumed_at"])
-
-    def test_send_approval_is_bound_to_the_head_it_was_given_for(self):
-        self.to_ready()
-        ah = self.data()["awaiting_human"][0]["id"]
-        with env(TURNSTILE_LEAD="1"):
-            pass_cmd.approve(self.d, ah, self.io)
-        self.sent(ah)
-        self.io.heads["jsfiller#1"] = H2
-        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", deep_review="reports/R.md",
-                              gate="pdf-review:pass", slack=LINK, approved=ah), self.io)
-        self.assertEqual(rc, 2); self.assertIn("approved for head %s" % H, out)
 
     def test_offline_cannot_approve_or_merge(self):
         self.to_human()

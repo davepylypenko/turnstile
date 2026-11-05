@@ -1,6 +1,6 @@
 """Lead rule 2026-10-14 (re-request): once every human thread on a REWORK PR has our latest reply and Copilot reviewed the current
 head with 0 open threads (repos without Copilot: the repo gate green on the current head), the agents re-request review on GitHub
-from the reviewers who commented on those threads. No lead approval; Slack stays lead-approved. A push-only rework pings nobody and
+from the reviewers who commented on those threads. No lead approval. A push-only rework pings nobody and
 records `reviewer_notified: false` (the lead decides)."""
 import copy, json, pathlib, unittest
 from turnstile_cli import github, pass_cmd, reconcile, rules, threads

@@ -18,7 +18,6 @@ def build_parser():
                      ("--figma-parity", {"choices": ["pass", "fail", "not_testable_here"]}),
                      ("--cases-not-testable", {"type": int, "help": "cases with verdict not_testable_here in the recorded run (default 0)"}),
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
-                     ("--companions", {"help": "paired PRs the same Slack message may mention (e.g. locales#5)"}),
                      ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"}),
                      ("--arm", {"choices": ["treatment", "control"], "help": "trunk mode: the arm a recorded env run tested (treatment = flag on, control = flag off)"}),
                      ("--base-heads", {"help": "trunk mode, with --build --head: repo=sha pairs when the story spans repos (default: --head for every repo)"})]:

@@ -1,10 +1,11 @@
 # Slack messages
 
-Channels come from `state.json` (`epic.repos.<repo>.slack`); the guard refuses any other channel. Reviewer logins come
-from the PR (`gh pr view <n> --repo <org>/<repo> --json reviewRequests --jq '.reviewRequests[].login'`, people only — skip
-team entries); resolve a login to a Slack user through the Slack MCP user search by name/email; never guess. Every message
-is composed, shown to the lead, and sent only through the real send tool after the lead approved the entry
-(`! TURNSTILE_LEAD=1 turnstile approve <ah-id>`) and confirmed the send in the UI. One approval = one message.
+Channels come from `state.json` (`epic.repos.<repo>.slack`). Reviewer logins come from the PR (`gh pr view <n> --repo
+<org>/<repo> --json reviewRequests --jq '.reviewRequests[].login'`, people only — skip team entries); resolve a login to a
+Slack user through the Slack MCP user search by name/email; never guess. Every message is composed, shown to the lead, and
+sent only on the lead's word in chat — that word is the only gate (2026-11-05). The plugin records the send (a ledger line
+from the PostToolUse hook, `evidence.human` via `pass pr … ON_HUMAN_REVIEW --slack <permalink> --reviewers …`); it never blocks,
+asks or demands a command before it.
 
 ## Review request (front repos)
 
@@ -17,8 +18,8 @@ Estimate review: +<additions>-<deletions>
 
 - Wrap every URL in angle brackets (Slack's auto-linker otherwise swallows the newline).
 - A front PR and its paired locales PR go in **one** message with a `Locales: <url>` line under `PR:`; the estimate sums
-  both; the locales PR is a `--companions` entry of the main PR's `send`.
-- One repo per message; several repos → consecutive messages, each with its own approved entry.
+  both.
+- One repo per message; several repos → consecutive messages, each on the lead's word.
 - Search the channel for the PR URL first; if a request exists, reply in that thread instead.
 
 ## Review request (backend / bare link channels)
@@ -40,7 +41,7 @@ Kept as is: <code-level reason, file:line or test>                  ← justifie
 ```
 
 The report lists each one as `<thread id> — <reviewer>: <one-line restatement> → <reply text>`. No Slack message goes with
-them: GitHub notifies the reviewer, and a `reply` entry never unlocks a Slack send. Once every thread has its reply and Copilot
+them: GitHub notifies the reviewer. Once every thread has its reply and Copilot
 reviewed the head with 0 open threads (repos without Copilot: the gate green), the thread authors are re-requested on GitHub
 (`requested_reviewers`, lead rule 2026-10-14) — still no Slack. A push-only rework pings nobody; the lead decides.
 
@@ -49,5 +50,5 @@ reviewed the head with 0 open threads (repos without Copilot: the gate green), t
 ```
 Story <S> "<title>": integration review clean (<r> rounds, reports/STORY-<S>-review.md), env test <pass>/<total> cases
 in the final full run, Figma parity pass (reports/ENV-<S>.md), bugs: <n> found, all done. Units ready to send:
-<unit → PRs>. Pending your word: <ah-ids>.
+<unit → PRs>. Say the word and they go to review.
 ```

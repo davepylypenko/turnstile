@@ -186,11 +186,6 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
         if not same_head(h.get("sent_head"), pr.get("head")):
             out.append("MISSING evidence.human.sent_head == current head")
         _story_gates_passed(pr, stories, out, prs)
-        e = check_approved_entry(h.get("approved"), "send", "pr", pr.get("_id"), awaiting, out)
-        if e and not e.get("used_at"):
-            out.append("MISSING awaiting_human %s used_at (no Slack message went through the guarded tool for it)" % e.get("id"))
-        if e and e.get("type") == "send" and e.get("head") and not same_head(e.get("head"), pr.get("head")):
-            out.append("MISSING awaiting_human %s approved for head %s, not the current head %s (re-run AI_REVIEW → READY)" % (e.get("id"), e.get("head"), pr.get("head")))
         b = pr.get("blocked_by")
         if b and (prs.get(b) or {}).get("state") != "MERGED":
             out.append("MISSING blocked_by %s to be MERGED before sending (is %s)" % (b, (prs.get(b) or {}).get("state")))
@@ -226,7 +221,8 @@ def next_action_pr(pr: dict, repo_cfg: dict) -> str:
             return "request Copilot review, close its threads"
         return "pass READY"
     if s == "READY":
-        return "wait for the lead's word to send" + (" (blocked by %s)" % pr["blocked_by"] if pr.get("blocked_by") else "")
+        return ("send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
+                + (" (blocked by %s)" % pr["blocked_by"] if pr.get("blocked_by") else ""))
     if s == "ON_HUMAN_REVIEW":
         if ((pr.get("evidence") or {}).get("human") or {}).get("reviewer_notified") is False:
             return "wait for human approval; reviewers not notified (push-only rework): the lead decides whether to ping them"
@@ -520,4 +516,4 @@ def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
             "IN_PROGRESS": "bring every PR to READY, deploy the stack top, then pass INTEGRATION_REVIEW",
             "INTEGRATION_REVIEW": "run the story-reviewer agent until clean, then pass ENV_TESTING",
             "ENV_TESTING": "run the tester agent; fix bugs; re-run; then pass DONE",
-            "DONE": "wait for the lead's word to send the story's units to humans"}.get(s, "")
+            "DONE": "send the story's units to humans on the lead's word in chat, then pass pr … ON_HUMAN_REVIEW --slack"}.get(s, "")

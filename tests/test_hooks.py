@@ -314,9 +314,13 @@ class BashGuard(unittest.TestCase):
             self.assertTrue(c.endswith("|| exit 2"), c)
         matchers = [m["matcher"] for m in h["PreToolUse"]]
         self.assertIn("Edit|Write|MultiEdit", matchers)
+        self.assertEqual([m for m in matchers if "slack" in m.lower()], [])  # 2026-11-05: no PreToolUse gate on Slack sends
+        self.assertFalse((ROOT / "hooks" / "guard_slack.py").exists())
         post = h["PostToolUse"]
-        self.assertEqual(len(post), 1); self.assertIn("slack", post[0]["matcher"]); self.assertIn("post_slack.py", post[0]["hooks"][0]["command"])
-        self.assertEqual(post[0]["matcher"], next(m["matcher"] for m in h["PreToolUse"] if "slack" in m["matcher"]))
+        self.assertEqual(len(post), 1); self.assertIn("post_slack.py", post[0]["hooks"][0]["command"])
+        import re
+        for tool in ("mcp__plugin_slack_slack__slack_send_message", "mcp__plugin_slack_slack__slack_send_message_draft", "mcp__plugin_slack_slack__slack_schedule_message"):
+            self.assertTrue(re.fullmatch(post[0]["matcher"], tool), tool)
 
 class TreeResetRealLayout(unittest.TestCase):
     def test_round3_resets_from_other_cwds_and_wrappers_are_blocked(self):
@@ -335,7 +339,9 @@ class TreeResetRealLayout(unittest.TestCase):
         for cwd, cmd in [(js, "git checkout -- ."), (js, "git reset --hard"), (js, "cd ../kn && git status"), (kn, "git stash list")]:
             r = run(cmd, cwd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
 
-class SlackGuard(unittest.TestCase):
+class SlackRecorder(unittest.TestCase):
+    """2026-11-05 (lead's decision): Slack sends are gated by the lead's word in chat only. The plugin records a send that went out
+    (a ledger line, an old open `send` entry marked used) and never blocks, asks or exits 2."""
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
@@ -345,8 +351,11 @@ class SlackGuard(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=self.ws, check=True)
         subprocess.run(["git", "commit", "-qm", "init"], cwd=self.ws, check=True, env=dict(os.environ, **self.git))
 
-    def post(self, text, response, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
-        return hook("post_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "tool_response": response,
+    MSG = "PR: <https://github.com/pdffiller/jsfiller/pull/1>"
+    OK = {"content": [{"type": "text", "text": json.dumps({"ok": True, "channel": "C1", "message_ts": "1760000000.123456"})}]}
+
+    def post(self, text, response=None, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message"):
+        return hook("post_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "tool_response": response or self.OK,
                                       "cwd": str(self.ws)}, self.ws, env=self.git)
 
     def porcelain(self):
@@ -358,158 +367,80 @@ class SlackGuard(unittest.TestCase):
     def write(self, d):
         (self.ws / "delivery" / "state.json").write_text(json.dumps(d))
 
-    def ready_with(self, pr="jsfiller#1", state="READY", story_state="DONE", **entry):
-        d = self.state(); d["prs"][pr]["state"] = state; d["stories"]["S1"]["state"] = story_state
+    def ledger(self):
+        path = self.ws / "delivery" / "ledger.md"
+        return path.read_text() if path.exists() else ""
+
+    def with_entry(self, pr="jsfiller#1", **entry):
+        d = self.state()
         e = {"id": "ah-1", "owner": "lead", "type": "send", "pr": pr, "created_at": "x", "payload": None, "approved_at": "2026-10-13T10:00Z"}
-        e.update(entry); d["awaiting_human"] = [e]
-        if story_state == "DONE":  # round 3: a DONE story is sent only with a deploy.heads snapshot that GitHub confirms
-            d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "bbbbbbbb22222222",
-                "heads": {p: x["head"] for p, x in d["prs"].items() if x.get("story") == "S1" and x["state"] not in ("MERGED", "CLOSED")}}}
-        self.write(d)
+        e.update(entry); d["awaiting_human"] = [e]; self.write(d)
 
-    def slack(self, text, channel="C1", tool="mcp__plugin_slack_slack__slack_send_message", env=None):
-        env = env if env is not None else self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
-        return hook("guard_slack.py", {"tool_name": tool, "tool_input": {"channel_id": channel, "text": text}, "cwd": str(self.ws)}, self.ws, env=env)
+    def test_records_a_sent_message_without_any_entry(self):
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, "")
+        self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1", self.ledger())
+        self.assertEqual(self.state()["awaiting_human"], [])
+        self.assertTrue((self.ws / "delivery" / "board.html").exists())
+        self.assertEqual(self.porcelain(), "")
+        log = subprocess.run(["git", "log", "--oneline"], cwd=self.ws, capture_output=True, text=True).stdout
+        self.assertIn("turnstile: slack send to C1 ts 1760000000.123456 for jsfiller#1", log)
 
-    MSG = "PR: <https://github.com/pdffiller/jsfiller/pull/1>"
-
-    def test_blocks_without_approval(self):
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2)
-        r = self.slack("hello"); self.assertEqual(r.returncode, 2)
-        self.ready_with(approved_at=None)
-        self.assertEqual(self.slack(self.MSG).returncode, 2)
-
-    def test_pre_only_checks_post_records_use_on_message_ts_and_commits(self):
-        # R2-4: a denied or failed send must not consume the approval; R2-14: the hook's writes are committed
-        self.ready_with(); subprocess.run(["git", "commit", "-qam", "ready"], cwd=self.ws, check=True, env=dict(os.environ, **self.git))
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("used_at", self.state()["awaiting_human"][0]); self.assertFalse((self.ws / "delivery" / "ledger.md").exists())
+    def test_nothing_recorded_without_a_message_ts(self):
         r = self.post(self.MSG, {"content": [{"type": "text", "text": "Error: channel_not_found"}]}); self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("used_at", self.state()["awaiting_human"][0])
-        self.assertEqual(self.slack(self.MSG).returncode, 0)  # still sendable: nothing was sent
-        ok = {"content": [{"type": "text", "text": json.dumps({"ok": True, "channel": "C1", "message_ts": "1760000000.123456"})}]}
-        r = self.post(self.MSG, ok); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.ledger(), ""); self.assertEqual(self.porcelain(), "")
+        r = self.post(self.MSG, "sent, ts=1760000000.2 message_ts missing"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.ledger(), "")
+
+    def test_string_responses_are_read(self):
+        r = self.post(self.MSG, '{"ok":true,"message_ts":"1760000000.1"}'); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("slack send to C1 ts 1760000000.1 for jsfiller#1", self.ledger())
+
+    def test_an_open_send_entry_is_marked_used_once(self):
+        self.with_entry()
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
         e = self.state()["awaiting_human"][0]
         self.assertTrue(e["used_at"]); self.assertEqual(e["used_channel"], "C1"); self.assertEqual(e["message_ts"], "1760000000.123456")
-        self.assertIn("slack send for jsfiller#1 via ah-1 (send) to C1 ts 1760000000.123456", (self.ws / "delivery" / "ledger.md").read_text())
-        self.assertTrue((self.ws / "delivery" / "board.html").exists())
-        self.assertEqual(self.porcelain(), "")  # committed
-        log = subprocess.run(["git", "log", "--oneline"], cwd=self.ws, capture_output=True, text=True).stdout
-        self.assertIn("turnstile: slack send for jsfiller#1", log)
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("already used", r.stderr)
-        r = self.post(self.MSG, ok); self.assertEqual(r.returncode, 2); self.assertIn("no usable", r.stderr)  # a second send slipped past: loud
+        self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1 (ah-1 used)", self.ledger())
+        r = self.post(self.MSG, '{"ok":true,"message_ts":"1760000000.9"}'); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.123456")
+        self.assertIn("slack send to C1 ts 1760000000.9 for jsfiller#1\n", self.ledger())
 
-    def test_post_accepts_string_responses_and_ignores_unrelated_tools(self):
-        self.ready_with()
-        r = self.post(self.MSG, '{"ok":true,"message_ts":"1760000000.1"}'); self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.1")
-        self.ready_with()
-        r = self.post(self.MSG, "sent, ts=1760000000.2 message_ts missing"); self.assertEqual(r.returncode, 0)
-        self.assertNotIn("used_at", self.state()["awaiting_human"][0])
+    def test_consumed_voided_or_unapproved_entries(self):
+        for extra in (dict(consumed_at="x"), dict(voided_at="x")):
+            self.with_entry(**extra)
+            r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("used_at", self.state()["awaiting_human"][0])
+        self.with_entry(approved_at=None)
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.state()["awaiting_human"][0]["used_at"])
 
-    def test_only_a_send_entry_on_a_ready_pr_unlocks_slack(self):
-        # 2026-10-14: a `reply` entry is the lead's word for one GitHub reply on one needs_lead thread, never a Slack message
-        self.ready_with(state="AI_REVIEW"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(state="REWORK", type="reply", thread="PRRT_1"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(state="ON_HUMAN_REVIEW", type="reply"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(state="READY", type="merge"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(state="READY"); self.assertEqual(self.slack(self.MSG).returncode, 0)
+    def test_never_blocks(self):
+        d = self.state(); d["prs"]["jsfiller#1"]["state"] = "AI_REVIEW"; d["stories"]["S1"]["state"] = "IN_PROGRESS"; self.write(d)
+        cases = [dict(text=self.MSG, channel="C9"), dict(text="hello"), dict(text=self.MSG + "\nLocales: <https://github.com/pdffiller/locales/pull/5>"),
+                 dict(text=self.MSG, tool="mcp__plugin_slack_slack__slack_schedule_message"), dict(text=self.MSG, tool="mcp__plugin_slack_slack__slack_send_message_draft"),
+                 dict(text=self.MSG + " and jsfiller#99")]
+        for kw in cases:
+            r = self.post(**kw); self.assertEqual(r.returncode, 0, (kw, r.stderr)); self.assertEqual(r.stdout, "", kw)
+        text = self.ledger()
+        self.assertIn("slack send to C9 ts 1760000000.123456 for jsfiller#1", text)
+        self.assertIn("slack send to C1 ts 1760000000.123456\n", text)
+        self.assertIn("for jsfiller#1, locales#5", text); self.assertIn("for jsfiller#1, jsfiller#99", text)
+        self.assertEqual(text.count("slack send"), len(cases))
 
-    def test_consumed_or_voided_entries_do_not_unlock(self):
-        self.ready_with(consumed_at="x"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-        self.ready_with(voided_at="x"); self.assertEqual(self.slack(self.MSG).returncode, 2)
-
-    def test_channel_must_be_the_repo_channel(self):
-        self.ready_with()
-        r = self.slack(self.MSG, channel="C9"); self.assertEqual(r.returncode, 2); self.assertIn("channel", r.stderr)
-        self.assertIsNone(self.state()["awaiting_human"][0].get("used_at"))
-
-    def test_every_pr_in_the_message_needs_its_own_entry(self):
-        self.ready_with()
-        two = self.MSG + "\nLocales: <https://github.com/pdffiller/docs-platform/pull/2>"
-        self.assertEqual(self.slack(two).returncode, 2)
-
-    def test_unknown_ids_are_named_and_companions_are_allowed(self):
-        # R2-12: a paired locales PR or a repo missing from epic.repos must not surface as "cannot read the delivery state"
-        self.ready_with()
-        paired = self.MSG + "\nLocales: <https://github.com/pdffiller/locales/pull/5>"
-        r = self.slack(paired); self.assertEqual(r.returncode, 2)
-        self.assertIn("locales#5", r.stderr); self.assertIn("not in epic.repos", r.stderr); self.assertNotIn("cannot read", r.stderr)
-        r = self.slack(self.MSG + " and jsfiller#99"); self.assertEqual(r.returncode, 2)
-        self.assertIn("no usable (approved, unused) send for jsfiller#99", r.stderr)
-        self.ready_with(companions=["locales#5"])
-        r = self.slack(paired); self.assertEqual(r.returncode, 0, r.stderr)
-        r = self.post(paired, '{"ok":true,"message_ts":"1760000000.9"}'); self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.state()["awaiting_human"][0]["message_ts"], "1760000000.9")
-
-    def test_allowed_send_asks_the_lead_in_the_ui(self):
-        # R3-1: the state check is a filter; the lead confirms every send (permissionDecision "ask")
-        self.ready_with()
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
-        out = json.loads(r.stdout)["hookSpecificOutput"]
-        self.assertEqual(out["permissionDecision"], "ask"); self.assertIn("jsfiller#1", out["permissionDecisionReason"])
-
-    def test_send_waits_for_the_story(self):
-        # R3-3: the Slack guard applies the same story gate as pass READY -> ON_HUMAN_REVIEW
-        self.ready_with(story_state="IN_PROGRESS")
-        r = self.slack(self.MSG); self.assertEqual(r.returncode, 2); self.assertIn("story S1 is not DONE", r.stderr)
-        d = self.state(); d["stories"]["S1"]["human_review"] = "per_pr"; self.write(d)
-        self.assertEqual(self.slack(self.MSG).returncode, 0)
-        self.ready_with(state="REWORK", type="reply", story_state="IN_PROGRESS")
-        self.assertEqual(self.slack(self.MSG).returncode, 2)
-
-    def test_send_refused_when_a_head_changed_after_the_story_deploy(self):
-        # round 2: a DONE story whose deploy.heads no longer match the PR heads (a push after DONE) is not sent
-        self.ready_with()
-        d = self.state(); d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "aaaaaaaa11111111",
-            "heads": {"jsfiller#1": "aaaaaaaa11111111", "docs-platform#2": "bbbbbbbb22222222"}}}; self.write(d)
-        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
-        self.assertEqual(self.slack(self.MSG, env=env).returncode, 0)
-        d = self.state(); d["prs"]["docs-platform#2"]["head"] = "cccccccc33333333"; self.write(d)
-        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("head changed after its deploy", r.stderr)
-
-    def gh_on_path(self, heads):
-        """A canned `gh` that answers the GraphQL query with the head for the repo named in `-f r=<repo>`."""
-        b = pathlib.Path(tempfile.mkdtemp())
-        cases = "".join('*"r=%s"*) h=%s;; ' % (repo, h) for repo, h in heads.items())
-        (b / "gh").write_text('#!/bin/sh\ncase "$*" in %s*) h=none;; esac\n'
-                              'printf \'{"data":{"repository":{"pullRequest":{"headRefOid":"%%s"}}}}\' "$h"\n' % cases)
-        (b / "gh").chmod(0o755)
-        return {"PATH": os.pathsep.join([str(b), "/usr/bin", "/bin"])}
-
-    def test_send_asks_github_for_the_deployed_heads(self):
-        # round 2 R2-7: state.json may be stale after a push without `pass pr`; the guard verifies deploy.heads on GitHub
-        self.ready_with()
-        d = self.state(); d["prs"]["docs-platform#2"]["state"] = "READY"
-        d["stories"]["S1"]["evidence"] = {"deploy": {"build": "1", "head": "bbbbbbbb22222222",
-            "heads": {"jsfiller#1": "aaaaaaaa11111111", "docs-platform#2": "bbbbbbbb22222222"}}}; self.write(d)
-        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "bbbbbbbb22222222"})
-        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 0, r.stderr)
-        env = self.gh_on_path({"jsfiller": "aaaaaaaa11111111", "docs-platform": "cccccccc33333333"})
-        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr); self.assertIn("docs-platform#2", r.stderr)
-        env = {"PATH": os.pathsep.join(["/usr/bin", "/bin"])}  # no gh: fail closed
-        self.assertIsNone(shutil.which("gh", path=env["PATH"]))
-        r = self.slack(self.MSG, env=env); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr)
-
-    def test_schedule_is_refused_draft_is_guarded(self):
-        self.ready_with()
-        r = self.slack(self.MSG, tool="mcp__plugin_slack_slack__slack_schedule_message"); self.assertEqual(r.returncode, 2)
-        self.assertIn("scheduled", r.stderr)
-        import re
-        m = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
-        m = next(x["matcher"] for x in m if "slack" in x["matcher"])
-        for tool in ("mcp__plugin_slack_slack__slack_send_message", "mcp__plugin_slack_slack__slack_send_message_draft", "mcp__plugin_slack_slack__slack_schedule_message"):
-            self.assertTrue(re.fullmatch(m, tool), tool)
-
-    def test_fails_closed_on_broken_state(self):
+    def test_unreadable_state_records_nothing_and_exits_zero(self):
         (self.ws / "delivery" / "state.json").write_text("{not json")
-        self.assertEqual(self.slack(self.MSG).returncode, 2)
-        shutil.rmtree(self.ws / "delivery")
-        self.assertEqual(self.slack(self.MSG).returncode, 2)
-
-    def test_fails_closed_on_unexpected_shape(self):
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, ""); self.assertEqual(self.ledger(), "")
         self.write({"prs": [], "awaiting_human": [{"pr": "jsfiller#1", "type": "send", "approved_at": "x"}]})
-        self.assertEqual(self.slack(self.MSG).returncode, 2)
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr)
+        shutil.rmtree(self.ws / "delivery")
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stderr, "")
+        for payload in ("{}", "[]", "not json", json.dumps({"tool_input": "x", "cwd": str(self.ws)})):
+            self.assertEqual(hook("post_slack.py", payload, self.ws).returncode, 0, payload)
+
+    def test_commit_failure_is_a_warning_not_a_block(self):
+        shutil.rmtree(self.ws / ".git")
+        r = self.post(self.MSG); self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("not committed", r.stderr)
+        self.assertIn("slack send to C1 ts 1760000000.123456 for jsfiller#1", self.ledger())
 
 class StateEditGuard(unittest.TestCase):
     def setUp(self):
@@ -946,15 +877,13 @@ class OutsideWorkspace(unittest.TestCase):
         p = {"tool_name": tool, "tool_input": {"channel_id": "C1", "text": text}, "cwd": str(cwd)}; p.update(payload)
         return hook(name, p, cwd)
 
-    def test_slack_guards_are_inert(self):
+    def test_slack_recorder_is_inert_outside_and_records_inside(self):
         sent = {"tool_response": '{"ok":true,"message_ts":"1760000000.1"}'}
         for tool in ("mcp__plugin_slack_slack__slack_send_message", "mcp__plugin_slack_slack__slack_schedule_message"):
-            r = self.slack("guard_slack.py", self.plain, tool); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, "")
-        self.assertEqual(self.slack("guard_slack.py", self.plain, text="hello").returncode, 0)
-        r = self.slack("post_slack.py", self.plain, **sent); self.assertEqual(r.returncode, 0, r.stderr)
+            r = self.slack("post_slack.py", self.plain, tool, **sent); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, "")
         self.assertEqual(sorted(p.name for p in self.plain.iterdir()), ["notes"])
-        self.assertEqual(self.slack("guard_slack.py", self.ws / "jsfiller").returncode, 2)
-        r = self.slack("post_slack.py", self.ws / "jsfiller", **sent); self.assertEqual(r.returncode, 2); self.assertIn("no usable", r.stderr)
+        r = self.slack("post_slack.py", self.ws / "jsfiller", **sent); self.assertEqual(r.returncode, 0, r.stderr); self.assertEqual(r.stdout, "")
+        self.assertIn("slack send to C1 ts 1760000000.1 for jsfiller#1", (self.ws / "delivery" / "ledger.md").read_text())
 
     def test_role_guard_is_inert(self):
         p = {"tool_name": "mcp__claude_ai_Atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "MYD-1"}, "cwd": str(self.plain),

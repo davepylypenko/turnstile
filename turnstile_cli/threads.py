@@ -160,7 +160,7 @@ def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str,
 # ---- re-request (lead rule 2026-10-14): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look
 # again". Once every human thread in scope has our reply and Copilot reviewed the current head with 0 open threads (repos without
 # Copilot: the gate check green on the head), the agents re-request review on GitHub from the reviewers who commented on the threads
-# in this review round — no lead approval; Slack stays lead-approved. A rework without such comments (push-only) pings nobody.
+# in this review round — no lead approval. A rework without such comments (push-only) pings nobody.
 
 def round_since(pr: dict, awaiting: Optional[List[dict]]) -> Optional[datetime.datetime]:
     """When the PR last went to humans: the send, or its last return from REWORK (`evidence.human.returned_at`)."""

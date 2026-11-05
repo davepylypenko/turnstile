@@ -20,7 +20,7 @@ class SkillFiles(unittest.TestCase):
         self.assertLessEqual(len(text.splitlines()), 190)
         for h in ["## init", "## status", "## pass", "## dispatch", "## story-gate", "## plan"]: self.assertIn(h, text)
         for cli in ["turnstile status", "turnstile pass", "! TURNSTILE_LEAD=1 turnstile approve", "turnstile jira-synced", "turnstile plan-submitted",
-                    "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--companions"]:
+                    "turnstile brief", "turnstile bug add", "turnstile bug set", "--full"]:
             self.assertIn(cli, text, cli)
         self.assertNotIn("you run `turnstile approve", text.lower())
         self.assertIn("-r2", text)  # 2026-10-14 minor 13: a second round gets a new brief name, never --force over the first
@@ -107,10 +107,23 @@ class SkillFiles(unittest.TestCase):
         self.assertIn("2026-10-14 (lead, re-request)", spec)
         for s in ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED", "PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]:
             self.assertIn("**" + s + "**", text)
-        for k in ["used_at", "rework_since", "human_review: per_pr", "--full", "stories.<S>.branch"]: self.assertIn(k, text, k)
+        for k in ["rework_since", "human_review: per_pr", "--full", "stories.<S>.branch"]: self.assertIn(k, text, k)
     def test_slack_review_request_format(self):
         text = (REFS / "slack.md").read_text()
         for line in ["Reviewers: <@", "PR: <https://github.com/", "Task description:", "Estimate review: +", "Locales:"]: self.assertIn(line, text)
+    def test_slack_sends_are_recorded_not_gated(self):
+        # 2026-11-05 (lead's decision): the lead's word in chat is the only gate on a Slack send; the plugin records and never blocks
+        docs = {name: (path).read_text() for name, path in [("README", ROOT / "README.md"), ("SKILL", SKILL / "SKILL.md"), ("slack", REFS / "slack.md"),
+                                                            ("lifecycle", REFS / "lifecycle.md"), ("workspace", ROOT / "templates" / "CLAUDE.md.workspace")]}
+        for name, doc in docs.items():
+            self.assertIn("lead's word in chat", doc, name); self.assertIn("never blocks", doc, name)
+            for stale in ["guard_slack", "--companions", "--approved <ah-id>` (READY", "Slack stays lead-approved", "Slack messages always wait for the lead",
+                          "permissionDecision", "one send per approval", "One approval = one message", "`send` on READY", "opens `send`"]:
+                self.assertNotIn(stale, doc, "%s still says %r" % (name, stale))
+        for name in ("README", "SKILL", "lifecycle"):
+            self.assertIn("--slack <permalink> --reviewers", docs[name], name)
+        for path in (ROOT / "agents").glob("*.md"):
+            self.assertNotIn("Slack stays lead-approved", path.read_text(), path.name)
     def test_reports_has_a_template_per_agent(self):
         text = (REFS / "reports.md").read_text()
         for h in ["## Ticket", "## Review", "## Story review", "## Stack", "## Comments", "## Investigation", "## Env test", "## Deploy"]: self.assertIn(h, text)
