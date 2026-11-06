@@ -22,8 +22,9 @@ command, role-scoped agents and hooks that physically block forbidden actions.
   `transitionJiraIssue` / `editJiraIssue` / `createJiraIssue` / `addCommentToJiraIssue` and the reads `atlassianUserInfo` /
   `getJiraIssue` (the Atlassian connector does).
 - A **send skill** on the developer's machine that posts a PR to the Slack review channel (default `/send-pr-review`: Ivan
-  Zolotukhin's skill in `pdffiller-knowledge`, installed with `ln -s <clone>/playground/zolotukhin-ivan/skills/send-pr-review
-  ~/.claude/skills/send-pr-review`). The plugin holds only its name (`send_skill`); `init` and `status` say when it is not found.
+  Zolotukhin's skill in `pdffiller-knowledge`, installed with
+  `ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`).
+  The plugin holds only its name (`send_skill`); `init` and `status` say when it is not found.
 
 ## Install
 
@@ -121,8 +122,8 @@ own clone root (or inside your knowledge clone), creates `<root>/<key>` the same
 knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, adds a `ws/<key>` worktree of your
 `<root>/<name>` clone for every `epic.repos` entry (a missing clone is refused with its expected path), writes `.turnstile`,
 `delivery/.workspace.json` and the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and
-prints `status`; then `cd <workspace> && claude`, where the skill's `## preferences` step asks for this person's own review skill
-and models. Every writer first fetches: a worktree
+prints `status`; then `cd <workspace> && claude`, where the skill's `## preferences` step asks for this person's own
+review skill, send skill and models. Every writer first fetches: a worktree
 behind origin is refused (`MISSING: epic branch behind origin by N commits — run: turnstile sync`). `turnstile sync` fetches,
 fast-forwards and pushes — never rebase, never force; diverged histories print both heads and wait for the lead to merge.
 
@@ -172,11 +173,16 @@ guard refuses it in any model-issued command, and the CLI accepts only a `.json`
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
 the story-reviewer's; `/code-review` is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default), any other skill bare, exactly as the brief prints it; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 `send_skill` (default `/send-pr-review`) is the slash command the orchestrator invokes to post a READY PR to Slack review — a skill
-that lives on the developer's machine, never in the plugin: the name is resolved as `~/.claude/skills/<name>/SKILL.md`, then
-`.claude/skills/<name>/SKILL.md` under the cwd, the workspace and the clone root, then any `~/.claude/plugins/cache/*/*/*/skills/<name>`
-(`/plugin:skill` → that plugin's cache entries). `init` prints `SEND_SKILL: … (found: <path>)` or the install line plus a `NEXT`
-to ask the lead which skill to use; `status` prints one `WARN: send skill … not found` line while it is missing; the READY hint
-and the story DONE hint name the effective skill. The skill picks the channel and the format and shows the draft; when the epic
+that lives on the developer's machine, never in the plugin: the name is resolved as `~/.claude/skills/<name>/SKILL.md` or
+`~/.claude/commands/<name>.md` (`$CLAUDE_CONFIG_DIR` replaces `~/.claude` when set), then the same two under `.claude/` of the cwd,
+the workspace and the clone root, then the plugin cache `~/.claude/plugins/cache/*/*/*/skills/<name>/SKILL.md` and
+`…/commands/<name>.md`; `/plugin:skill` looks only in that plugin's cache entries, at any depth below the version folder (a
+`skills/<group>/<skill>/SKILL.md` layout included) and in its `commands/<skill>.md`. A lookup never fails: an unreadable or missing
+folder is skipped. `init` prints `SEND_SKILL: … (found: <path>)` or the install line plus a `NEXT` to ask the lead which skill to
+use; `status` prints one `WARN: send skill … not found` line while it is missing and its `config:` line shows the effective
+(user-aware) value; the READY hint and the story DONE hint in `state.json` name the epic or default skill, never the user file's
+(the state is shared, the user file is personal; `config apply` of `send_skill` recomputes the hints). The skill picks the channel
+and the format and shows the draft; when the epic
 sets `epic.repos.<repo>.slack`, the orchestrator passes that channel explicitly (the explicit channel wins); the lead's word in
 chat stays the only gate, then `pass … --slack <permalink> --reviewers …` records the send. Without an installed skill the
 templates in `skills/turnstile/references/slack.md` are the fallback and the orchestrator asks the lead which skill to install or use. `repos.<repo>.slack` stays required at `init`.

@@ -125,6 +125,8 @@ class SkillFiles(unittest.TestCase):
                 self.assertNotIn(stale, doc, "%s still says %r" % (name, stale))
         for name in ("README", "SKILL", "lifecycle"):
             self.assertIn("--slack <permalink> --reviewers", docs[name], name)
+        for path in (ROOT / "agents").glob("*.md"):
+            self.assertNotIn("Slack stays lead-approved", path.read_text(), path.name)
     def test_send_skill_is_a_reference_to_a_local_skill(self):
         # 2026-11-06 (lead's decision): the send skill lives on the developer's machine; the plugin names it, never copies it
         docs = {name: path.read_text() for name, path in [("README", ROOT / "README.md"), ("SKILL", SKILL / "SKILL.md"), ("slack", REFS / "slack.md"),
@@ -141,8 +143,12 @@ class SkillFiles(unittest.TestCase):
         self.assertIn("turnstile config set send_skill=/my-send", docs["README"]); self.assertIn("`send_skill`", docs["README"])
         self.assertFalse(any((ROOT / "skills").rglob("send-pr-review*")), "Ivan's skill must not be copied into the plugin")
         self.assertNotIn("CODEOWNERS", docs["slack"])
-        for path in (ROOT / "agents").glob("*.md"):
-            self.assertNotIn("Slack stays lead-approved", path.read_text(), path.name)
+        for name, doc in docs.items():
+            self.assertNotIn("ln -s <clone>", doc, name)
+        self.assertRegex(docs["README"], r"`ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`")
+        self.assertIn("review skill, send skill and models", docs["README"])
+        for layout in ["~/.claude/commands/<name>.md", "commands/<name>.md", "CLAUDE_CONFIG_DIR", "epic or default"]:
+            self.assertIn(layout, docs["README"], layout)
     def test_reports_has_a_template_per_agent(self):
         text = (REFS / "reports.md").read_text()
         for h in ["## Ticket", "## Review", "## Story review", "## Stack", "## Comments", "## Investigation", "## Env test", "## Deploy"]: self.assertIn(h, text)

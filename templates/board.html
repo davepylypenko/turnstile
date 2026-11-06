@@ -148,7 +148,7 @@ function stackBar(counts, order, h, link) {
   return '<svg class="sbar" height="' + h + '" role="img" aria-label="' + esc(label) + '">' + order.filter(k => counts[k]).map(k => {
     const w = counts[k] / total * 100, sx = x; x += w;
     return '<rect x="' + sx + '%" width="' + w + '%" height="' + h + '" rx="' + r + '" fill="' + COLORS[k] + '"' + (link ? ' data-state="' + esc(k) + '" tabindex="0" role="button"' : '') +
-      '><title>' + esc(k) + ' · ' + counts[k] + (link ? ' (show in PRs)' : '') + '</title></rect>';
+      '><title>' + esc(k) + ' · ' + counts[k] + (link ? ' (all ' + esc(k) + ' PRs)' : '') + '</title></rect>';
   }).join('') + '</svg>';
 }
 const keys = (counts, order) => '<div class="keys">' + order.map(k => '<span><i style="background:' + COLORS[k] + '"></i>' + esc(k) + ' ' + counts[k] + '</span>').join('') + '</div>';
@@ -159,7 +159,7 @@ function meter(n, N) {
 const tsIso = s => { const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d)Z$/.exec(s || ''); return ts(m ? m[1] + ':00Z' : s); };
 function since(p) {
   if (p.state_since) return p.state_since;
-  const e = p.evidence || {}, cands = [(p.rework_since || {}).at, (e.human || {}).sent_at, (e.head_verified || {}).at].filter(x => tsIso(x));
+  const e = p.evidence || {}, cands = [(p.rework_since || {}).at, (e.human || {}).returned_at, (e.human || {}).sent_at, (e.head_verified || {}).at].filter(x => tsIso(x));
   return cands.length ? cands.sort((a, b) => tsIso(b) - tsIso(a))[0] : null;
 }
 const AGE_STATES = ['REWORK', 'ON_HUMAN_REVIEW', 'READY'];
@@ -172,7 +172,7 @@ function progress() {
     const mine = prs.filter(([, p]) => p.story === sid).map(([, p]) => p), c = countBy(mine, PR_STATES);
     return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td class="bar-cell">' + stackBar(c, PR_STATES, 8, true) + '<span class="muted">' + mine.length + ' PR' + (mine.length === 1 ? '' : 's') + '</span></td><td class="k">' + esc(gateMarks(s)) + '</td></tr>';
   });
-  const open = prs.filter(([, p]) => p.state !== 'MERGED').map(([id, p]) => { const at = since(p), t = tsIso(at); return { id, p, at, days: t ? Math.floor((Date.now() - t) / 86400000) : null }; })
+  const open = prs.filter(([, p]) => p.state !== 'MERGED').map(([id, p]) => { const at = since(p), t = tsIso(at); return { id, p, at, days: t ? Math.max(0, Math.floor((Date.now() - t) / 86400000)) : null }; })
     .sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days));
   const ageing = open.map(r => '<tr' + (r.days != null && r.days >= 3 && AGE_STATES.includes(r.p.state) ? ' class="aged"' : '') + '><td class="k"><a href="' + esc(prUrl(r.id)) + '" target="_blank" rel="noopener">' + esc(r.id) + '</a></td><td>' + badge(r.p.state) +
     '</td><td class="num">' + (r.days == null ? '—' : r.days) + '</td><td class="muted">' + esc(r.at || '—') + '</td></tr>');
@@ -184,8 +184,9 @@ function progress() {
     '<h2>Ageing <span class="muted">(open PRs, days in state)</span></h2><div class="scroll"><table><thead><tr><th>PR</th><th>State</th><th>Days in state</th><th>Since</th></tr></thead><tbody>' +
     (ageing.join('') || '<tr><td colspan="4" class="muted">no open PRs</td></tr>') + '</tbody></table></div>';
 }
-document.getElementById('progress').addEventListener('click', e => { const r = e.target.closest('rect[data-state]'); if (r) tileClick(r.dataset.state); });
-document.getElementById('progress').addEventListener('keydown', e => { const r = e.target.closest && e.target.closest('rect[data-state]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tileClick(r.dataset.state); } });
+const segmentClick = k => { tileClick(k); document.querySelector('.tabs button[data-tab="prs"]').focus(); };
+document.getElementById('progress').addEventListener('click', e => { const r = e.target.closest('rect[data-state]'); if (r) segmentClick(r.dataset.state); });
+document.getElementById('progress').addEventListener('keydown', e => { const r = e.target.closest && e.target.closest('rect[data-state]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); segmentClick(r.dataset.state); } });
 const BUG_STATES = ['todo', 'ai', 'testing', 'done'];
 let bugOverrides = {}, bugsDb = null, bugsCanWrite = false, renderPending = false;
 const ts = s => { const n = Date.parse(s || ''); return isNaN(n) ? 0 : n; };

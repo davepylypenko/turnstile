@@ -43,7 +43,9 @@ class Board(unittest.TestCase):
         self.assertIn('<button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button><button role="tab" aria-selected="false" data-tab="progress">Progress</button>', html)
         self.assertIn('<div id="progress" class="hidden" role="tabpanel"></div>', html); self.assertIn("const TABS = ['prs', 'stories', 'bugs', 'awaiting', 'progress']", html)
         for s in ("Stories DONE", "PRs MERGED", "Bugs open", "Days in state", "days in state", "state_since", "rework_since", "sent_at", "head_verified", "Date.now()",
-                  "AGE_STATES = ['REWORK', 'ON_HUMAN_REVIEW', 'READY']", "r.days >= 3", "class=\"aged\"", "--aged:", "<title>", "data-state=", "tileClick(r.dataset.state)",
+                  "AGE_STATES = ['REWORK', 'ON_HUMAN_REVIEW', 'READY']", "r.days >= 3", "class=\"aged\"", "--aged:", "<title>", "data-state=", "segmentClick(r.dataset.state)",
+                  "Math.max(0, Math.floor((Date.now() - t) / 86400000))", "(e.human || {}).returned_at, (e.human || {}).sent_at", "' (all ' + esc(k) + ' PRs)'",
+                  "const segmentClick = k => { tileClick(k); document.querySelector('.tabs button[data-tab=\"prs\"]').focus(); };",
                   "e.key === 'Enter' || e.key === ' '", "stackBar(c, PR_STATES, 8, true)", "stackBar(counts, order, 16, false)", "function gateMarks(s)", "esc(gateMarks(s))",
                   "esc(UPDATED)", "no stories yet", "no open PRs", "progress(); legend();", "bugs(); progress();", "stroke:var(--card); stroke-width:2", "Progress:</b>"):
             self.assertIn(s, html, s)

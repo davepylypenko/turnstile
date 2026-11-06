@@ -12,8 +12,9 @@ asks or demands a command before it. Reviewer logins come from the PR (`gh pr vi
 search by name/email; never guess.
 
 **Fallback when no send skill is installed:** ask the lead which skill to install or use (`turnstile config set send_skill=/<name>`;
-the default is installed with `ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review
-~/.claude/skills/send-pr-review`) and, until then, compose the message by hand from the templates below.
+the default is installed with
+`ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`)
+and, until then, compose the message by hand from the templates below.
 
 ## Review request (front repos)
 
