@@ -27,7 +27,7 @@ def build_parser():
     ps.add_argument("--offline", action="store_true", help="skip the GitHub head check (loud WARN; READY/ON_HUMAN_REVIEW stay refused)")
 
     js = sub.add_parser("jira-synced", help="record that the Jira transition was performed"); js.add_argument("ident"); js.add_argument("status")
-    js.add_argument("--assignee", help="Atlassian account id the ticket was assigned to (the orchestrator's own, from atlassianUserInfo); recorded once, never moved by the plugin")
+    js.add_argument("--assignee", help="Atlassian account id of the ticket's holder: yourself (atlassianUserInfo) on take-up, or whoever already holds it; re-run to record a hand-over made by hand")
     js.add_argument("--assignee-name", help="display name for the ledger and the board (with --assignee)")
     ap = sub.add_parser("approve", help="record the lead's approval of an awaiting_human entry"); ap.add_argument("ah_id")
     sub.add_parser("render-board", help="render board.html from state.json")
