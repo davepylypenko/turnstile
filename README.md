@@ -30,7 +30,7 @@ command, role-scoped agents and hooks that physically block forbidden actions.
 ```
 claude plugin install turnstile --marketplace davepylypenko/turnstile       # adds the marketplace and installs the plugin
 sh ~/.claude/plugins/marketplaces/turnstile/scripts/install-cli.sh          # writes the `turnstile` shim into ~/.local/bin
-turnstile --version                                                         # turnstile 0.4.2 (add ~/.local/bin to PATH if the script says so)
+turnstile --version                                                         # turnstile 0.4.3 (add ~/.local/bin to PATH if the script says so)
 claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # optional: ✔ Validation passed
 ```
 
