@@ -99,6 +99,8 @@ def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> in
             _ensure_start_story_entries(data)
             _recompute_next_actions(data)
             new = sorted(set(planned) - before)
+            for sid in new:
+                data["stories"][sid]["state_since"] = _now()
             summary = "plan submitted: %d stories (%d new%s), approval %s" % (len(planned), len(new), ": " + ", ".join(new) if new else "", entry["id"])
             _side_effects(delivery, st, [summary] + extra + warnings, io, no_commit, no_push)
         for w in warnings:

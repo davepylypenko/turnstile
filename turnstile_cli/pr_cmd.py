@@ -5,7 +5,7 @@ from .bug_cmd import PR_RX, _commit
 from .errors import TurnstileError
 
 def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False, stacked_on: Optional[str] = None) -> int:
-    from .pass_cmd import IO, _side_effects, _recompute_next_actions, jira_instruction
+    from .pass_cmd import IO, _side_effects, _recompute_next_actions, jira_instruction, _now
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
         if not PR_RX.match(pr_id or ""):
@@ -46,7 +46,7 @@ def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool 
                 bases = {s.get("branch")} | {p.get("branch") for p in data["prs"].values() if p.get("story") == story and p.get("state") != "MERGED"}
                 if f.base not in bases:
                     raise TurnstileError("%s is based on %s, not on the story branch %s or another open PR of %s" % (pr_id, f.base, s.get("branch"), story))
-            data["prs"][pr_id] = {"ticket": ticket, "story": story, "state": "DEV", "branch": f.branch, "base": f.base, "head": f.head,
+            data["prs"][pr_id] = {"ticket": ticket, "story": story, "state": "DEV", "state_since": _now(), "branch": f.branch, "base": f.base, "head": f.head,
                                   "blocked_by": blocked_by, "evidence": {}, "jira": {"status": rules.JIRA_FOR_PR_STATE["DEV"], "synced": False}, "next_action": ""}
             _recompute_next_actions(data)
             summary = "pr %s added (%s, %s) DEV head %s" % (pr_id, story, ticket, (f.head or "")[:8])

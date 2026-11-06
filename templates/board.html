@@ -7,9 +7,9 @@
 <meta name="description" content="Epic delivery state: PRs, stories, bugs and what waits for humans.">
 <style>
 :root { --bg:#f6f7f9; --card:#fff; --ink:#1c1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb;
-  --dev:#9ca3af; --ai:#f59e0b; --ready:#10b981; --human:#3b82f6; --rework:#ef4444; --approved:#8b5cf6; --merged:#4b5563; --planned:#9ca3af; --progress:#f59e0b; --integ:#3b82f6; --env:#8b5cf6; --done:#10b981; --todo:#ef4444; --bugai:#f59e0b; --testing:#3b82f6; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; } }
-:root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; }
+  --dev:#9ca3af; --ai:#f59e0b; --ready:#10b981; --human:#3b82f6; --rework:#ef4444; --approved:#8b5cf6; --merged:#4b5563; --planned:#9ca3af; --progress:#f59e0b; --integ:#3b82f6; --env:#8b5cf6; --done:#10b981; --todo:#ef4444; --bugai:#f59e0b; --testing:#3b82f6; --aged:#fdf3dc; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --aged:#2b2416; } }
+:root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --ink:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --aged:#2b2416; }
 * { box-sizing:border-box } body { margin:0; padding:16px; background:var(--bg); color:var(--ink); font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif }
 h1 { font-size:20px; margin:0 0 4px } .updated { color:var(--muted); font-size:12px; margin-bottom:12px }
 .tiles { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px } .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:110px }
@@ -24,6 +24,12 @@ th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); 
 select.bug { font:inherit; font-size:12px; padding:2px 6px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink) }
 select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); font-size:11px }
 .hidden { display:none } .legend { color:var(--muted); font-size:12px; margin-top:16px } .legend b { color:var(--ink) }
+.cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:8px; margin-bottom:16px } .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px }
+.card h3 { font-size:13px; margin:0 0 6px; display:flex; justify-content:space-between } .card h3 span { color:var(--muted); font-weight:400 }
+svg.sbar { display:block; width:100%; margin:4px 0 } svg.sbar rect { stroke:var(--card); stroke-width:2 } svg.sbar rect.track { fill:var(--line) }
+svg.sbar rect[data-state] { cursor:pointer } svg.sbar rect[data-state]:focus-visible { stroke:var(--accent); outline:none }
+.keys { color:var(--muted); font-size:12px } .keys span { display:inline-block; margin-right:10px; white-space:nowrap } .keys i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; vertical-align:baseline }
+.bar-cell { min-width:200px } tr.aged td { background:var(--aged) } td.num { text-align:right; font-variant-numeric:tabular-nums }
 </style>
 </head>
 <body>
@@ -33,14 +39,16 @@ select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); 
 <button type="button" class="tile" data-tile="DEV" aria-pressed="false"><b>0</b><span>DEV</span></button><button type="button" class="tile" data-tile="AI_REVIEW" aria-pressed="false"><b>0</b><span>AI_REVIEW</span></button><button type="button" class="tile" data-tile="READY" aria-pressed="false"><b>0</b><span>READY</span></button><button type="button" class="tile" data-tile="ON_HUMAN_REVIEW" aria-pressed="false"><b>0</b><span>ON_HUMAN_REVIEW</span></button><button type="button" class="tile" data-tile="REWORK" aria-pressed="false"><b>0</b><span>REWORK</span></button><button type="button" class="tile" data-tile="APPROVED" aria-pressed="false"><b>0</b><span>APPROVED</span></button><button type="button" class="tile" data-tile="MERGED" aria-pressed="false"><b>0</b><span>MERGED</span></button>
 <button type="button" class="tile" data-tile="stories"><b>0</b><span>Stories</span></button><button type="button" class="tile" data-tile="bugs" aria-pressed="false"><b>0</b><span>Open bugs</span></button><button type="button" class="tile" data-tile="awaiting"><b>0</b><span>Awaiting humans</span></button>
 </div>
-<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="prs" class="on">PRs</button><button role="tab" aria-selected="false" data-tab="stories">Stories</button><button role="tab" aria-selected="false" data-tab="bugs">Bugs</button><button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button></div>
-<div id="prs" role="tabpanel"></div><div id="stories" class="hidden" role="tabpanel"></div><div id="bugs" class="hidden" role="tabpanel"></div><div id="awaiting" class="hidden" role="tabpanel"></div>
+<div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="prs" class="on">PRs</button><button role="tab" aria-selected="false" data-tab="stories">Stories</button><button role="tab" aria-selected="false" data-tab="bugs">Bugs</button><button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button><button role="tab" aria-selected="false" data-tab="progress">Progress</button></div>
+<div id="prs" role="tabpanel"></div><div id="stories" class="hidden" role="tabpanel"></div><div id="bugs" class="hidden" role="tabpanel"></div><div id="awaiting" class="hidden" role="tabpanel"></div><div id="progress" class="hidden" role="tabpanel"></div>
 <div class="legend" id="legend"></div>
 <script>
 const STATE = /*__TURNSTILE_STATE__*/null;
 const COLORS = { DEV:'var(--dev)', AI_REVIEW:'var(--ai)', READY:'var(--ready)', ON_HUMAN_REVIEW:'var(--human)', REWORK:'var(--rework)', APPROVED:'var(--approved)', MERGED:'var(--merged)' };
 const PR_STATES = Object.keys(COLORS);
-const TABS = ['prs', 'stories', 'bugs', 'awaiting'];
+const TABS = ['prs', 'stories', 'bugs', 'awaiting', 'progress'];
+const STORY_STATES = ['PLANNED', 'IN_PROGRESS', 'INTEGRATION_REVIEW', 'ENV_TESTING', 'DONE'];
+const UPDATED = '__TURNSTILE_UPDATED__';
 let view = { tab: 'prs', state: null, open: false };
 Object.assign(COLORS, { PLANNED:'var(--planned)', IN_PROGRESS:'var(--progress)', INTEGRATION_REVIEW:'var(--integ)', ENV_TESTING:'var(--env)', DONE:'var(--done)', todo:'var(--todo)', ai:'var(--bugai)', testing:'var(--testing)', done:'var(--done)' });
 const JIRA = { DEV:'In progress', AI_REVIEW:'In progress', READY:'In progress', ON_HUMAN_REVIEW:'On Review', REWORK:'On Review', APPROVED:'On Review', MERGED:'On Hold' };
@@ -116,19 +124,68 @@ function prs() {
   const all = document.getElementById('show-all');
   if (all) all.addEventListener('click', e => { e.preventDefault(); view.state = null; show(); writeHash(); document.querySelector('.tabs button[data-tab="prs"]').focus(); });
 }
+function gateMarks(s) {
+  const e = s.evidence || {}, trunk = s.mode === 'trunk';
+  const runMark = r => r ? ((((r.cases || {}).fail === 0) && (r.figma_parity === 'pass' || (r.arm === 'control' && r.figma_parity === 'not_testable_here'))) ? '✓' : '✗ ' + ((r.cases || {}).fail == null ? '?' : r.cases.fail) + ' fail') + (r.full ? '' : ' (partial)') : '—';
+  const lastArm = a => (e.env_runs || []).filter(r => (r.arm || 'treatment') === a).slice(-1)[0];
+  return ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—')]
+    .concat(trunk ? ['treatment ' + runMark(lastArm('treatment')), 'control ' + runMark(lastArm('control'))] : ['env ' + runMark(e.env_test)]).join(' · ');
+}
 function stories() {
   document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
     Object.entries(STATE.stories || {}).map(([sid, s]) => {
       const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
-      const e = s.evidence || {}, trunk = s.mode === 'trunk';
-      const runMark = r => r ? ((((r.cases || {}).fail === 0) && (r.figma_parity === 'pass' || (r.arm === 'control' && r.figma_parity === 'not_testable_here'))) ? '✓' : '✗ ' + ((r.cases || {}).fail == null ? '?' : r.cases.fail) + ' fail') + (r.full ? '' : ' (partial)') : '—';
-      const lastArm = a => (e.env_runs || []).filter(r => (r.arm || 'treatment') === a).slice(-1)[0];
-      const ev = ['deploy ' + (e.deploy ? e.deploy.build : '—'), 'review ' + (e.integration_review ? (e.integration_review.clean ? '✓' : '✗') : '—')]
-        .concat(trunk ? ['treatment ' + runMark(lastArm('treatment')), 'control ' + runMark(lastArm('control'))] : ['env ' + runMark(e.env_test)]).join(' · ');
-      const mode = trunk ? '<br><span class="muted">trunk · flag ' + esc((STATE.epic || {}).flag || 'none') + '</span>' : '';
-      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(ev) + '</td><td>' + esc(s.next_action) + '</td></tr>';
+      const mode = s.mode === 'trunk' ? '<br><span class="muted">trunk · flag ' + esc((STATE.epic || {}).flag || 'none') + '</span>' : '';
+      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(gateMarks(s)) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
+const countBy = (items, order) => { const n = {}; order.forEach(k => { n[k] = 0; }); items.forEach(i => { if (i.state in n) n[i.state] += 1; }); return n; };
+function stackBar(counts, order, h, link) {
+  const total = order.reduce((n, k) => n + counts[k], 0), r = Math.min(4, h / 2);
+  if (!total) return '<svg class="sbar" height="' + h + '" role="img" aria-label="none"><rect class="track" width="100%" height="' + h + '" rx="' + r + '"></rect></svg>';
+  let x = 0;
+  const label = order.filter(k => counts[k]).map(k => k + ' ' + counts[k]).join(', ');
+  return '<svg class="sbar" height="' + h + '" role="img" aria-label="' + esc(label) + '">' + order.filter(k => counts[k]).map(k => {
+    const w = counts[k] / total * 100, sx = x; x += w;
+    return '<rect x="' + sx + '%" width="' + w + '%" height="' + h + '" rx="' + r + '" fill="' + COLORS[k] + '"' + (link ? ' data-state="' + esc(k) + '" tabindex="0" role="button"' : '') +
+      '><title>' + esc(k) + ' · ' + counts[k] + (link ? ' (show in PRs)' : '') + '</title></rect>';
+  }).join('') + '</svg>';
+}
+const keys = (counts, order) => '<div class="keys">' + order.map(k => '<span><i style="background:' + COLORS[k] + '"></i>' + esc(k) + ' ' + counts[k] + '</span>').join('') + '</div>';
+function meter(n, N) {
+  const pct = N ? Math.round(n / N * 100) : 0;
+  return '<svg class="sbar" height="8" role="img" aria-label="' + pct + '%"><rect class="track" width="100%" height="8" rx="4"></rect>' + (pct ? '<rect width="' + pct + '%" height="8" rx="4" fill="var(--accent)"></rect>' : '') + '</svg>';
+}
+const tsIso = s => { const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d)Z$/.exec(s || ''); return ts(m ? m[1] + ':00Z' : s); };
+function since(p) {
+  if (p.state_since) return p.state_since;
+  const e = p.evidence || {}, cands = [(p.rework_since || {}).at, (e.human || {}).sent_at, (e.head_verified || {}).at].filter(x => tsIso(x));
+  return cands.length ? cands.sort((a, b) => tsIso(b) - tsIso(a))[0] : null;
+}
+const AGE_STATES = ['REWORK', 'ON_HUMAN_REVIEW', 'READY'];
+function progress() {
+  const stories = Object.entries(STATE.stories || {}), prs = Object.entries(STATE.prs || {}), bugs = STATE.bugs || [];
+  const sc = countBy(stories.map(([, s]) => s), STORY_STATES), pc = countBy(prs.map(([, p]) => p), PR_STATES);
+  const pct = (n, N) => N ? Math.round(n / N * 100) + '%' : '—';
+  const card = (title, n, N, counts, order) => '<div class="card"><h3>' + title + ' ' + n + ' / ' + N + '<span>' + pct(n, N) + '</span></h3>' + meter(n, N) + stackBar(counts, order, 16, false) + keys(counts, order) + '</div>';
+  const rows = stories.map(([sid, s]) => {
+    const mine = prs.filter(([, p]) => p.story === sid).map(([, p]) => p), c = countBy(mine, PR_STATES);
+    return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td class="bar-cell">' + stackBar(c, PR_STATES, 8, true) + '<span class="muted">' + mine.length + ' PR' + (mine.length === 1 ? '' : 's') + '</span></td><td class="k">' + esc(gateMarks(s)) + '</td></tr>';
+  });
+  const open = prs.filter(([, p]) => p.state !== 'MERGED').map(([id, p]) => { const at = since(p), t = tsIso(at); return { id, p, at, days: t ? Math.floor((Date.now() - t) / 86400000) : null }; })
+    .sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days));
+  const ageing = open.map(r => '<tr' + (r.days != null && r.days >= 3 && AGE_STATES.includes(r.p.state) ? ' class="aged"' : '') + '><td class="k"><a href="' + esc(prUrl(r.id)) + '" target="_blank" rel="noopener">' + esc(r.id) + '</a></td><td>' + badge(r.p.state) +
+    '</td><td class="num">' + (r.days == null ? '—' : r.days) + '</td><td class="muted">' + esc(r.at || '—') + '</td></tr>');
+  document.getElementById('progress').innerHTML =
+    '<div class="cards">' + card('Stories DONE', sc.DONE, stories.length, sc, STORY_STATES) + card('PRs MERGED', pc.MERGED, prs.length, pc, PR_STATES) +
+    '<div class="card"><h3>Bugs open ' + openBugs() + ' / ' + bugs.length + '<span>snapshot ' + esc(UPDATED) + '</span></h3></div></div>' +
+    '<h2>Per story</h2><div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs by state</th><th>Gates</th></tr></thead><tbody>' +
+    (rows.join('') || '<tr><td colspan="4" class="muted">no stories yet</td></tr>') + '</tbody></table></div>' +
+    '<h2>Ageing <span class="muted">(open PRs, days in state)</span></h2><div class="scroll"><table><thead><tr><th>PR</th><th>State</th><th>Days in state</th><th>Since</th></tr></thead><tbody>' +
+    (ageing.join('') || '<tr><td colspan="4" class="muted">no open PRs</td></tr>') + '</tbody></table></div>';
+}
+document.getElementById('progress').addEventListener('click', e => { const r = e.target.closest('rect[data-state]'); if (r) tileClick(r.dataset.state); });
+document.getElementById('progress').addEventListener('keydown', e => { const r = e.target.closest && e.target.closest('rect[data-state]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tileClick(r.dataset.state); } });
 const BUG_STATES = ['todo', 'ai', 'testing', 'done'];
 let bugOverrides = {}, bugsDb = null, bugsCanWrite = false, renderPending = false;
 const ts = s => { const n = Date.parse(s || ''); return isNaN(n) ? 0 : n; };
@@ -168,7 +225,7 @@ function renderBugs() {
     if (!renderPending) { renderPending = true; el.addEventListener('blur', () => { renderPending = false; renderBugs(); }, { once: true }); }
     return;
   }
-  bugs();
+  bugs(); progress();
 }
 async function connectBugsDb() {
   try {
@@ -187,9 +244,10 @@ document.querySelectorAll('#tiles .tile').forEach(b => b.addEventListener('click
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
     '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry; once every thread has its reply and Copilot (or the gate) is clean on the head, the agents re-request the thread authors on GitHub. A push-only rework pings nobody: its row reads "reviewers not notified" and the lead decides.' +
-    '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.';
+    '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.' +
+    '<br><b>Progress:</b> a snapshot of state.json — completion and bars by state (click a story\'s segment to filter the PRs tab), gates per story, and days in state for every open PR (from state_since; older records fall back to the newest of rework_since, the send and the head check). READY / ON_HUMAN_REVIEW / REWORK rows at 3+ days are tinted.';
 }
-if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend();
+if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); progress(); legend();
   if (location.hash) applyHash(); window.addEventListener('hashchange', applyHash);
   if (window.claude && typeof window.claude.use === 'function') { connectBugsDb(); } else { window.addEventListener('load', () => { if (window.claude && typeof window.claude.use === 'function') connectBugsDb(); }); } }
 </script>

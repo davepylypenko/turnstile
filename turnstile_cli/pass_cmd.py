@@ -459,6 +459,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 del trial["_id"]
                 data["prs"][ident] = pr = trial
                 pr["state"] = target
+                if src != target:
+                    pr["state_since"] = _now()
                 if o.reason:
                     pr["last_reason"] = o.reason
                 jira_target = rules.JIRA_FOR_PR_STATE[target]
@@ -549,6 +551,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 del trial["_id"]
                 data["stories"][ident] = story = trial
                 story["state"] = target
+                if src != target:
+                    story["state_since"] = _now()
                 if o.reason:
                     story["last_reason"] = o.reason
                 jira_line = None

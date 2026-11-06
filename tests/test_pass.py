@@ -122,6 +122,26 @@ class PassCmd(unittest.TestCase):
         self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
+    def test_state_since_is_stamped_on_every_state_change_only(self):
+        # 2026-11-06: the board's ageing table reads pr.state_since / story.state_since; a re-entry into the same state keeps the stamp
+        self.assertNotIn("state_since", self.data()["prs"]["jsfiller#1"])
+        self.to_ready(); since = self.data()["prs"]["jsfiller#1"]["state_since"]
+        self.assertRegex(since, r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$")
+        self.story(state="DONE")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io); self.assertEqual(rc, 0, out)
+        self.assertRegex(self.data()["prs"]["jsfiller#1"]["state_since"], r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$")
+        with mock.patch.object(pass_cmd, "_now", return_value="2026-11-06T12:00Z"):
+            rc, out = run_capture(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="push"), self.io); self.assertEqual(rc, 0, out)
+            self.assertEqual(self.data()["prs"]["jsfiller#1"]["state_since"], "2026-11-06T12:00Z")
+            rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io); self.assertEqual(rc, 0, out)
+            self.assertEqual(self.data()["prs"]["docs-platform#2"]["state_since"], "2026-11-06T12:00Z")
+        self.io.heads["docs-platform#2"] = H2
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head=H2, ci="success"), self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["prs"]["docs-platform#2"]["state_since"], "2026-11-06T12:00Z")  # AI_REVIEW → AI_REVIEW after a push: same state, same stamp
+        self.assertNotIn("state_since", self.data()["stories"]["S1"])
+        with mock.patch.object(pass_cmd, "_now", return_value="2026-11-06T13:00Z"):
+            rc, out = run_capture(self.d, "story", "S1", "IN_PROGRESS", opts(reason="reopen"), self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["stories"]["S1"]["state_since"], "2026-11-06T13:00Z")
     def test_head_change_voids_old_evidence_and_an_old_open_send(self):
         self.to_ready(); self.old_send_entry()
         self.io.heads["jsfiller#1"] = H2

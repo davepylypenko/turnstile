@@ -113,6 +113,7 @@ class Run(unittest.TestCase):
         self.assertEqual(rc, 0); self.assertIn("TURNSTILE_LEAD=1 turnstile approve ah-1", out); self.assertIn("OK plan submitted", out)
         d = self.data()
         self.assertEqual(d["stories"]["S2"]["state"], "PLANNED"); self.assertEqual(d["epic"]["plan"]["digest"], state.digest(PLAN))
+        self.assertRegex(d["stories"]["S2"]["state_since"], r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$"); self.assertNotIn("state_since", d["stories"]["S1"])
         e = self.plan_entry(); self.assertEqual((e["id"], e["type"], e["payload"], e["approved_at"]), ("ah-1", "plan", "plan.md", None))
         self.assertEqual(len(self.io.commits), 1); self.assertEqual(self.io.renders, 1); self.assertIn("plan submitted", (self.d / "ledger.md").read_text())
     def test_resubmit_voids_previous_entry(self):
