@@ -25,6 +25,12 @@ def review_effort(eff: dict, agent: str) -> str:
     effort = models.resolved_effort(agent, eff["models"][agent])
     return " " + effort if effort and skill == config.DEFAULT_REVIEW_SKILL else ""
 
+ROUND_RX = re.compile(r"-r(\d+)$")
+
+def round_mode(name: str) -> str:
+    m = ROUND_RX.search(name); n = int(m.group(1)) if m else 1
+    return "round %d — %s" % (n, "delta review of the changes since the last reviewed head" if n >= 2 else "full review")
+
 def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Optional[dict] = None) -> dict:
     epic = data.get("epic") or {}; env = epic.get("environment") or {}; eff = eff or config.effective(data)
     return {"review_skill": eff["review_skill"]["value"], "story_review_skill": eff["story_review_skill"]["value"],
@@ -32,7 +38,7 @@ def builtins(data: dict, delivery: pathlib.Path, agent: str, name: str, eff: Opt
             "flag": epic.get("flag") or "none", "arm": "treatment",
             "epic_key": epic.get("key") or "", "github_org": epic.get("github_org") or "", "delivery": str(pathlib.Path(delivery).resolve()),
             "variant": env.get("variant") or "", "desk": env.get("desk") or "", "env_recipe": env.get("recipe") or "", "agent": agent,
-            "brief_name": name, "brief_path": "briefs/%s.md" % name, "report_path": "reports/%s.md" % name,
+            "brief_name": name, "round_mode": round_mode(name), "brief_path": "briefs/%s.md" % name, "report_path": "reports/%s.md" % name,
             "skill_dir": str(ROOT / "skills" / "turnstile"),
             "today": datetime.datetime.utcnow().strftime("%Y-%m-%d")}
 

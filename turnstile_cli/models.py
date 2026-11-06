@@ -5,7 +5,7 @@ from .errors import TurnstileError
 MODELS = ("haiku", "sonnet", "opus", "fable")
 EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULTS = {"implementer": {"model": "sonnet", "effort": None}, "deployer": {"model": "sonnet", "effort": None},
-            "tester": {"model": "sonnet", "effort": None}, "stack-step": {"model": "haiku", "effort": None},
+            "tester": {"model": "sonnet", "effort": None}, "stack-step": {"model": "haiku", "effort": None}, "gate-runner": {"model": "sonnet", "effort": None},
             "comments-handler": {"model": "haiku", "effort": None}, "investigator": {"model": "haiku", "effort": None},
             "reviewer": {"model": "opus", "effort": "xhigh"}, "story-reviewer": {"model": "opus", "effort": "xhigh"}}
 PREVIOUS_DEFAULTS = {"reviewer": [{"model": "opus", "effort": "medium"}], "story-reviewer": [{"model": "opus", "effort": "high"}]}

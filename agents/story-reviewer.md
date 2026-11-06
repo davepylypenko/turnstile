@@ -13,6 +13,7 @@ You review a business slice as one change, the way a human reviewer will see it,
 - Scope: `git diff <epic-branch>...<stack-top>` for the story's repos; the story's tickets as a whole; cross-ticket seams (state shapes, selectors, API contracts, copy keys); the test plan cases mapped to the story; the Figma frames named in the brief; the epic invariants.
 - Findings carry the ticket PR they belong to, so fixes land in that PR and its gates re-run.
 - Recursive: re-review the new stack top after fixes until a round has no `blocker`/`major`.
+- Round mode (the brief's `## Round mode`): round 1 is the full review; round ≥ 2 is a delta review of `git diff <last reviewed head>...<head>` against the previous findings, aiming ≤ 80 tool calls.
 
 ## Procedure
 
@@ -35,7 +36,7 @@ Merge, ready, replies to humans, Slack, Jira, subagents, rebase, force-push, `tu
 ## Common rules
 
 - Read the brief file named in your prompt first, then every file it lists; the brief wins on specifics. Verify every anchor (file:line, symbol) before editing; a wrong anchor means stop and report `NEEDS_CONTEXT` with what you found instead. Never guess.
-- Poll every 2 minutes or less when waiting on CI, Copilot, a workflow or a build; never silent for more than 5 minutes — print one line of progress. Keep your working state in the report file as you go so a restart after a limit or a watchdog resumes cheaply.
+- Wait for CI, a deploy or a gate with ONE blocking command (`gh run watch <id> --exit-status`, `gh pr checks <n> --watch`, the deploy workflow's `wait_for_ready`), never a sleep/poll loop (pass the Bash tool's `timeout` parameter, up to 600000 ms, on that call; if the watch is still running when the timeout expires, call it again instead of polling with short status checks), and never end the turn with an interim "waiting" message — report only when there is a fact. Keep your working state in the report file as you go so a restart after a limit or a watchdog resumes cheaply.
 - Write the full report to the path the brief gives under `reports/` using the template in `references/reports.md` (the Write tool; never Bash redirects into the delivery dir); reply to the orchestrator with at most 8 lines: status (`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`), the head SHA(s), the PR URL(s), one-line result, concerns.
 - Never claim a pass you did not observe: paste the real summary lines of every command you ran.
 - Signed commits only (never `--no-gpg-sign`), conventional message with the ticket key, no `Co-Authored-By` trailer in any spelling (the gate reads the messages on GitHub). PR bodies per `references/pr-body.md`, no generated-with footer. Never comment on a PR; the repo gate's own outputs are the only allowed PR comments.

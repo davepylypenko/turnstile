@@ -32,7 +32,8 @@ def build_parser():
     ap = sub.add_parser("approve", help="record the lead's approval of an awaiting_human entry"); ap.add_argument("ah_id")
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
-    sub.add_parser("status", help="reconcile + where we are")
+    stp = sub.add_parser("status", help="reconcile + where we are")
+    stp.add_argument("--brief", action="store_true", help="only SYNC, the PRs/stories whose state or head changed since the previous status, the awaiting list and the anomalies")
     bg = sub.add_parser("bug", help="record or update a bug found by the tester or the lead"); bsub = bg.add_subparsers(dest="bug_cmd"); p.bug_parser = bg
     ba = bsub.add_parser("add"); ba.add_argument("--story", required=True); ba.add_argument("--title", required=True)
     ba.add_argument("--source", required=True); ba.add_argument("--pr"); ba.add_argument("--figma"); ba.add_argument("--note", default="")
@@ -156,7 +157,7 @@ def main(argv=None):
             print("OK rendered %s" % (delivery / "board.html")); return 0
         if a.cmd in ("reconcile", "status"):
             from .reconcile import cli
-            return cli(delivery, as_json=getattr(a, "json", False), status=(a.cmd == "status"))
+            return cli(delivery, as_json=getattr(a, "json", False), status=(a.cmd == "status"), brief=getattr(a, "brief", False))
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
     return 0

@@ -144,7 +144,7 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
   same guarded path as `pass`.
 - Skill `turnstile` (`skills/turnstile/SKILL.md`): `init`, `status`, `pass`, `dispatch <agent> <brief>`, `story-gate <S>`,
   `plan`; references for DoR/DoD, kick-off, briefs, PR body, Slack, reports, evidence and env recipes.
-- Role agents: implementer, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
+- Role agents: implementer, gate-runner, reviewer, story-reviewer, stack-step, comments-handler, investigator, tester, deployer.
   Tester credentials never touch a file: the tester reads `TURNSTILE_TEST_PASSWORD` or the keychain item
   `turnstile-test-password` at login (`skills/turnstile/references/env/pdffiller-dev.md` § Credentials).
 - Hooks that record Slack sends (never blocking them) and block merges, reviewer requests, force pushes, PR comments,
@@ -160,6 +160,12 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
   one at a time, in parallel only across different repositories; waiting on GitHub or CI goes through `Monitor` or a background command,
   never a cron or watchdog, with no interim "still waiting" messages to the lead; the repo gate runs once per head and is
   re-run only for P1/P2 findings; the orchestrator dispatches and never reads diffs or runs suites itself.
+  Cache-read cost is driven by long contexts and wake-ups, so: agents wait on CI, a deploy or a gate with ONE blocking command
+  (`gh run watch --exit-status`, `gh pr checks --watch`) and never end a turn with a "waiting" message; the `gate-runner` (sonnet)
+  runs the repo gate on a fresh head before the reviewer, who re-runs it only if it pushes; reviewer round 2 and later is a delta review
+  (`{{round_mode}}` is filled from the `-r<n>` brief name; aim ≤ 80 tool calls); the orchestrator reads only an agent's reply,
+  publishes the board once per batch through a haiku subagent (`references/board.md`), starts a new session each day, runs `/compact`
+  past ~150 k and uses `turnstile status --brief` (only what changed since the previous status).
 
 ### Per-person overrides
 
@@ -308,7 +314,7 @@ Every deploy record, ENV_TESTING pass and DONE also asks GitHub for the head of 
 when any differs (a push without `pass pr` leaves `state.json` stale); `--offline` records `deploy.head_verified: false`
 and DONE refuses it.
 
-Agents (`agents/`): implementer, deployer, tester (sonnet; the tester does Figma parity), stack-step, comments-handler,
+Agents (`agents/`): implementer, deployer, gate-runner, tester (sonnet; the tester does Figma parity), stack-step, comments-handler,
 investigator (haiku), reviewer (opus, xhigh), story-reviewer (opus, xhigh); the frontmatter equals the plugin defaults
 (`models.DEFAULTS`), and `epic.models` holds only the per-epic overrides written by `init --models
 '{"<agent>":{"model":…,"effort":…}}'` or `config set --epic` (model `haiku|sonnet|opus|fable`, effort

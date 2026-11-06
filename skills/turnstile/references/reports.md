@@ -12,6 +12,11 @@ Every report starts with `# <TYPE> — <subject> — <date>` and a `Status:` lin
 (# · severity · file:line · claim · verification · fix · status) · gate run URL + verdict · fixes applied by the reviewer
 (commits) · `clean: true|false`.
 
+## Gate
+`reports/GATE-<n>.md` — PR · head · gate line `gate: <name>:<pass|fail>:<url>` · CI result on the head (one blocking watch) · findings
+table (# · severity · file:line · claim · verification · fix · status) · fixes applied (commits; new head) · re-runs of a CANCELLED
+duplicate run · `clean: true|false`.
+
 ## Story review
 `reports/STORY-<S>-review.md` — stack top SHA (= `evidence.deploy.head`) · PRs in order · rounds · findings table with a
 `target PR` column · cross-ticket seams checked · test cases traced · `clean: true|false`.

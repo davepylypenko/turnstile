@@ -4,9 +4,10 @@ from turnstile_cli import models
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
 EXPECTED = {"implementer": ("sonnet", None), "reviewer": ("opus", "xhigh"), "story-reviewer": ("opus", "xhigh"), "stack-step": ("haiku", None),
-            "comments-handler": ("haiku", None), "investigator": ("haiku", None), "tester": ("sonnet", None), "deployer": ("sonnet", None)}
+            "comments-handler": ("haiku", None), "investigator": ("haiku", None), "tester": ("sonnet", None), "deployer": ("sonnet", None),
+            "gate-runner": ("sonnet", None)}
 SECTIONS = ["## Role", "## Procedure", "## Cannot", "## Report", "## Common rules"]
-COMMON = ["Poll every 2 minutes or less", "never silent for more than 5 minutes", "reports/", "8 lines", "no subagents", "TURNSTILE_LEAD"]
+COMMON = ["ONE blocking command", "never a sleep/poll loop", "600000 ms", "call it again", "report only when there is a fact", "reports/", "8 lines", "no subagents", "TURNSTILE_LEAD"]
 FORBIDDEN_TOOLS = ["slack_send_message", "slack_send_message_draft", "slack_schedule_message", "transitionJiraIssue", "Agent"]
 
 def parse_frontmatter(text: str) -> dict:
@@ -19,7 +20,7 @@ def parse_frontmatter(text: str) -> dict:
     return out
 
 class Agents(unittest.TestCase):
-    def test_all_eight_exist_with_expected_model_and_effort(self):
+    def test_all_agents_exist_with_expected_model_and_effort(self):
         self.assertEqual(sorted(p.stem for p in AGENTS.glob("*.md")), sorted(EXPECTED))
         for name, (model, effort) in EXPECTED.items():
             fm = parse_frontmatter((AGENTS / (name + ".md")).read_text())
@@ -41,6 +42,13 @@ class Agents(unittest.TestCase):
             text = p.read_text()
             for s in SECTIONS: self.assertIn(s, text, "%s lacks %s" % (p.name, s))
             for c in COMMON: self.assertIn(c, text, "%s lacks common rule %r" % (p.name, c))
+    def test_gate_runner_tools_and_role(self):
+        text = (AGENTS / "gate-runner.md").read_text(); fm = parse_frontmatter(text)
+        self.assertEqual([x.strip() for x in fm["tools"].split(",")], ["Read", "Edit", "Bash", "Grep", "Glob", "Skill"])
+        for needle in ["gate: <name>:<pass|fail>:<url>", "CANCELLED", "gh pr checks <n> --watch", "blocker", "GATE-"]: self.assertIn(needle, text, needle)
+    def test_reviewers_know_round_mode_and_the_gate_runner_report(self):
+        for name in ("reviewer", "story-reviewer"): self.assertIn("Round mode", (AGENTS / (name + ".md")).read_text(), name)
+        self.assertIn("GATE-<n>.md", (AGENTS / "reviewer.md").read_text())
     def test_no_forbidden_tools(self):
         for p in AGENTS.glob("*.md"):
             fm = parse_frontmatter(p.read_text())
