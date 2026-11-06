@@ -44,10 +44,10 @@ for the raw list.
 
 `turnstile pass pr <repo#n> <STATE> --head <sha> [evidence flags]` / `turnstile pass story <S> <STATE> [flags]`; flags per
 `references/lifecycle.md`. Every PR pass verifies the head and the evidence against GitHub; `--offline` only records.
-On `OK` it prints `JIRA: <ticket> → <status>` (perform it through the Atlassian MCP `transitionJiraIssue`, then
-`turnstile jira-synced <repo#n> "<status>"`) and `BOARD: publish <path> → <url>` (publish the file with the Artifact tool
-and that `url`; a first publish loads the `artifact-capabilities` skill, declares `db` + `user`, and the url is recorded
-at `init --board-url` or by the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate.
+On `OK` it prints `JIRA: <ticket> → <status>[ · assignee: you]`: perform the transition through the Atlassian MCP `transitionJiraIssue`; when the line says `assignee: you`, read your own account with `atlassianUserInfo` (no arguments; `account_id`, `name`) and set the assignee in the same step
+with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`), then `turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"` (plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded). The ticket belongs to the person
+whose session took it into work; the plugin never moves it afterwards (`status` lists `jira_unassigned` until it is recorded). It also prints `BOARD: publish <path> → <url>` (publish the file with the Artifact tool and that `url`; a first publish loads the
+`artifact-capabilities` skill, declares `db` + `user`, and the url is recorded at `init --board-url` or by the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate.
 A PR the implementer opened enters the state as `DEV` with `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch
 and base from GitHub; refused when the base is not the story branch or another PR of the story, or the brief is missing).
 

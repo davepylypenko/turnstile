@@ -58,3 +58,7 @@ run covers `control_cases`, its parity may be `not_testable_here`); **DONE** nee
 ## Jira mapping (printed by `pass`, performed through the Atlassian MCP, recorded with `jira-synced`)
 
 DEV / AI_REVIEW / READY → In progress · ON_HUMAN_REVIEW / REWORK / APPROVED → On Review · MERGED → On Hold.
+A ticket is assigned to the person whose session takes it into work: while a PR has no recorded assignee the `JIRA:` line ends
+with ` · assignee: you` — set your own account (`atlassianUserInfo` → `editJiraIssue`) and record it with
+`turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; later transitions never touch the
+assignee (a hand-over by hand is written back with the same flags), and `reconcile` lists `jira_unassigned` until it is recorded.

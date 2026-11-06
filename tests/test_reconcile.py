@@ -150,6 +150,19 @@ class Compare(unittest.TestCase):
     def test_jira_unsynced(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False
         self.assertIn("jira_unsynced", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0))))
+    def test_jira_unassigned_until_the_assignee_is_recorded(self):
+        # 2026-11-06: a PR whose ticket has no recorded assignee is listed with the jira-synced --assignee command; MERGED is left alone
+        d = self.data("AI_REVIEW"); f = self.facts(human_threads_open=0)
+        self.assertNotIn("jira_unassigned", self.kinds(reconcile.compare(d, f)))
+        del d["prs"]["jsfiller#1"]["jira"]["assignee"]
+        props = [p for p in reconcile.compare(d, f) if p.kind == "jira_unassigned"]
+        self.assertEqual(len(props), 1); self.assertEqual(props[0].message, "Jira assignee not recorded for MYD-10")
+        self.assertEqual(props[0].suggested_cmd, 'turnstile jira-synced jsfiller#1 "In progress" --assignee <accountId> --assignee-name "<name>"')
+        d["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; d["prs"]["jsfiller#1"]["evidence"]["human"] = HUMAN
+        props = [p for p in reconcile.compare(d, self.facts(head="ffffffff66666666")) if p.kind == "jira_unassigned"]
+        self.assertEqual(len(props), 1); self.assertIn('"On Review"', props[0].suggested_cmd)
+        d["prs"]["jsfiller#1"]["state"] = "MERGED"
+        self.assertNotIn("jira_unassigned", self.kinds(reconcile.compare(d, f)))
     def test_approval_unlogged_when_ledger_lacks_the_lead_terminal_line(self):
         d = self.data("READY")
         d["awaiting_human"] = [{"id": "ah-1", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"},

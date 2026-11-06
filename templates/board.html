@@ -67,6 +67,7 @@ function gateCell(p) {
   return [mark('deep', e.deep_review, e.deep_review && e.deep_review.clean), mark(e.gate ? e.gate.name : 'gate', e.gate, e.gate && e.gate.result === 'pass'),
           e.copilot ? mark('copilot', e.copilot, e.copilot.open_threads === 0) : ''].filter(Boolean).join(' · ');
 }
+const jiraAssignee = p => { const a = (p.jira || {}).assignee; return a ? ' · ' + esc(a.name || a.account_id) : ' <span class="muted">· unassigned</span>'; };
 function prs() {
   const byRepo = {};
   Object.entries(STATE.prs || {}).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
@@ -77,7 +78,7 @@ function prs() {
       return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
         '<td>' + (/^https:\/\//.test(h.slack_permalink || '') ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
-        '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
+        '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + jiraAssignee(p) + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
     }).join('') + '</tbody></table></div>').join('');
 }
 function stories() {

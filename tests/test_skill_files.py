@@ -20,7 +20,7 @@ class SkillFiles(unittest.TestCase):
         self.assertLessEqual(len(text.splitlines()), 190)
         for h in ["## init", "## status", "## pass", "## dispatch", "## story-gate", "## plan"]: self.assertIn(h, text)
         for cli in ["turnstile status", "turnstile pass", "! TURNSTILE_LEAD=1 turnstile approve", "turnstile jira-synced", "turnstile plan-submitted",
-                    "turnstile brief", "turnstile bug add", "turnstile bug set", "--full"]:
+                    "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--assignee <account_id> --assignee-name", "atlassianUserInfo", "editJiraIssue"]:
             self.assertIn(cli, text, cli)
         self.assertNotIn("you run `turnstile approve", text.lower())
         self.assertIn("-r2", text)  # 2026-10-14 minor 13: a second round gets a new brief name, never --force over the first

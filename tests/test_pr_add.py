@@ -27,7 +27,7 @@ class PrAdd(unittest.TestCase):
 
     def test_add_records_dev_from_github_facts_and_the_pass_to_ai_review_accepts_it(self):
         rc, out = self.add(); self.assertEqual(rc, 0, out)
-        self.assertIn("JIRA: MYD-11 → In progress", out); self.assertIn("OK pr jsfiller#7 added (S1, MYD-11) DEV head cccccccc", out)
+        self.assertIn("JIRA: MYD-11 → In progress · assignee: you\n", out); self.assertIn("OK pr jsfiller#7 added (S1, MYD-11) DEV head cccccccc", out)
         pr = self.data()["prs"]["jsfiller#7"]
         self.assertEqual((pr["state"], pr["head"], pr["base"], pr["branch"], pr["story"], pr["ticket"]), ("DEV", "cccccccc33333333", "epic_myd-1", "feature/MYD-11", "S1", "MYD-11"))
         self.assertEqual(pr["jira"], {"status": "In progress", "synced": False}); self.assertEqual(self.io.commits[-1], "turnstile: pr jsfiller#7 added (S1, MYD-11) DEV head cccccccc")

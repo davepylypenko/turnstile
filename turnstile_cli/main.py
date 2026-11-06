@@ -27,6 +27,8 @@ def build_parser():
     ps.add_argument("--offline", action="store_true", help="skip the GitHub head check (loud WARN; READY/ON_HUMAN_REVIEW stay refused)")
 
     js = sub.add_parser("jira-synced", help="record that the Jira transition was performed"); js.add_argument("ident"); js.add_argument("status")
+    js.add_argument("--assignee", help="Atlassian account id the ticket was assigned to (the orchestrator's own, from atlassianUserInfo); recorded once, never moved by the plugin")
+    js.add_argument("--assignee-name", help="display name for the ledger and the board (with --assignee)")
     ap = sub.add_parser("approve", help="record the lead's approval of an awaiting_human entry"); ap.add_argument("ah_id")
     sub.add_parser("render-board", help="render board.html from state.json")
     rc = sub.add_parser("reconcile", help="read-only drift check against GitHub"); rc.add_argument("--json", action="store_true")
@@ -144,7 +146,7 @@ def main(argv=None):
             return plan_run(delivery, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "jira-synced":
             from .pass_cmd import jira_synced
-            return jira_synced(delivery, a.ident, a.status, no_push=a.no_push)
+            return jira_synced(delivery, a.ident, a.status, no_push=a.no_push, assignee=a.assignee, assignee_name=a.assignee_name)
         if a.cmd == "approve":
             from .pass_cmd import approve
             return approve(delivery, a.ah_id)

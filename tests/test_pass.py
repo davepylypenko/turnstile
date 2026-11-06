@@ -167,7 +167,7 @@ class PassCmd(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(rc, 0)
         lines = out.strip().splitlines()
-        self.assertIn("JIRA: MYD-11 → In progress", lines)
+        self.assertIn("JIRA: MYD-11 → In progress · assignee: you", lines)
         self.assertTrue(lines[-1].startswith("OK "))
         self.assertFalse(self.data()["prs"]["docs-platform#2"]["jira"]["synced"])
         rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "On Review", self.io)
@@ -175,6 +175,41 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io)
         self.assertEqual(rc, 0)
         self.assertEqual(self.data()["prs"]["docs-platform#2"]["jira"], {"status": "In progress", "synced": True})
+
+    def test_jira_assignee_is_recorded_once_and_never_moved_by_a_transition(self):
+        # 2026-11-06: the ticket belongs to the person whose session took it into work; `assignee: you` prints until it is recorded
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-11 → In progress · assignee: you\n", out)
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee_name="Someone")
+        self.assertEqual(rc, 2); self.assertIn("MISSING --assignee-name goes with --assignee", buf.getvalue())
+        self.assertNotIn("assignee", self.data()["prs"]["docs-platform#2"]["jira"])
+        rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee="5f1a0000acc1", assignee_name="Davyd P")
+        self.assertEqual(rc, 0)
+        j = self.data()["prs"]["docs-platform#2"]["jira"]
+        self.assertEqual((j["status"], j["synced"], j["assignee"]["account_id"], j["assignee"]["name"]), ("In progress", True, "5f1a0000acc1", "Davyd P"))
+        self.assertTrue(j["assignee"]["at"])
+        self.assertIn("jira MYD-11 → In progress (synced) · assignee Davyd P", (self.d / "ledger.md").read_text())
+        rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee="5f1a0000acc2")
+        self.assertEqual(rc, 0)
+        j = self.data()["prs"]["docs-platform#2"]["jira"]
+        self.assertEqual((j["assignee"]["account_id"], j["assignee"]["name"]), ("5f1a0000acc2", None))
+        self.assertIn("(synced) · assignee 5f1a0000acc2", (self.d / "ledger.md").read_text())
+        self.to_human()
+        lines = (self.d / "ledger.md").read_text()
+        j = self.data()["prs"]["jsfiller#1"]["jira"]
+        self.assertEqual(j, {"status": "On Review", "synced": False, "assignee": {"account_id": "5f1a0000acc0", "name": "Lead Example", "at": "2026-10-13T10:00Z"}})
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="human thread r1"), self.io)
+        self.assertEqual(rc, 0); self.assertNotIn("JIRA:", out)
+        rc = pass_cmd.jira_synced(self.d, "jsfiller#1", "On Review", self.io)
+        self.assertEqual(rc, 0); self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["assignee"]["account_id"], "5f1a0000acc0")
+        self.assertNotIn("assignee", (self.d / "ledger.md").read_text().replace(lines, ""))
+
+    def test_transition_prints_the_plain_jira_line_once_the_assignee_is_recorded(self):
+        self.to_ready(); self.story(state="DONE")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Review\n", out); self.assertNotIn("assignee", out)
 
     def test_jira_not_printed_when_commit_fails(self):
         self.io.fail_commit = True
@@ -252,7 +287,7 @@ class PassCmd(unittest.TestCase):
         data = self.data(); by_id = {a["id"]: a for a in data["awaiting_human"]}
         self.assertTrue(by_id["ah-1"]["consumed_at"]); self.assertTrue(by_id["ah-2"]["voided_at"]); self.assertNotIn("consumed_at", by_id["ah-3"])
         self.assertEqual(data["prs"]["jsfiller#1"]["evidence"]["human"]["sent_head"], H)
-        self.assertEqual(data["prs"]["jsfiller#1"]["jira"], {"status": "On Review", "synced": False})
+        self.assertEqual({k: v for k, v in data["prs"]["jsfiller#1"]["jira"].items() if k != "assignee"}, {"status": "On Review", "synced": False})
 
     def test_on_human_review_with_an_unknown_approved_id_still_passes(self):
         self.to_ready(); self.story(state="DONE")

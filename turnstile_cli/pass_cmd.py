@@ -462,8 +462,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 jira_target = rules.JIRA_FOR_PR_STATE[target]
                 jira_line = None
                 if (pr.get("jira") or {}).get("status") != jira_target:
-                    pr["jira"] = {"status": jira_target, "synced": False}
-                    jira_line = "JIRA: %s → %s" % (pr["ticket"], jira_target)
+                    pr["jira"] = dict(pr.get("jira") or {}, status=jira_target, synced=False)
+                    jira_line = jira_instruction(pr)
                 if target == "ON_HUMAN_REVIEW" and src == "READY":
                     for a in awaiting:
                         if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
@@ -582,18 +582,28 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
     except TurnstileError as e:
         print("\n".join(notes + ["MISSING %s" % e])); return 2
 
-def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None, no_push: bool = False) -> int:
+def jira_instruction(pr: dict) -> str:
+    jira = pr.get("jira") or {}
+    return "JIRA: %s → %s%s" % (pr["ticket"], jira.get("status"), "" if jira.get("assignee") else " · assignee: you")
+
+def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None, no_push: bool = False,
+                assignee: Optional[str] = None, assignee_name: Optional[str] = None) -> int:
     io = io or IO()
     delivery = pathlib.Path(delivery)
     try:
+        if assignee_name and not assignee:
+            raise TurnstileError("--assignee-name goes with --assignee <accountId> (atlassianUserInfo: account_id, name)")
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
             pr = st_mod.pr(st, ident)
             expected = rules.JIRA_FOR_PR_STATE.get(pr.get("state"))
             if status != expected:
                 raise TurnstileError("Jira status for %s in state %s is %r, not %r" % (ident, pr.get("state"), expected, status))
-            pr["jira"] = {"status": status, "synced": True}
+            pr["jira"] = dict(pr.get("jira") or {}, status=status, synced=True)
             summary = "jira %s → %s (synced)" % (pr["ticket"], status)
+            if assignee:
+                pr["jira"]["assignee"] = {"account_id": assignee, "name": assignee_name or None, "at": _now()}
+                summary += " · assignee %s" % (assignee_name or assignee)
             _side_effects(delivery, st, [summary], io, False, no_push)
         print("OK jira %s synced" % ident)
         return 0

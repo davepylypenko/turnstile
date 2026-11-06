@@ -117,6 +117,9 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             continue
         if st == "MERGED":
             continue
+        if not (pr.get("jira") or {}).get("assignee"):
+            out.append(Proposal(pid, "jira_unassigned", "Jira assignee not recorded for %s" % pr.get("ticket"),
+                                'turnstile jira-synced %s "%s" --assignee <accountId> --assignee-name "<name>"' % (pid, rules.JIRA_FOR_PR_STATE.get(st))))
         if not rules.same_head(f.head, pr.get("head")):
             msg = "head is %s, state has %s" % (f.head[:8], (pr.get("head") or "")[:8])
             if st in ("ON_HUMAN_REVIEW", "APPROVED"):

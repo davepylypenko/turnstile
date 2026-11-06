@@ -127,7 +127,8 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
   committed to the epic branch of the knowledge repo and pushed to origin at once (`SYNC:` opens every `status`; a failed
   push is a `WARN` plus `turnstile sync`; `--no-push` for offline work, after which READY and beyond wait for a sync).
 - `turnstile pass` — the only way to change state; validates DoR/DoD, verifies the PR head against GitHub, then writes
-  the ledger, renders the board, commits the state and tells you which Jira transition to make.
+  the ledger, renders the board, commits the state and tells you which Jira transition to make and, on take-up, to assign
+  the ticket to yourself (the orchestrator's own Atlassian account; recorded with `jira-synced --assignee`, never moved again).
 - `turnstile reconcile` — read-only drift check against GitHub; every command it proposes is one `pass` would accept.
 - `turnstile threads` — records each human review thread as `self_resolved` (the agent replies at once) or `needs_lead`
   (the reply waits for the lead's word on that thread), from GitHub facts.
@@ -191,7 +192,8 @@ turnstile pass story S1 INTEGRATION_REVIEW --build 173120 --head <new stack-top 
 turnstile pass story S1 ENV_TESTING --report reports/ENV-S1.md --cases-pass 31 --cases-fail 0 --figma-parity pass --build 173120 --head <new stack-top sha> --full
 echo delivery > .turnstile                      # workspace root → delivery dir (init writes it; by hand for an existing delivery dir)
 turnstile status                                # reconcile with GitHub + where we are (exit 1 when gh facts are missing)
-turnstile pr add jsfiller#13222 --story S1 --ticket MYD-18075   # a new draft PR enters as DEV (head, branch, base from GitHub)
+turnstile pr add jsfiller#13222 --story S1 --ticket MYD-18075   # a new draft PR enters as DEV (head, branch, base from GitHub); prints "JIRA: MYD-18075 → In progress · assignee: you"
+turnstile jira-synced jsfiller#13222 "In progress" --assignee 5f1a…c3 --assignee-name "Davyd Pylypenko"   # transitioned and assigned to the orchestrator's own account (atlassianUserInfo)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
 # the lead says "send" in chat; the message goes out through the Slack tool (the PostToolUse hook records it), then
@@ -312,7 +314,7 @@ never runs it.
 ### Commands
 
 `init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models and review skills; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
-GitHub facts), `jira-synced` (validated against the PR's state), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
+GitHub facts), `jira-synced` (validated against the PR's state; `--assignee <accountId> [--assignee-name "<name>"]` records who took the ticket, once), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
 `pass pr` flags: `--head`, `--ci success|failure`, `--deep-review <report> --rounds N [--not-clean]`,
@@ -373,7 +375,8 @@ inert — exit 0, nothing checked — except the Bash guard's universal safety r
   (`rerequest-gate`); `gh` failing → `rerequest-unverified`.
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
   refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
-  main-thread orchestrator (no `agent_id`) passes and records with `jira-synced`.
+  main-thread orchestrator (no `agent_id`) passes and records with `jira-synced` (`editJiraIssue` is how it sets the assignee
+  to its own account on take-up; `atlassianUserInfo` is a read and is not matched).
 - Slack sends are gated by the lead's word in chat only (2026-11-05); the plugin records them and never blocks. There is
   no PreToolUse hook on Slack. `post_slack.py` (PostToolUse, matcher `mcp__.*slack_(send|schedule)_message.*`) records a
   send once the tool result carries a `message_ts`: a ledger line `slack send to <channel> ts <ts>` plus ` for <pr ids>`
