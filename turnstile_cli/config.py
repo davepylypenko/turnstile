@@ -1,12 +1,15 @@
 import json, os, pathlib, re
-from typing import Optional, Tuple
-from . import models
+from typing import Iterable, List, Optional, Tuple
+from . import models, workspace
 from .errors import TurnstileError
+from .rules import DEFAULT_SEND_SKILL
 
 DEFAULT_REVIEW_SKILL = "/code-review"
-SKILL_KEYS = ("review_skill", "story_review_skill")
+SKILL_KEYS = ("review_skill", "story_review_skill", "send_skill")
+SKILL_DEFAULTS = {"review_skill": DEFAULT_REVIEW_SKILL, "story_review_skill": DEFAULT_REVIEW_SKILL, "send_skill": DEFAULT_SEND_SKILL}
 SKILL_RX = re.compile(r"^/[\w:.-]+$")
-KEYS_HELP = "models.<agent>, review_skill, story_review_skill, flag (epic only)"
+KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, flag (epic only)"
+SEND_SKILL_INSTALL = "ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review"
 
 def default_user_dir() -> pathlib.Path:
     return pathlib.Path(os.path.expanduser("~")) / ".config" / "turnstile"
@@ -122,7 +125,7 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
         elif epic.get(key):
             out[key] = {"value": str(epic[key]), "source": "epic"}
         else:
-            out[key] = {"value": DEFAULT_REVIEW_SKILL, "source": "default"}
+            out[key] = {"value": SKILL_DEFAULTS[key], "source": "default"}
     out["flag"] = {"value": epic.get("flag") or None, "source": "epic" if epic.get("flag") else "default"}
     return out
 
@@ -146,3 +149,39 @@ def one_line(eff: dict) -> str:
     return "models %s · %s · flag=%s (%s)" % (" ".join("%s=%s" % (a, fmt_resolved(a, m)) for a, m in eff["models"].items()),
                                              " · ".join("%s=%s" % (k, eff[k]["value"]) for k in SKILL_KEYS), eff["flag"]["value"] or "none",
                                              "overrides: " + ", ".join(overrides) if overrides else "all defaults")
+
+def skill_path(name: str, roots: Iterable[pathlib.Path] = ()) -> Optional[pathlib.Path]:
+    home = pathlib.Path(os.path.expanduser("~"))
+    cache = home / ".claude" / "plugins" / "cache"
+    plugin, _, skill = name.lstrip("/").rpartition(":")
+    if plugin:
+        candidates = sorted(cache.glob("*/%s/*/skills/%s/SKILL.md" % (plugin, skill)))
+    else:
+        dirs = [home] + [pathlib.Path(r) for r in roots if r]
+        candidates = [d / ".claude" / "skills" / skill / "SKILL.md" for d in dirs] + sorted(cache.glob("*/*/*/skills/%s/SKILL.md" % skill))
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
+
+def skill_roots(delivery: Optional[pathlib.Path] = None) -> List[pathlib.Path]:
+    roots = [pathlib.Path.cwd()]
+    rec = workspace.load(delivery) if delivery else None
+    for key in ("workspace", "clone_root"):
+        if rec and rec.get(key):
+            roots.append(pathlib.Path(rec[key]))
+    return roots
+
+def send_skill(data: Optional[dict], delivery: Optional[pathlib.Path] = None, user: Optional[dict] = None) -> Tuple[str, Optional[pathlib.Path]]:
+    name = effective(data, user)["send_skill"]["value"]
+    return name, skill_path(name, skill_roots(delivery))
+
+def send_skill_line(name: str, found: Optional[pathlib.Path]) -> str:
+    if found:
+        return "SEND_SKILL: %s (found: %s)" % (name, found)
+    install = "install the default: " + SEND_SKILL_INSTALL if name == DEFAULT_SEND_SKILL else "install it"
+    return ("SEND_SKILL: %s not found on this machine — NEXT: ask the lead which skill sends PRs to review (then turnstile config set "
+            "send_skill=/<name>) or %s" % (name, install))
+
+def send_skill_warning(name: str, found: Optional[pathlib.Path]) -> Optional[str]:
+    return None if found else "WARN: send skill %s not found on this machine (config set send_skill=… or install it)" % name

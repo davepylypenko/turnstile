@@ -125,6 +125,22 @@ class SkillFiles(unittest.TestCase):
                 self.assertNotIn(stale, doc, "%s still says %r" % (name, stale))
         for name in ("README", "SKILL", "lifecycle"):
             self.assertIn("--slack <permalink> --reviewers", docs[name], name)
+    def test_send_skill_is_a_reference_to_a_local_skill(self):
+        # 2026-11-06 (lead's decision): the send skill lives on the developer's machine; the plugin names it, never copies it
+        docs = {name: path.read_text() for name, path in [("README", ROOT / "README.md"), ("SKILL", SKILL / "SKILL.md"), ("slack", REFS / "slack.md"),
+                                                          ("lifecycle", REFS / "lifecycle.md"), ("workspace", ROOT / "templates" / "CLAUDE.md.workspace")]}
+        for name, doc in docs.items():
+            self.assertIn("send_skill", doc, name); self.assertIn("/send-pr-review", doc, name); self.assertIn("lead's word in chat", doc, name)
+        for name in ("README", "SKILL", "slack", "lifecycle"):
+            self.assertIn("explicit channel wins", docs[name], name)
+        for name in ("README", "SKILL", "slack"):
+            self.assertIn("which skill to install or use", docs[name], name)
+        for name in ("README", "slack"):
+            self.assertIn("ln -s <", docs[name], name); self.assertIn("playground/zolotukhin-ivan/skills/send-pr-review", docs[name], name); self.assertIn("~/.claude/skills/send-pr-review", docs[name], name)
+        self.assertIn("config set send_skill=/my-send", docs["SKILL"]); self.assertIn("SEND_SKILL:", docs["SKILL"]); self.assertIn("WARN: send skill", docs["SKILL"])
+        self.assertIn("turnstile config set send_skill=/my-send", docs["README"]); self.assertIn("`send_skill`", docs["README"])
+        self.assertFalse(any((ROOT / "skills").rglob("send-pr-review*")), "Ivan's skill must not be copied into the plugin")
+        self.assertNotIn("CODEOWNERS", docs["slack"])
         for path in (ROOT / "agents").glob("*.md"):
             self.assertNotIn("Slack stays lead-approved", path.read_text(), path.name)
     def test_reports_has_a_template_per_agent(self):

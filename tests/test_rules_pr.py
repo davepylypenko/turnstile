@@ -194,7 +194,7 @@ class NextAction(unittest.TestCase):
         p = pr_with(**FULL); p["state"] = "READY"; self.assertIn("lead", rules.next_action_pr(p, repo))
     def test_ready_hint_waits_for_the_story_only_in_stack_mode(self):
         repo = FIX["epic"]["repos"]["jsfiller"]; p = pr_with(**FULL); p["state"] = "READY"
-        send = "send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
+        send = "send with /send-pr-review <pr url> on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
         stack = dict(FIX["stories"]["S1"], state="IN_PROGRESS")
         self.assertEqual(rules.next_action_pr(p, repo, stack), "once story S1 is DONE (or `human_review: per_pr`), " + send)
         self.assertEqual(rules.next_action_pr(p, repo, dict(stack, state="ENV_TESTING")), "once story S1 is DONE (or `human_review: per_pr`), " + send)
@@ -202,3 +202,10 @@ class NextAction(unittest.TestCase):
             self.assertEqual(rules.next_action_pr(p, repo, story), send, story)
         p["blocked_by"] = "jsfiller#0"
         self.assertEqual(rules.next_action_pr(p, repo, dict(stack, mode="trunk")), send + " (blocked by jsfiller#0)")
+    def test_hints_name_the_configured_send_skill(self):
+        # 2026-11-06: the send skill lives on the developer's machine; rules stay pure and take the resolved name
+        repo = FIX["epic"]["repos"]["jsfiller"]; p = pr_with(**FULL); p["state"] = "READY"
+        self.assertEqual(rules.next_action_pr(p, repo, None, "/my-send"), "send with /my-send <pr url> on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertEqual(rules.next_action_story(dict(FIX["stories"]["S1"], state="DONE"), {}),
+                         "send the story's units with /send-pr-review <pr urls> on the lead's word in chat, then pass pr … ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertIn("send the story's units with /my-send <pr urls>", rules.next_action_story(dict(FIX["stories"]["S1"], state="DONE"), {}, "/my-send"))

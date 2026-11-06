@@ -21,6 +21,9 @@ command, role-scoped agents and hooks that physically block forbidden actions.
   `slack_schedule_message` (the `slack` plugin of the official marketplace does); Jira through an MCP exposing
   `transitionJiraIssue` / `editJiraIssue` / `createJiraIssue` / `addCommentToJiraIssue` and the reads `atlassianUserInfo` /
   `getJiraIssue` (the Atlassian connector does).
+- A **send skill** on the developer's machine that posts a PR to the Slack review channel (default `/send-pr-review`: Ivan
+  Zolotukhin's skill in `pdffiller-knowledge`, installed with `ln -s <clone>/playground/zolotukhin-ivan/skills/send-pr-review
+  ~/.claude/skills/send-pr-review`). The plugin holds only its name (`send_skill`); `init` and `status` say when it is not found.
 
 ## Install
 
@@ -69,7 +72,8 @@ Without the shim the CLI is
        docs-platform/                  ← …
    ```
 
-   It prints `WORKSPACE`, `WORKTREE`, one `REPO:` line per repo, `DELIVERY`, `CLAUDE_MD` and `NEXT`, writes `.turnstile`
+   It prints `WORKSPACE`, `WORKTREE`, one `REPO:` line per repo, `DELIVERY`, `CLAUDE_MD`, `CONFIG`, `SEND_SKILL` (where the send skill
+   was found, or the install line and a `NEXT` to ask the lead which skill to use) and `NEXT`, writes `.turnstile`
    (workspace → delivery dir), a workspace `CLAUDE.md` for the orchestrator (the CLI path and the repo worktrees), the git-ignored
    `delivery/.workspace.json` (this machine's absolute paths; `state.json` keeps only the relative names, `epic.repos.<r>.path`) and
    commits the `delivery/` skeleton. A workspace folder that exists and is not empty is refused, unless it already is this epic's
@@ -159,18 +163,28 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
 ### Per-person overrides
 
 Three layers, highest first: **user** (`~/.config/turnstile/config.json`, or `$TURNSTILE_USER_CONFIG`; per person,
-never in git) > **epic** (`epic.models`, `epic.review_skill`, `epic.story_review_skill` in `state.json`, written through
+never in git) > **epic** (`epic.models`, `epic.review_skill`, `epic.story_review_skill`, `epic.send_skill` in `state.json`, written through
 the same guarded commit path as `pass`) > **plugin defaults**. `turnstile config list` prints every effective value with its source;
 `turnstile config set <key>=<value>` writes the user file at once; `--epic` proposes the change as an `awaiting_human` entry of
 type `config` (old and new value) that the lead approves with the usual line, after which `turnstile config apply <ah-id>` commits
 it; `turnstile config unset <key> [--epic]` (or `=default`) resets. `TURNSTILE_USER_CONFIG` is the lead's shell variable: the Bash
-guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`.
+guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`, `send_skill`.
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
 the story-reviewer's; `/code-review` is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default), any other skill bare, exactly as the brief prints it; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+`send_skill` (default `/send-pr-review`) is the slash command the orchestrator invokes to post a READY PR to Slack review — a skill
+that lives on the developer's machine, never in the plugin: the name is resolved as `~/.claude/skills/<name>/SKILL.md`, then
+`.claude/skills/<name>/SKILL.md` under the cwd, the workspace and the clone root, then any `~/.claude/plugins/cache/*/*/*/skills/<name>`
+(`/plugin:skill` → that plugin's cache entries). `init` prints `SEND_SKILL: … (found: <path>)` or the install line plus a `NEXT`
+to ask the lead which skill to use; `status` prints one `WARN: send skill … not found` line while it is missing; the READY hint
+and the story DONE hint name the effective skill. The skill picks the channel and the format and shows the draft; when the epic
+sets `epic.repos.<repo>.slack`, the orchestrator passes that channel explicitly (the explicit channel wins); the lead's word in
+chat stays the only gate, then `pass … --slack <permalink> --reviewers …` records the send. Without an installed skill the
+templates in `skills/turnstile/references/slack.md` are the fallback and the orchestrator asks the lead which skill to install or use. `repos.<repo>.slack` stays required at `init`.
 The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
 
 ```
 turnstile config set review_skill=/my-review
+turnstile config set send_skill=/my-send
 turnstile config set models.reviewer=sonnet:medium
 ```
 
@@ -198,7 +212,7 @@ turnstile pr add jsfiller#13222 --story S1 --ticket MYD-18075   # a new draft PR
 turnstile jira-synced jsfiller#13222 "In progress" --assignee 5f1a…c3 --assignee-name "Davyd Pylypenko"   # transitioned and assigned to the orchestrator's own account (atlassianUserInfo)
 turnstile pass pr jsfiller#13222 AI_REVIEW --head d2583e9b --ci success
 turnstile pass pr jsfiller#13222 READY --head d2583e9b --deep-review reports/REVIEW-13222.md --rounds 3 --gate pdf-review:pass:<run-url>
-# the lead says "send" in chat; the message goes out through the Slack tool (the PostToolUse hook records it), then
+# the lead says "send" in chat; the message goes out through the send skill (/send-pr-review <url>; the PostToolUse hook records it), then
 turnstile pass pr jsfiller#13222 ON_HUMAN_REVIEW --head d2583e9b --slack <permalink> --reviewers isachivka
 turnstile jira-synced jsfiller#13222 "On Review"
 turnstile pass pr jsfiller#13222 REWORK --reason "human thread r4231213730"      # opens no entry
@@ -267,7 +281,7 @@ approval; Slack sends are gated by the lead's word in chat only. `turnstile stat
 for every PLANNED story whose `after` stories are DONE. Only the lead approves them (see "How the lead approves").
 `pass … --approved <ah-id>` then requires an entry of the right type for that PR/story that is approved, not consumed
 and not voided; the pass consumes it. Slack sends are gated by the lead's word in chat only (2026-11-05): READY opens no
-entry, the plugin records the send (a ledger line from the PostToolUse hook, `evidence.human` via `pass … --slack`) and
+entry, the message is composed by the configured send skill (`send_skill`, see "Per-person overrides"), the plugin records the send (a ledger line from the PostToolUse hook, `evidence.human` via `pass … --slack`) and
 never blocks it; a `send` entry left in an older state file is consumed or voided on the pass and never required (its
 `used_at` is still marked by the recorder). `plan` entries are
 opened by `plan-submitted`; no story leaves PLANNED until the newest one is approved and `plan.md` is unchanged. `reply`
@@ -315,7 +329,7 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models and review skills; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models, review skills and the send skill; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state; `--assignee <accountId> [--assignee-name "<name>"]` records who holds the ticket — the take-up, or a hand-over made by hand; the plugin never moves a ticket away from its holder), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 

@@ -338,11 +338,13 @@ def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> N
                     extra.append("bug %s reopened (case %s failed again on build %s, head %s)" % (b.get("id"), case, run.get("build"), run.get("head")))
 
 def _recompute_next_actions(data: dict) -> None:
+    from . import config
+    send_skill = config.effective(data)["send_skill"]["value"]
     for pid, pr in data["prs"].items():
         repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-        pr["next_action"] = rules.next_action_pr(pr, repo, data["stories"].get(pr.get("story")))
+        pr["next_action"] = rules.next_action_pr(pr, repo, data["stories"].get(pr.get("story")), send_skill)
     for sid, s in data["stories"].items():
-        s["next_action"] = rules.next_action_story(s, data["prs"])
+        s["next_action"] = rules.next_action_story(s, data["prs"], send_skill)
 
 def _next_ah_id(data: dict) -> str:
     nums = []

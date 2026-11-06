@@ -213,7 +213,9 @@ def check_pr(pr: dict, target: str, repo_cfg: dict, prs: Dict[str, dict], reason
         return out
     return out
 
-def next_action_pr(pr: dict, repo_cfg: dict, story: Optional[dict] = None) -> str:
+DEFAULT_SEND_SKILL = "/send-pr-review"
+
+def next_action_pr(pr: dict, repo_cfg: dict, story: Optional[dict] = None, send_skill: str = DEFAULT_SEND_SKILL) -> str:
     s = pr.get("state")
     if s == "DEV":
         return "open draft PR, get CI green, then pass AI_REVIEW"
@@ -229,7 +231,7 @@ def next_action_pr(pr: dict, repo_cfg: dict, story: Optional[dict] = None) -> st
     if s == "READY":
         waits = story is not None and not is_trunk(story) and story.get("state") != "DONE" and story.get("human_review") != "per_pr"
         return (("once story %s is DONE (or `human_review: per_pr`), " % pr.get("story") if waits else "")
-                + "send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers"
+                + "send with %s <pr url> on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers" % send_skill
                 + (" (blocked by %s)" % pr["blocked_by"] if pr.get("blocked_by") else ""))
     if s == "ON_HUMAN_REVIEW":
         if ((pr.get("evidence") or {}).get("human") or {}).get("reviewer_notified") is False:
@@ -512,7 +514,7 @@ def check_story(story: dict, target: str, prs: Dict[str, dict], stories: Dict[st
         return out
     return out
 
-def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
+def next_action_story(story: dict, prs: Dict[str, dict], send_skill: str = DEFAULT_SEND_SKILL) -> str:
     s = story.get("state")
     if is_trunk(story):
         return {"PLANNED": "wait for the lead to start it",
@@ -524,4 +526,4 @@ def next_action_story(story: dict, prs: Dict[str, dict]) -> str:
             "IN_PROGRESS": "bring every PR to READY, deploy the stack top, then pass INTEGRATION_REVIEW",
             "INTEGRATION_REVIEW": "run the story-reviewer agent until clean, then pass ENV_TESTING",
             "ENV_TESTING": "run the tester agent; fix bugs; re-run; then pass DONE",
-            "DONE": "send the story's units to humans on the lead's word in chat, then pass pr … ON_HUMAN_REVIEW --slack"}.get(s, "")
+            "DONE": "send the story's units with %s <pr urls> on the lead's word in chat, then pass pr … ON_HUMAN_REVIEW --head --slack <permalink> --reviewers" % send_skill}.get(s, "")

@@ -1,4 +1,5 @@
 import contextlib, io as _io, json, os, pathlib, shutil, tempfile, unittest
+from unittest import mock
 from turnstile_cli import pass_cmd, state
 from turnstile_cli import sync
 from turnstile_cli.errors import TurnstileError
@@ -8,6 +9,9 @@ FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 H = "aaaaaaaa11111111"
 H2 = "eeeeeeee55555555"
 LINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
+_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
+def setUpModule(): _env.start()
+def tearDownModule(): _env.stop()
 
 class FakeIO:
     """GitHub facts per PR: `heads` gives the head, `facts` per-PR overrides of the canned green PrFacts."""
@@ -108,7 +112,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pr["evidence"]["gate"], {"name": "pdf-review", "head": H, "result": "pass", "run": "https://r/1"})
         self.assertEqual(pr["evidence"]["head_verified"]["verified"], True)
         self.assertEqual(pr["evidence"]["head_verified"]["head"], H)
-        self.assertEqual(pr["next_action"], "once story S1 is DONE (or `human_review: per_pr`), send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertEqual(pr["next_action"], "once story S1 is DONE (or `human_review: per_pr`), send with /send-pr-review <pr url> on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
         self.assertEqual(data["awaiting_human"], [])  # 2026-11-05: no send entry; the lead's word in chat is the only gate on Slack
         self.assertIn("READY", (self.d / "ledger.md").read_text())
         self.assertEqual((self.d / "board.html").read_text(), "<html>0</html>")
