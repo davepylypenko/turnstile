@@ -28,9 +28,11 @@ reviewers who commented on the threads in this round — `gh api -X POST repos/<
 | **APPROVED** | ON_HUMAN_REVIEW done | lead merged | `turnstile pass pr <id> APPROVED --approvals a,b --open-threads 0` → opens `merge` |
 | **MERGED** | squash-merged by the lead | — | `turnstile pass pr <id> MERGED --merged-sha <sha>` → Jira On Hold; unblocks dependants; notes the story |
 
-AI review order on one head: deep review (`reviewer` agent) → repo gate (`pdf-review`, `pr-review`, `review`, `run-lint` +
-`run-unit-tests`; a skill gate has `gate_check: null` and the report is the evidence) → Copilot where connected. Any finding
-→ fix → re-run deep review **and** gate.
+AI review order on one head: repo gate by the `gate-runner` (`pdf-review`, `pr-review`, `review`, `run-lint` +
+`run-unit-tests`; a skill gate has `gate_check: null` and the report is the evidence; its `reports/GATE-<n>.md` gate line is the
+`--gate` evidence) → deep review (`reviewer` agent, which reads that report and re-runs the gate only when it pushes a commit, or when
+no gate-runner report exists) → Copilot where connected. Round 1 is a full review, round ≥ 2 a delta review. Any finding → fix →
+new head → gate-runner and delta review again.
 
 ## Story states
 

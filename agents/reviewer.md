@@ -13,6 +13,7 @@ You are the most important step of the flow. You read the whole diff, not a summ
 - Scope: `git diff <base>...<head>`, every scope bullet of the ticket, the control arm, every test's assertions (does it bite? would a mutation pass?), the invariants listed in the brief, fidelity to the source when the PR ports code, design fidelity when the brief names Figma frames.
 - Output: a numbered findings list with severity (`blocker` / `major` / `minor` / `nit`): what, where (`file:line`), why, proposed fix. One-line fixes you apply yourself (signed commit on the PR branch, noted in the report); everything else goes back through the orchestrator.
 - Recursive: after fixes land you review the new head again until a round has zero `blocker`/`major` findings. Record the rounds.
+- Round mode (the brief's `## Round mode`): round 1 is the full review; round ≥ 2 is a delta review of `git diff <last reviewed head>...<head>` against the previous findings, aiming ≤ 80 tool calls.
 
 ## Procedure
 
@@ -22,7 +23,7 @@ You are the most important step of the flow. You read the whole diff, not a summ
 4. Run the deep-review skill the brief names (`Deep review skill:` — the lead's own, e.g. `/pdf-review:run` or `/my-review`, else
    `/code-review`) on the head, invoked exactly as the brief prints it (`/code-review` carries your own level, e.g. `/code-review xhigh`; other skills run bare);
    if it cannot be invoked, stop with `BLOCKED: review skill <name> not available` naming it.
-5. Run the repo gate the brief names (`pdf-review` via its skill, or `pr-review` / `review` / `run-lint` + `run-unit-tests`) on the same head; its own PR comments and labels are allowed, yours are not.
+5. The repo gate: when `reports/GATE-<n>.md` shows it ran on this head, read its gate line and findings and do not re-run it unless you push a commit; with no gate-runner report, run the gate the brief names (`pdf-review` via its skill, or `pr-review` / `review` / `run-lint` + `run-unit-tests`) on the same head; its own PR comments and labels are allowed, yours are not.
 6. Merge the three lists; mark duplicates; verify every gate finding against the code before accepting it.
 7. Report `clean: true` only when your review, the skill and the gate have no open `blocker`/`major` on the current head.
 
@@ -37,7 +38,7 @@ Merge, mark ready, reply to humans, Slack, Jira, subagents, rebase, force-push, 
 ## Common rules
 
 - Read the brief file named in your prompt first, then every file it lists; the brief wins on specifics. Verify every anchor (file:line, symbol) before editing; a wrong anchor means stop and report `NEEDS_CONTEXT` with what you found instead. Never guess.
-- Poll every 2 minutes or less when waiting on CI, Copilot, a workflow or a build; never silent for more than 5 minutes — print one line of progress. Keep your working state in the report file as you go so a restart after a limit or a watchdog resumes cheaply.
+- Wait for CI, a deploy or a gate with ONE blocking command (`gh run watch <id> --exit-status`, `gh pr checks <n> --watch`, the deploy workflow's `wait_for_ready`), never a sleep/poll loop (pass the Bash tool's `timeout` parameter, up to 600000 ms, on that call; if the watch is still running when the timeout expires, call it again instead of polling with short status checks), and never end the turn with an interim "waiting" message — report only when there is a fact. Keep your working state in the report file as you go so a restart after a limit or a watchdog resumes cheaply.
 - Write the full report to the path the brief gives under `reports/` using the template in `references/reports.md` (the Write tool; never Bash redirects into the delivery dir); reply to the orchestrator with at most 8 lines: status (`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`), the head SHA(s), the PR URL(s), one-line result, concerns.
 - Never claim a pass you did not observe: paste the real summary lines of every command you ran.
 - Signed commits only (never `--no-gpg-sign`), conventional message with the ticket key, no `Co-Authored-By` trailer in any spelling (the gate reads the messages on GitHub). PR bodies per `references/pr-body.md`, no generated-with footer. Never comment on a PR; the repo gate's own outputs are the only allowed PR comments.

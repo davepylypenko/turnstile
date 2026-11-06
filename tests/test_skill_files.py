@@ -17,13 +17,20 @@ class SkillFiles(unittest.TestCase):
     def test_skill_md_short_with_frontmatter_and_commands(self):
         text = (SKILL / "SKILL.md").read_text(); fm = parse_frontmatter(text)
         self.assertEqual(fm["name"], "turnstile"); self.assertTrue(len(fm["description"]) > 60)
-        self.assertLessEqual(len(text.splitlines()), 190)
+        self.assertLessEqual(len(text.splitlines()), 215)
         for h in ["## init", "## status", "## pass", "## dispatch", "## story-gate", "## plan"]: self.assertIn(h, text)
         for cli in ["turnstile status", "turnstile pass", "! TURNSTILE_LEAD=1 turnstile approve", "turnstile jira-synced", "turnstile plan-submitted",
                     "turnstile brief", "turnstile bug add", "turnstile bug set", "--full", "--assignee <account_id> --assignee-name", "atlassianUserInfo", "editJiraIssue"]:
             self.assertIn(cli, text, cli)
         self.assertNotIn("you run `turnstile approve", text.lower())
         self.assertIn("-r2", text)  # 2026-10-14 minor 13: a second round gets a new brief name, never --force over the first
+    def test_token_diet_rules_in_skill_and_readme(self):
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
+        for needle in ["gate-runner", "GATE-<n>", "status --brief", "references/board.md", "/compact", "haiku", "once per batch", "new orchestrator session"]: self.assertIn(needle, text, needle)
+        for needle in ["gate-runner", "status --brief", "delta review", "ONE blocking command"]: self.assertIn(needle, readme, needle)
+        board = (REFS / "board.md").read_text()
+        for needle in ["action: \"read\"", "file_path", "url", "haiku"]: self.assertIn(needle, board, needle)
+        self.assertIn("gate-runner", (REFS / "lifecycle.md").read_text())
     def test_token_discipline_section_and_models_from_the_agent_line(self):
         # lead rules 2026-10-19 / 2026-10-26
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()

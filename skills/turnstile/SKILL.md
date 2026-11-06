@@ -38,7 +38,8 @@ the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHE
 `turnstile status` → reconcile against GitHub + plan state + next actions + what awaits the lead (exit 1 when `gh`
 facts are missing). Run it first in every session and after every batch of agent reports. Run the proposed
 `turnstile pass` lines it prints (they are dry-run checked); show the lead the anomalies. `turnstile reconcile --json`
-for the raw list.
+for the raw list. `turnstile status --brief` prints only `SYNC:`, the PRs and stories whose state or head changed since the previous `status`
+(snapshot in `delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
 
 ## pass (one transition)
 
@@ -93,7 +94,7 @@ session cannot drive it) and run `## preferences` there (this person's user file
 1. `turnstile brief <agent> <NAME> --var k=v …` renders `references/briefs/<agent>.md`; it refuses unfilled
    placeholders, so pass every agent-specific variable listed in the template, and refuses every agent but the
    `investigator` while `plan.md` is unapproved (spec §4.1: no agent starts before the plan). Names: `<KEY>` for tickets,
-   `REVIEW-<n>`, `STORY-<S>-review`, `ENV-<S>`, `FIX-<n>-<slug>`, `STACK-<date>`, `COMMENTS-<n>`,
+   `GATE-<n>`, `REVIEW-<n>`, `STORY-<S>-review`, `ENV-<S>`, `FIX-<n>-<slug>`, `STACK-<date>`, `COMMENTS-<n>`,
    `INVESTIGATE-<slug>`, `DEPLOY-<slug>-<date>`. A repeat of the same job (a second review round, a rerun) gets a round
    suffix — `REVIEW-<n>-r2`, `STORY-<S>-review-r2`, `ENV-<S>-r2` — so the first round's brief and report survive; `--force`
    overwrites them and is for a brief that was never dispatched.
@@ -104,7 +105,9 @@ session cannot drive it) and run `## preferences` there (this person's user file
    environment has none. Model and effort come from the `AGENT:` line the command printed (`AGENT: turnstile:reviewer
    model=opus effort=xhigh`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
    Agent tool — never pick a model yourself. The reviewer briefs carry the resolved review skill and the agent's effort as its argument. One agent per task;
-   parallel agents only across different repositories (`## Token discipline`).
+   parallel agents only across different repositories (`## Token discipline`). On a fresh head dispatch the `gate-runner` (`GATE-<n>`,
+   sonnet; vars `pr_id head repo repo_path base_branch gate gate_skill previous_reports scope`) first, then the `reviewer`, whose brief
+   carries `previous_reports` = the `reports/GATE-<n>.md` and so must not re-run the gate unless it pushes a commit (`references/lifecycle.md`).
 3. On return read the ≤ 8-line reply (the report is in `reports/`), record the facts with `turnstile pass` / `bug`,
    then reply to the lead. Never paste agent output into the chat.
 
@@ -182,6 +185,11 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
 - The repo gate (`pdf-review` or the repo's review skill) runs once per head; re-run it only for P1/P2 (`blocker`/`major`)
   findings — minor fixes land without a re-review. Leftovers go to human review.
 - You dispatch; you never read a diff, run a suite or paste agent output into the chat.
+- Read an agent's ≤ 8-line reply, never its report in full; open a report only at the section the next brief needs.
+- Publish the board at most once per batch of passes, through a `haiku` subagent so the artifact read stays out of your context
+  (`references/board.md`).
+- Start a new orchestrator session each day (`turnstile status` restores everything) and run `/compact` once the context passes ~150 k.
+- Agents wait on CI, a deploy or a gate with one blocking command and report when there is a fact; a "waiting" reply wakes you for nothing.
 
 ## Bugs on the board
 

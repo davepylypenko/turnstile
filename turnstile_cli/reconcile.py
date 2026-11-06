@@ -202,7 +202,43 @@ def uncommitted(delivery: pathlib.Path) -> List[str]:
         return []
     return [ln[3:].strip().split("/")[-1] for ln in r.stdout.splitlines() if ln.strip()]
 
-def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> int:
+def print_awaiting(data: dict) -> None:
+    pending = [a for a in data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at") and a.get("type") != "send"]
+    print("awaiting humans: %d" % len(pending))
+    for a in pending:
+        print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story") or a.get("payload") or ""))
+    for a in data.get("awaiting_human", []):
+        if a.get("type") == "config" and a.get("approved_at") and not a.get("consumed_at") and not a.get("voided_at"):
+            print("APPLY: turnstile config apply %s (%s approved by the lead)" % (a["id"], a.get("payload")))
+
+CACHE_NAME = ".status-cache.json"
+
+def snapshot(data: dict) -> dict:
+    return {"prs": {pid: [pr.get("state"), pr.get("head")] for pid, pr in data["prs"].items()},
+            "stories": {sid: [s.get("state")] for sid, s in data["stories"].items()}}
+
+def load_snapshot(delivery: pathlib.Path) -> dict:
+    try:
+        return json.loads((pathlib.Path(delivery) / CACHE_NAME).read_text())["last_status"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+def save_snapshot(delivery: pathlib.Path, snap: dict) -> None:
+    try:
+        (pathlib.Path(delivery) / CACHE_NAME).write_text(json.dumps({"last_status": snap}, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+def changes(prev: dict, now: dict) -> List[str]:
+    out = []
+    for kind, label in (("stories", "story"), ("prs", "pr")):
+        for ident, cur in now[kind].items():
+            old = (prev.get(kind) or {}).get(ident)
+            if old != cur:
+                out.append("%s %s: %s → %s" % (label, ident, " ".join(str(x) for x in old) if old else "new", " ".join(str(x) for x in cur)))
+    return out
+
+def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, brief: bool = False) -> int:
     from . import sync
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     if not as_json:
@@ -223,6 +259,15 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
     if as_json:
         print(json.dumps([p.__dict__ for p in props], indent=2)); return rc
     if status:
+        prev = load_snapshot(delivery); now = snapshot(st.data)
+        save_snapshot(delivery, now)
+    if status and brief:
+        diff = changes(prev, now)
+        print("changed since the previous status: %d" % len(diff))
+        for ln in diff:
+            print("  " + ln)
+        print_awaiting(st.data)
+    elif status:
         print("== %s" % st.data["epic"]["key"])
         plan = st.data["epic"].get("plan") or {}
         plan_path = pathlib.Path(delivery) / "plan.md"
@@ -243,14 +288,9 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False) -> 
             print("story %s [%s]%s %s — %s" % (sid, s.get("state"), " (trunk)" if rules.is_trunk(s) else "", s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():
             print("pr %-28s [%s] %s" % (pid, pr.get("state"), pr.get("next_action", "")))
-        pending = [a for a in st.data.get("awaiting_human", []) if not a.get("approved_at") and not a.get("voided_at") and a.get("type") != "send"]
-        print("awaiting humans: %d" % len(pending))
-        for a in pending:
-            print("  %s %s %s %s" % (a["id"], a["owner"], a["type"], a.get("pr") or a.get("story") or a.get("payload") or ""))
-        for a in st.data.get("awaiting_human", []):
-            if a.get("type") == "config" and a.get("approved_at") and not a.get("consumed_at") and not a.get("voided_at"):
-                print("APPLY: turnstile config apply %s (%s approved by the lead)" % (a["id"], a.get("payload")))
-        dirty = uncommitted(delivery)
+        print_awaiting(st.data)
+    if status:
+        dirty = [d for d in uncommitted(delivery) if d != CACHE_NAME]
         if dirty:
             print("uncommitted changes in delivery (%d file(s)): %s — a write outside turnstile; the next pass commits it, reconcile it first"
                   % (len(dirty), ", ".join(dirty)))

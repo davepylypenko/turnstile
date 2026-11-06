@@ -24,7 +24,7 @@ class Writers(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
         self.assertEqual(rc, 0, out); self.assertEqual(self.io.fetches, ["epic/myd-1"]); self.assertEqual(self.io.pushes, ["epic/myd-1"])
         self.assertEqual(self.rec()["pushed"], True); self.assertEqual(self.rec()["head"], self.io.head); self.assertNotIn("WARN", out)
-        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json"])
+        self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json", ".status-cache.json"])
         d = self.data(); d["epic"]["knowledge"] = {"branch": "epic/other", "remote": "origin"}; (self.d / "state.json").write_text(state.dumps(d)); self.io.branch = "epic/other"
         run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(self.io.pushes[-1], "epic/other")  # the branch init recorded wins over the worktree's current branch

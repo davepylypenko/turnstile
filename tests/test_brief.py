@@ -22,6 +22,20 @@ class Templates(unittest.TestCase):
         b = brief_cmd.builtins({"epic": {}}, pathlib.Path("/tmp/d"), "tester", "X")
         self.assertEqual(b["skill_dir"], str(ROOT / "skills" / "turnstile")); self.assertTrue((pathlib.Path(b["skill_dir"]) / "references" / "tools" / "figma.md").exists())
         tpl = (BRIEFS / "tester.md").read_text(); self.assertIn("{{skill_dir}}/references/tools/figma.md", tpl); self.assertIn("{{skill_dir}}/{{env_recipe}}", tpl)
+    def test_round_mode_comes_from_the_brief_name(self):
+        self.assertEqual(brief_cmd.round_mode("REVIEW-7"), "round 1 — full review")
+        self.assertIn("round 2 — delta review", brief_cmd.round_mode("REVIEW-7-r2")); self.assertIn("round 13 — delta", brief_cmd.round_mode("STORY-S1-review-r13"))
+        self.assertEqual(brief_cmd.round_mode("REVIEW-7-r1"), "round 1 — full review"); self.assertEqual(brief_cmd.round_mode("FIX-3-r2-slug"), "round 1 — full review")
+        b = brief_cmd.builtins({"epic": {}}, pathlib.Path("/tmp/d"), "reviewer", "REVIEW-7-r3"); self.assertTrue(b["round_mode"].startswith("round 3 — delta review"))
+        for agent in ("reviewer", "story-reviewer"):
+            tpl = (BRIEFS / (agent + ".md")).read_text(); self.assertIn("## Round mode", tpl); self.assertIn("{{round_mode}}", tpl); self.assertIn("≤ 80 tool calls", tpl)
+        self.assertIn("gate-runner", (BRIEFS / "reviewer.md").read_text())
+    def test_gate_runner_brief_placeholders(self):
+        ph = placeholders((BRIEFS / "gate-runner.md").read_text())
+        for k in ("pr_id", "head", "repo", "repo_path", "base_branch", "gate", "gate_skill", "previous_reports", "scope"): self.assertIn(k, ph, k)
+    def test_every_brief_waits_with_one_blocking_command(self):
+        for p in BRIEFS.glob("*.md"):
+            text = p.read_text(); self.assertIn("ONE blocking command", text, p.name); self.assertIn("600000 ms", text, p.name); self.assertNotIn("Poll ≤ 2 min", text, p.name)
     def test_render_reports_missing(self):
         self.assertEqual(brief_cmd.render("a {{x}} b {{y}} {{x}}", {"x": "1"}), ("a 1 b {{y}} 1", ["y"]))
 
@@ -50,7 +64,7 @@ class Run(unittest.TestCase):
             text = (self.d / "briefs" / ("T-" + p.stem + ".md")).read_text()
             self.assertEqual(placeholders(text), [], p.name); self.assertIn("MYD-1", text); self.assertIn("reports/T-" + p.stem + ".md", text)
             self.assertIn("AGENT: turnstile:" + p.stem, out); self.assertIn("PROMPT: Read and execute", out)
-        self.assertEqual(len(self.io.commits), 8); self.assertIn("brief T-tester for tester", (self.d / "ledger.md").read_text())
+        self.assertEqual(len(self.io.commits), 9); self.assertIn("brief T-tester for tester", (self.d / "ledger.md").read_text())
     def test_brief_refuses_unfilled_placeholder(self):
         rc, out = self.run_brief("tester", "ENV-S1", [])
         self.assertEqual(rc, 2); self.assertIn("MISSING placeholder", out)
@@ -68,7 +82,7 @@ class Run(unittest.TestCase):
     def test_no_agent_but_the_investigator_starts_before_the_plan_is_approved(self):
         # round 2 R2-11 (spec §4.1 "no agent starts"): a brief is the start of an agent
         self.approve_plan(approved=False)
-        for agent in ("tester", "implementer", "reviewer", "deployer", "comments-handler", "stack-step", "story-reviewer"):
+        for agent in ("tester", "implementer", "reviewer", "deployer", "comments-handler", "stack-step", "story-reviewer", "gate-runner"):
             rc, out = self.run_brief(agent, "X-" + agent, self.all_vars(agent))
             self.assertEqual(rc, 2, agent); self.assertIn("plan", out); self.assertFalse((self.d / "briefs" / ("X-%s.md" % agent)).exists())
         self.assertEqual(self.io.commits, [])
@@ -92,6 +106,9 @@ class Run(unittest.TestCase):
         text = (self.d / "briefs" / "REVIEW-1-r2.md").read_text(); self.assertIn("Deep review skill: `/code-review high`", text); self.assertNotIn("xhigh", text)
         rc, out = self.run_brief("implementer", "MYD-11", self.all_vars("implementer")); self.assertIn("AGENT: turnstile:implementer model=haiku effort=low\n", out)
         rc, out = self.run_brief("deployer", "DEPLOY-x", self.all_vars("deployer")); self.assertIn("AGENT: turnstile:deployer model=sonnet\n", out)
+        rc, out = self.run_brief("gate-runner", "GATE-1", self.all_vars("gate-runner")); self.assertIn("AGENT: turnstile:gate-runner model=sonnet\n", out)
+        rc, out = self.run_brief("reviewer", "REVIEW-9-r2", self.all_vars("reviewer")); self.assertEqual(rc, 0, out)
+        self.assertIn("This brief: round 2 — delta review", (self.d / "briefs" / "REVIEW-9-r2.md").read_text())
     def test_tester_and_implementer_briefs_carry_the_epic_flag_and_the_arm(self):
         from turnstile_cli import state
         rc, out = self.run_brief("tester", "ENV-S1", self.all_vars("tester")); self.assertEqual(rc, 0, out)
