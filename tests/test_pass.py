@@ -211,6 +211,50 @@ class PassCmd(unittest.TestCase):
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io)
         self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Review\n", out); self.assertNotIn("assignee", out)
 
+    def test_jira_line_never_asks_for_take_up_on_merged(self):
+        # a PR recorded before 0.4.2 has no assignee; MERGED moves the ticket to On Hold and nobody takes it up
+        data = self.data(); del data["prs"]["jsfiller#1"]["jira"]["assignee"]; self.write(data)
+        self.to_human()
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Hold\n", out); self.assertNotIn("assignee", out)
+        self.assertNotIn("assignee", self.data()["prs"]["jsfiller#1"]["jira"])
+
+    def test_jira_assignee_survives_into_merged(self):
+        self.to_human()
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Hold\n", out); self.assertNotIn("assignee", out)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"],
+                         {"status": "On Hold", "synced": False, "assignee": {"account_id": "5f1a0000acc0", "name": "Lead Example", "at": "2026-10-13T10:00Z"}})
+
+    def test_one_ticket_on_several_prs_is_taken_up_once(self):
+        # the assignee recorded on jsfiller#1 counts for every PR of MYD-10
+        data = self.data(); data["prs"]["docs-platform#2"]["ticket"] = "MYD-10"; self.write(data)
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → In progress\n", out); self.assertNotIn("assignee", out)
+        self.assertNotIn("assignee", self.data()["prs"]["docs-platform#2"]["jira"])
+
+    def test_jira_synced_validates_the_assignee_flags_before_writing(self):
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); before = (self.d / "state.json").read_text(); commits = len(self.io.commits)
+        for assignee, name in (("5f1a 0000", None), ("", None), ("x" * 129, None), ("5f1a:0000-acc1", "Davyd\nP"), ("5f1a0000acc1", "a\tb"),
+                               ("5f1a0000acc1", ""), ("5f1a0000acc1", "n" * 129)):
+            buf = _io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee=assignee, assignee_name=name)
+            self.assertEqual(rc, 2, (assignee, name)); self.assertIn("MISSING --assignee", buf.getvalue())
+            self.assertEqual((self.d / "state.json").read_text(), before); self.assertEqual(len(self.io.commits), commits)
+        self.assertIn("MISSING --assignee-name must be 1-128 characters without control characters", buf.getvalue())
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee="5f1a 0000")
+        self.assertIn("MISSING --assignee must match ^[\\w:-]{1,128}$", buf.getvalue())
+        rc = pass_cmd.jira_synced(self.d, "docs-platform#2", "In progress", self.io, assignee="712020:5f1a-0000_acc1", assignee_name="Давид Пилипенко")
+        self.assertEqual(rc, 0); self.assertEqual(self.data()["prs"]["docs-platform#2"]["jira"]["assignee"]["account_id"], "712020:5f1a-0000_acc1")
+
     def test_jira_not_printed_when_commit_fails(self):
         self.io.fail_commit = True
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
@@ -287,7 +331,7 @@ class PassCmd(unittest.TestCase):
         data = self.data(); by_id = {a["id"]: a for a in data["awaiting_human"]}
         self.assertTrue(by_id["ah-1"]["consumed_at"]); self.assertTrue(by_id["ah-2"]["voided_at"]); self.assertNotIn("consumed_at", by_id["ah-3"])
         self.assertEqual(data["prs"]["jsfiller#1"]["evidence"]["human"]["sent_head"], H)
-        self.assertEqual({k: v for k, v in data["prs"]["jsfiller#1"]["jira"].items() if k != "assignee"}, {"status": "On Review", "synced": False})
+        self.assertEqual(data["prs"]["jsfiller#1"]["jira"], {"status": "On Review", "synced": False, "assignee": {"account_id": "5f1a0000acc0", "name": "Lead Example", "at": "2026-10-13T10:00Z"}})
 
     def test_on_human_review_with_an_unknown_approved_id_still_passes(self):
         self.to_ready(); self.story(state="DONE")

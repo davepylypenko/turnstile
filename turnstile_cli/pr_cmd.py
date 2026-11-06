@@ -51,6 +51,6 @@ def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool 
             _recompute_next_actions(data)
             summary = "pr %s added (%s, %s) DEV head %s" % (pr_id, story, ticket, (f.head or "")[:8])
             _side_effects(delivery, st, [summary], io, no_commit, no_push)
-            print(jira_instruction(data["prs"][pr_id])); print("OK " + summary); return 0
+            print(jira_instruction(data["prs"][pr_id], data["prs"])); print("OK " + summary); return 0
     except TurnstileError as e:
         print("MISSING %s" % e); return 2

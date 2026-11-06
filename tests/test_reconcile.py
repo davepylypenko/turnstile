@@ -163,6 +163,25 @@ class Compare(unittest.TestCase):
         self.assertEqual(len(props), 1); self.assertIn('"On Review"', props[0].suggested_cmd)
         d["prs"]["jsfiller#1"]["state"] = "MERGED"
         self.assertNotIn("jira_unassigned", self.kinds(reconcile.compare(d, f)))
+    def test_unsynced_and_unassigned_make_one_proposal(self):
+        d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False; del d["prs"]["jsfiller#1"]["jira"]["assignee"]
+        props = [p for p in reconcile.compare(d, self.facts(human_threads_open=0)) if p.kind.startswith("jira_")]
+        self.assertEqual([p.kind for p in props], ["jira_unsynced"])
+        self.assertEqual(props[0].message, "Jira not moved to In progress and assignee not recorded")
+        self.assertEqual(props[0].suggested_cmd, 'turnstile jira-synced jsfiller#1 "In progress" --assignee <accountId> --assignee-name "<name>"')
+        d["prs"]["jsfiller#1"]["jira"]["synced"] = True
+        self.assertEqual([p.kind for p in reconcile.compare(d, self.facts(human_threads_open=0)) if p.kind.startswith("jira_")], ["jira_unassigned"])
+    def test_one_ticket_on_several_prs_counts_as_assigned(self):
+        d = self.data("AI_REVIEW"); d["prs"]["docs-platform#2"]["ticket"] = "MYD-10"
+        f = self.facts(human_threads_open=0); f["docs-platform#2"] = github.parse("docs-platform#2", PAYLOAD); f["docs-platform#2"].head = "bbbbbbbb22222222"
+        f["docs-platform#2"].human_threads_open = 0
+        props = [p for p in reconcile.compare(d, f) if p.pr == "docs-platform#2" and p.kind.startswith("jira_")]
+        self.assertEqual([p.kind for p in props], ["jira_unsynced"])
+        self.assertEqual(props[0].message, "Jira not moved to To Do"); self.assertEqual(props[0].suggested_cmd, 'turnstile jira-synced docs-platform#2 "To Do"')
+        d["prs"]["docs-platform#2"]["jira"]["synced"] = True
+        self.assertEqual([p.kind for p in reconcile.compare(d, f) if p.pr == "docs-platform#2" and p.kind.startswith("jira_")], [])
+        d["prs"]["docs-platform#2"]["ticket"] = "MYD-11"
+        self.assertEqual([p.kind for p in reconcile.compare(d, f) if p.pr == "docs-platform#2" and p.kind.startswith("jira_")], ["jira_unassigned"])
     def test_approval_unlogged_when_ledger_lacks_the_lead_terminal_line(self):
         d = self.data("READY")
         d["awaiting_human"] = [{"id": "ah-1", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T10:00Z"},

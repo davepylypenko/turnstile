@@ -31,7 +31,7 @@ select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); 
 <div class="updated">updated __TURNSTILE_UPDATED__</div>
 <div class="tiles" id="tiles">
 <button type="button" class="tile" data-tile="DEV" aria-pressed="false"><b>0</b><span>DEV</span></button><button type="button" class="tile" data-tile="AI_REVIEW" aria-pressed="false"><b>0</b><span>AI_REVIEW</span></button><button type="button" class="tile" data-tile="READY" aria-pressed="false"><b>0</b><span>READY</span></button><button type="button" class="tile" data-tile="ON_HUMAN_REVIEW" aria-pressed="false"><b>0</b><span>ON_HUMAN_REVIEW</span></button><button type="button" class="tile" data-tile="REWORK" aria-pressed="false"><b>0</b><span>REWORK</span></button><button type="button" class="tile" data-tile="APPROVED" aria-pressed="false"><b>0</b><span>APPROVED</span></button><button type="button" class="tile" data-tile="MERGED" aria-pressed="false"><b>0</b><span>MERGED</span></button>
-<button type="button" class="tile" data-tile="stories" aria-pressed="false"><b>0</b><span>Stories</span></button><button type="button" class="tile" data-tile="bugs" aria-pressed="false"><b>0</b><span>Open bugs</span></button><button type="button" class="tile" data-tile="awaiting" aria-pressed="false"><b>0</b><span>Awaiting humans</span></button>
+<button type="button" class="tile" data-tile="stories"><b>0</b><span>Stories</span></button><button type="button" class="tile" data-tile="bugs" aria-pressed="false"><b>0</b><span>Open bugs</span></button><button type="button" class="tile" data-tile="awaiting"><b>0</b><span>Awaiting humans</span></button>
 </div>
 <div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="prs" class="on">PRs</button><button role="tab" aria-selected="false" data-tab="stories">Stories</button><button role="tab" aria-selected="false" data-tab="bugs">Bugs</button><button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button></div>
 <div id="prs" role="tabpanel"></div><div id="stories" class="hidden" role="tabpanel"></div><div id="bugs" class="hidden" role="tabpanel"></div><div id="awaiting" class="hidden" role="tabpanel"></div>
@@ -69,7 +69,7 @@ function tiles() {
   PR_STATES.forEach(s => { n[s] = prs.filter(p => p.state === s).length; });
   document.querySelectorAll('#tiles .tile').forEach(b => {
     const k = b.dataset.tile, on = pressed(k);
-    b.querySelector('b').textContent = n[k] || 0; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.disabled = !n[k] && !on;
+    b.querySelector('b').textContent = n[k] || 0; if (b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.disabled = !n[k] && !on;
   });
 }
 function tileClick(k) {
@@ -114,7 +114,7 @@ function prs() {
         '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + jiraAssignee(p) + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
     }).join('') + '</tbody></table></div>').join('');
   const all = document.getElementById('show-all');
-  if (all) all.addEventListener('click', e => { e.preventDefault(); view.state = null; show(); writeHash(); });
+  if (all) all.addEventListener('click', e => { e.preventDefault(); view.state = null; show(); writeHash(); document.querySelector('.tabs button[data-tab="prs"]').focus(); });
 }
 function stories() {
   document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
@@ -137,7 +137,8 @@ const bugState = b => { const o = bugOverrides[b.id]; return (o && BUG_STATES.in
 const openBugs = () => (STATE.bugs || []).filter(b => bugState(b) !== 'done').length;
 function bugs() {
   const counts = {}; (STATE.bugs || []).forEach(b => { const k = bugState(b); counts[k] = (counts[k] || 0) + 1; });
-  document.getElementById('bugs').innerHTML =
+  const filter = view.open ? '<p class="filter">Showing open bugs only · <a href="#" id="show-all-bugs">show all</a></p>' : '';
+  document.getElementById('bugs').innerHTML = filter +
     '<div class="tiles">' + BUG_STATES.map(k => '<div class="tile"><b>' + (counts[k] || 0) + '</b><span>' + k + '</span></div>').join('') + '</div>' +
     '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Case</th><th>Bug</th><th>Source</th><th>PR</th><th>Figma</th><th>State</th><th>Note</th></tr></thead><tbody>' +
     (STATE.bugs || []).filter(b => !view.open || bugState(b) !== 'done').map(b => {
@@ -149,6 +150,8 @@ function bugs() {
         BUG_STATES.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join('') + '</select>' + manual + '</td>' +
         '<td>' + esc(b.note) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
+  const all = document.getElementById('show-all-bugs');
+  if (all) all.addEventListener('click', e => { e.preventDefault(); view.open = false; show(); writeHash(); document.querySelector('.tabs button[data-tab="bugs"]').focus(); });
   document.querySelectorAll('select[data-bug]').forEach(sel => sel.addEventListener('change', async () => {
     if (!bugsDb) return;
     const id = sel.getAttribute('data-bug'), status = sel.value; sel.disabled = true;

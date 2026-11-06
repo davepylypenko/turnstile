@@ -117,9 +117,15 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             continue
         if st == "MERGED":
             continue
-        if not (pr.get("jira") or {}).get("assignee"):
+        jira = pr.get("jira") or {}
+        unassigned = not jira.get("assignee") and not rules.ticket_assignee(data["prs"], pr.get("ticket"))
+        assignee_flags = ' --assignee <accountId> --assignee-name "<name>"' if unassigned else ""
+        if jira.get("synced") is False:
+            out.append(Proposal(pid, "jira_unsynced", "Jira not moved to %s%s" % (jira.get("status"), " and assignee not recorded" if unassigned else ""),
+                                'turnstile jira-synced %s "%s"%s' % (pid, jira.get("status"), assignee_flags)))
+        elif unassigned:
             out.append(Proposal(pid, "jira_unassigned", "Jira assignee not recorded for %s" % pr.get("ticket"),
-                                'turnstile jira-synced %s "%s" --assignee <accountId> --assignee-name "<name>"' % (pid, rules.JIRA_FOR_PR_STATE.get(st))))
+                                'turnstile jira-synced %s "%s"%s' % (pid, rules.JIRA_FOR_PR_STATE.get(st), assignee_flags)))
         if not rules.same_head(f.head, pr.get("head")):
             msg = "head is %s, state has %s" % (f.head[:8], (pr.get("head") or "")[:8])
             if st in ("ON_HUMAN_REVIEW", "APPROVED"):
@@ -167,9 +173,6 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             out.append(Proposal(pid, "ci_red", "CI is red on GitHub but evidence says success", None))
         if f.head_signed is False:
             out.append(Proposal(pid, "unsigned", "head commit is not signed (DEV DoD: signed commits)", None))
-        if (pr.get("jira") or {}).get("synced") is False:
-            out.append(Proposal(pid, "jira_unsynced", "Jira not moved to %s" % pr["jira"].get("status"),
-                                'turnstile jira-synced %s "%s"' % (pid, pr["jira"].get("status"))))
         if f.draft and st in ("ON_HUMAN_REVIEW", "APPROVED"):
             out.append(Proposal(pid, "draft_mismatch", "PR is still a draft on GitHub", None))
     return out

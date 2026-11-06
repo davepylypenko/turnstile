@@ -58,7 +58,10 @@ run covers `control_cases`, its parity may be `not_testable_here`); **DONE** nee
 ## Jira mapping (printed by `pass`, performed through the Atlassian MCP, recorded with `jira-synced`)
 
 DEV / AI_REVIEW / READY → In progress · ON_HUMAN_REVIEW / REWORK / APPROVED → On Review · MERGED → On Hold.
-A ticket is assigned to the person whose session takes it into work: while a PR has no recorded assignee the `JIRA:` line ends
-with ` · assignee: you` — set your own account (`atlassianUserInfo` → `editJiraIssue`) and record it with
-`turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; later transitions never touch the
-assignee (a hand-over by hand is written back with the same flags), and `reconcile` lists `jira_unassigned` until it is recorded.
+A ticket is assigned to the person whose session takes it into work: while no PR of the ticket has a recorded assignee the
+`JIRA:` line ends with ` · assignee: you` (never on MERGED) and `reconcile` lists `jira_unassigned` (or folds it into the
+`jira_unsynced` proposal while the status is not synced either). First read the issue's current assignee (`getJiraIssue` with
+`fields: ["assignee"]`): empty → set your own account (`atlassianUserInfo` → `editJiraIssue`) and record it with
+`turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → leave Jira
+alone and record that person with the same flags. The plugin never moves a ticket away from its holder: later transitions never
+touch the assignee, and a hand-over made by hand is written back with `jira-synced --assignee`.

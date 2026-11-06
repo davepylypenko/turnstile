@@ -1,4 +1,4 @@
-import copy, datetime, os, pathlib, subprocess
+import copy, datetime, os, pathlib, re, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from . import state as st_mod, rules, ledger, threads, sync
@@ -463,7 +463,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 jira_line = None
                 if (pr.get("jira") or {}).get("status") != jira_target:
                     pr["jira"] = dict(pr.get("jira") or {}, status=jira_target, synced=False)
-                    jira_line = jira_instruction(pr)
+                    jira_line = jira_instruction(pr, data["prs"])
                 if target == "ON_HUMAN_REVIEW" and src == "READY":
                     for a in awaiting:
                         if a.get("type") == "send" and a.get("pr") == ident and not a.get("consumed_at") and not a.get("voided_at"):
@@ -582,9 +582,13 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
     except TurnstileError as e:
         print("\n".join(notes + ["MISSING %s" % e])); return 2
 
-def jira_instruction(pr: dict) -> str:
+ASSIGNEE_ID = re.compile(r"[\w:-]{1,128}")
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+def jira_instruction(pr: dict, prs: Optional[Dict[str, dict]] = None) -> str:
     jira = pr.get("jira") or {}
-    return "JIRA: %s → %s%s" % (pr["ticket"], jira.get("status"), "" if jira.get("assignee") else " · assignee: you")
+    taken = pr.get("state") == "MERGED" or jira.get("assignee") or rules.ticket_assignee(prs, pr.get("ticket"))
+    return "JIRA: %s → %s%s" % (pr["ticket"], jira.get("status"), "" if taken else " · assignee: you")
 
 def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None, no_push: bool = False,
                 assignee: Optional[str] = None, assignee_name: Optional[str] = None) -> int:
@@ -593,6 +597,10 @@ def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO
     try:
         if assignee_name and not assignee:
             raise TurnstileError("--assignee-name goes with --assignee <accountId> (atlassianUserInfo: account_id, name)")
+        if assignee is not None and not ASSIGNEE_ID.fullmatch(assignee):
+            raise TurnstileError("--assignee must match ^[\\w:-]{1,128}$ (an Atlassian account id; has %r)" % assignee)
+        if assignee_name is not None and not (1 <= len(assignee_name) <= 128 and not CONTROL_CHARS.search(assignee_name)):
+            raise TurnstileError("--assignee-name must be 1-128 characters without control characters (has %r)" % assignee_name)
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
             pr = st_mod.pr(st, ident)

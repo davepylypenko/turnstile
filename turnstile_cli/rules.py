@@ -30,6 +30,12 @@ def require_org(data: dict) -> str:
         raise TurnstileError("epic.github_org is not set; add it to state.json (turnstile init sets it)")
     return org
 
+def ticket_assignee(prs: Dict[str, dict], ticket: Optional[str]) -> Optional[dict]:
+    for p in (prs or {}).values():
+        if p.get("ticket") == ticket and (p.get("jira") or {}).get("assignee"):
+            return p["jira"]["assignee"]
+    return None
+
 def same_head(a: Optional[str], b: Optional[str]) -> bool:
     if not a or not b or len(a) < 8 or len(b) < 8:
         return False

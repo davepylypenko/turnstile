@@ -29,6 +29,13 @@ class Board(unittest.TestCase):
                   "!view.state || p.state === view.state", "!view.open || bugState(b) !== 'done'", "view.tab = b.dataset.tab; show(); writeHash();"):
             self.assertIn(s, html, s)
         self.assertEqual(html.count('<button type="button" class="tile" data-tile="'), 10)
+        # aria-pressed only on the tiles that toggle a filter: the Stories and Awaiting humans tiles switch tabs
+        self.assertEqual(html.count('aria-pressed="false"'), 8)
+        self.assertIn('<button type="button" class="tile" data-tile="stories"><b>', html); self.assertIn('<button type="button" class="tile" data-tile="awaiting"><b>', html)
+        self.assertIn("if (b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', on ? 'true' : 'false')", html)
+        self.assertIn("""view.state = null; show(); writeHash(); document.querySelector('.tabs button[data-tab="prs"]').focus();""", html)
+        self.assertIn("""'<p class="filter">Showing open bugs only · <a href="#" id="show-all-bugs">show all</a></p>'""", html)
+        self.assertIn("""view.open = false; show(); writeHash(); document.querySelector('.tabs button[data-tab="bugs"]').focus();""", html)
         self.assertIn("<button role=\"tab\" aria-selected=\"true\" data-tab=\"prs\" class=\"on\">PRs</button><button role=\"tab\" aria-selected=\"false\" data-tab=\"stories\">", html)
     def test_json_is_script_safe(self):
         d = pathlib.Path(tempfile.mkdtemp())
