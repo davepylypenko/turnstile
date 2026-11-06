@@ -121,6 +121,13 @@ class Run(unittest.TestCase):
         entries = [a for a in self.data()["awaiting_human"] if a["type"] == "plan"]
         self.assertEqual(len(entries), 2); self.assertTrue(entries[0]["voided_at"]); self.assertIsNone(entries[1]["approved_at"])
         self.assertEqual(entries[1]["digest"], state.digest(PLAN + "\nmore\n"))
+    def test_resubmit_keeps_state_since(self):
+        self.assertIn("state_since", plan_cmd.KEEP)
+        self.submit(); d = self.data(); d["stories"]["S1"]["state_since"] = "2026-10-30T09:00Z"; d["stories"]["S2"]["state_since"] = "2026-10-31T10:00Z"; self.write(d)
+        (self.d / "plan.md").write_text(PLAN + "\nmore\n"); rc, out = self.submit(); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["stories"]["S1"]["state_since"], "2026-10-30T09:00Z"); self.assertEqual(self.data()["stories"]["S2"]["state_since"], "2026-10-31T10:00Z")
+        merged, _ = plan_cmd.merge_stories({"S1": {"state": "IN_PROGRESS", "state_since": "2026-10-30T09:00Z", "branch": "epic_myd-1"}}, plan_cmd.stories_from_plan(PLAN))
+        self.assertEqual(merged["S1"]["state_since"], "2026-10-30T09:00Z"); self.assertNotIn("state_since", merged["S2"])
     def test_resubmit_prints_warnings_for_a_started_story(self):
         self.submit()
         (self.d / "plan.md").write_text(PLAN.replace('"tickets": ["MYD-10", "MYD-11"]', '"tickets": ["MYD-10"]'))

@@ -3,10 +3,6 @@ from unittest import mock
 from turnstile_cli import init_cmd
 from turnstile_cli.errors import TurnstileError
 
-_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
-def setUpModule(): _env.start()
-def tearDownModule(): _env.stop()
-
 JS = '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-1","slack":"C1","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}'
 MONO = '{"name":"pdffiller","base":"master","epic_branch":"l2f","slack":"G1","gate":"run-lint","gate_check":null,"copilot":true,"branch_prefix":"l2f-myd-"}'
 

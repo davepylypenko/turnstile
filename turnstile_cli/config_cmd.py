@@ -36,7 +36,7 @@ def _epic_value(e: dict, key: str):
     return (e.get("models") or {}).get(agent) if section == "models" else e.get(key)
 
 def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, io=None, no_commit: bool = False, no_push: bool = False) -> int:
-    from .pass_cmd import IO, _side_effects, _open_entry
+    from .pass_cmd import IO, _side_effects, _open_entry, _recompute_next_actions
     io = io or IO()
     try:
         if "=" not in assignment:
@@ -55,6 +55,8 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
             with st_mod.locked(delivery):
                 st = st_mod.load(delivery / "state.json")
                 entry = _open_entry(st.data, "config", payload=key, old=_epic_value(st.data["epic"], key), new=parsed, reset=reset)
+                if key == "send_skill":
+                    _recompute_next_actions(st.data)
                 _side_effects(delivery, st, ["config %s %s proposed for the epic (%s awaits the lead)" % (verb, key if reset else assignment, entry["id"])], io, no_commit, no_push)
             print("APPROVAL: the lead types: ! TURNSTILE_LEAD=1 turnstile approve %s" % entry["id"])
             print("THEN: turnstile config apply %s" % entry["id"])
@@ -79,7 +81,7 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
         print("MISSING %s" % e); return 2
 
 def apply(delivery: pathlib.Path, ah_id: str, io=None, no_commit: bool = False, no_push: bool = False) -> int:
-    from .pass_cmd import IO, _side_effects, _now
+    from .pass_cmd import IO, _side_effects, _recompute_next_actions, _now
     from . import rules
     io = io or IO()
     try:
@@ -97,6 +99,8 @@ def apply(delivery: pathlib.Path, ah_id: str, io=None, no_commit: bool = False, 
             if _epic_value(e, key) != entry.get("old"):
                 raise TurnstileError("%s changed since %s was proposed (was %r, now %r): propose again" % (key, ah_id, entry.get("old"), _epic_value(e, key)))
             _apply_epic(e, key, entry.get("new"), bool(entry.get("reset")))
+            if key == "send_skill":
+                _recompute_next_actions(st.data)
             entry["consumed_at"] = _now()
             verb = "unset" if entry.get("reset") else "set"
             shown = key if entry.get("reset") else "%s=%s" % (key, config.fmt_model(entry["new"]) if isinstance(entry.get("new"), dict) else entry.get("new"))

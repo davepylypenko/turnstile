@@ -9,10 +9,6 @@ FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 H = "aaaaaaaa11111111"
 H2 = "eeeeeeee55555555"
 LINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
-_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
-def setUpModule(): _env.start()
-def tearDownModule(): _env.stop()
-
 class FakeIO:
     """GitHub facts per PR: `heads` gives the head, `facts` per-PR overrides of the canned green PrFacts."""
     def __init__(self, heads=None):

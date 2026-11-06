@@ -8,7 +8,7 @@ ID_RX = re.compile(r"^S\d+$")
 REQUIRED = ("title", "tickets", "repos", "branch")
 DEFAULTS = {"after": [], "parallel_with": [], "test_cases": [], "control_cases": [], "figma": [], "env_slot": {}, "human_review_units": []}
 MODES = ("stack", "trunk")
-KEEP = ("state", "evidence", "next_action", "last_reason")
+KEEP = ("state", "evidence", "next_action", "last_reason", "state_since")
 
 def stories_from_plan(text: str, default_mode: str = "stack", flag: Optional[str] = None) -> dict:
     if default_mode not in MODES:
