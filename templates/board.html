@@ -14,6 +14,8 @@
 h1 { font-size:20px; margin:0 0 4px } .updated { color:var(--muted); font-size:12px; margin-bottom:12px }
 .tiles { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px } .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:110px }
 .tile b { display:block; font-size:22px } .tile span { color:var(--muted); font-size:12px }
+button.tile { font:inherit; text-align:left; color:inherit; cursor:pointer } .tile[aria-pressed="true"] { border-color:var(--accent) } .tile[aria-pressed="true"] b { color:var(--accent) }
+.tile:disabled { opacity:.6; cursor:default } .filter { margin:0 0 8px; color:var(--muted); font-size:12px }
 h2 { font-size:16px; margin:20px 0 8px } .scroll { overflow-x:auto } table { border-collapse:collapse; width:100%; background:var(--card); border:1px solid var(--line); border-radius:8px }
 th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; font-size:13px } th { color:var(--muted); font-weight:600 }
 .badge { display:inline-block; padding:1px 8px; border-radius:999px; color:#fff; font-size:11px; font-weight:600 }
@@ -27,7 +29,10 @@ select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); 
 <body>
 <h1 id="title">Turnstile</h1>
 <div class="updated">updated __TURNSTILE_UPDATED__</div>
-<div class="tiles" id="tiles"></div>
+<div class="tiles" id="tiles">
+<button type="button" class="tile" data-tile="DEV" aria-pressed="false"><b>0</b><span>DEV</span></button><button type="button" class="tile" data-tile="AI_REVIEW" aria-pressed="false"><b>0</b><span>AI_REVIEW</span></button><button type="button" class="tile" data-tile="READY" aria-pressed="false"><b>0</b><span>READY</span></button><button type="button" class="tile" data-tile="ON_HUMAN_REVIEW" aria-pressed="false"><b>0</b><span>ON_HUMAN_REVIEW</span></button><button type="button" class="tile" data-tile="REWORK" aria-pressed="false"><b>0</b><span>REWORK</span></button><button type="button" class="tile" data-tile="APPROVED" aria-pressed="false"><b>0</b><span>APPROVED</span></button><button type="button" class="tile" data-tile="MERGED" aria-pressed="false"><b>0</b><span>MERGED</span></button>
+<button type="button" class="tile" data-tile="stories" aria-pressed="false"><b>0</b><span>Stories</span></button><button type="button" class="tile" data-tile="bugs" aria-pressed="false"><b>0</b><span>Open bugs</span></button><button type="button" class="tile" data-tile="awaiting" aria-pressed="false"><b>0</b><span>Awaiting humans</span></button>
+</div>
 <div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="prs" class="on">PRs</button><button role="tab" aria-selected="false" data-tab="stories">Stories</button><button role="tab" aria-selected="false" data-tab="bugs">Bugs</button><button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button></div>
 <div id="prs" role="tabpanel"></div><div id="stories" class="hidden" role="tabpanel"></div><div id="bugs" class="hidden" role="tabpanel"></div><div id="awaiting" class="hidden" role="tabpanel"></div>
 <div class="legend" id="legend"></div>
@@ -35,6 +40,8 @@ select.bug:disabled { opacity:.7 } .manual { display:block; color:var(--muted); 
 const STATE = /*__TURNSTILE_STATE__*/null;
 const COLORS = { DEV:'var(--dev)', AI_REVIEW:'var(--ai)', READY:'var(--ready)', ON_HUMAN_REVIEW:'var(--human)', REWORK:'var(--rework)', APPROVED:'var(--approved)', MERGED:'var(--merged)' };
 const PR_STATES = Object.keys(COLORS);
+const TABS = ['prs', 'stories', 'bugs', 'awaiting'];
+let view = { tab: 'prs', state: null, open: false };
 Object.assign(COLORS, { PLANNED:'var(--planned)', IN_PROGRESS:'var(--progress)', INTEGRATION_REVIEW:'var(--integ)', ENV_TESTING:'var(--env)', DONE:'var(--done)', todo:'var(--todo)', ai:'var(--bugai)', testing:'var(--testing)', done:'var(--done)' });
 const JIRA = { DEV:'In progress', AI_REVIEW:'In progress', READY:'In progress', ON_HUMAN_REVIEW:'On Review', REWORK:'On Review', APPROVED:'On Review', MERGED:'On Hold' };
 function note(p) {
@@ -54,12 +61,37 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;
 const badge = s => '<span class="badge" style="background:' + (COLORS[s] || 'var(--muted)') + '">' + esc(s) + '</span>';
 const prUrl = id => { const [repo, n] = id.split('#'); const org = ((STATE || {}).epic || {}).github_org; return org ? 'https://github.com/' + org + '/' + repo + '/pull/' + n : '#'; };
 const short = h => h ? String(h).slice(0, 8) : '—';
+const pressed = k => (view.tab === 'prs' && view.state === k) || (view.tab === 'bugs' && view.open && k === 'bugs');
 function tiles() {
   const prs = Object.values(STATE.prs || {});
-  const t = PR_STATES.map(s => ({ n: prs.filter(p => p.state === s).length, l: s }));
-  t.push({ n: Object.keys(STATE.stories || {}).length, l: 'Stories' }, { n: openBugs(), l: 'Open bugs' },
-         { n: (STATE.awaiting_human || []).filter(a => a.type !== 'send' && !a.approved_at && !a.voided_at && !a.consumed_at).length, l: 'Awaiting humans' });
-  document.getElementById('tiles').innerHTML = t.map(x => '<div class="tile"><b>' + x.n + '</b><span>' + esc(x.l) + '</span></div>').join('');
+  const n = { stories: Object.keys(STATE.stories || {}).length, bugs: openBugs(),
+              awaiting: (STATE.awaiting_human || []).filter(a => a.type !== 'send' && !a.approved_at && !a.voided_at && !a.consumed_at).length };
+  PR_STATES.forEach(s => { n[s] = prs.filter(p => p.state === s).length; });
+  document.querySelectorAll('#tiles .tile').forEach(b => {
+    const k = b.dataset.tile, on = pressed(k);
+    b.querySelector('b').textContent = n[k] || 0; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.disabled = !n[k] && !on;
+  });
+}
+function tileClick(k) {
+  if (PR_STATES.includes(k)) { view.state = pressed(k) ? null : k; view.tab = 'prs'; }
+  else if (k === 'bugs') { view.open = !pressed(k); view.tab = 'bugs'; }
+  else if (TABS.includes(k)) view.tab = k;
+  show(); writeHash();
+}
+function show() {
+  document.querySelectorAll('.tabs button').forEach(x => { const on = x.dataset.tab === view.tab; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
+  TABS.forEach(id => document.getElementById(id).classList.toggle('hidden', id !== view.tab));
+  prs(); renderBugs();
+}
+function writeHash() {
+  const h = '#tab=' + view.tab + (view.tab === 'prs' && view.state ? '&state=' + view.state : '') + (view.tab === 'bugs' && view.open ? '&open=1' : '');
+  try { history.replaceState(null, '', location.pathname + location.search + h); } catch (e) {}
+}
+function applyHash() {
+  const q = new URLSearchParams(location.hash.slice(1)), tab = q.get('tab'), state = q.get('state');
+  if (TABS.includes(tab)) view.tab = tab;
+  view.state = PR_STATES.includes(state) ? state : null; view.open = q.get('open') === '1';
+  show();
 }
 function gateCell(p) {
   const e = p.evidence || {}, cur = p.head;
@@ -70,8 +102,9 @@ function gateCell(p) {
 const jiraAssignee = p => { const a = (p.jira || {}).assignee; return a ? ' · ' + esc(a.name || a.account_id) : ' <span class="muted">· unassigned</span>'; };
 function prs() {
   const byRepo = {};
-  Object.entries(STATE.prs || {}).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
-  document.getElementById('prs').innerHTML = Object.entries(byRepo).map(([repo, rows]) =>
+  Object.entries(STATE.prs || {}).filter(([, p]) => !view.state || p.state === view.state).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
+  const filter = view.state ? '<p class="filter">Showing ' + esc(view.state) + ' only · <a href="#" id="show-all">show all</a></p>' : '';
+  document.getElementById('prs').innerHTML = filter + Object.entries(byRepo).map(([repo, rows]) =>
     '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th><th>Note</th></tr></thead><tbody>' +
     rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
       const h = (p.evidence || {}).human || {};
@@ -80,6 +113,8 @@ function prs() {
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
         '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + jiraAssignee(p) + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
     }).join('') + '</tbody></table></div>').join('');
+  const all = document.getElementById('show-all');
+  if (all) all.addEventListener('click', e => { e.preventDefault(); view.state = null; show(); writeHash(); });
 }
 function stories() {
   document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
@@ -105,7 +140,7 @@ function bugs() {
   document.getElementById('bugs').innerHTML =
     '<div class="tiles">' + BUG_STATES.map(k => '<div class="tile"><b>' + (counts[k] || 0) + '</b><span>' + k + '</span></div>').join('') + '</div>' +
     '<div class="scroll"><table><thead><tr><th>#</th><th>Story</th><th>Case</th><th>Bug</th><th>Source</th><th>PR</th><th>Figma</th><th>State</th><th>Note</th></tr></thead><tbody>' +
-    (STATE.bugs || []).map(b => {
+    (STATE.bugs || []).filter(b => !view.open || bugState(b) !== 'done').map(b => {
       const cur = bugState(b);
       const manual = bugOverrides[b.id] ? '<span class="manual">changed ' + esc(String(bugOverrides[b.id].updatedAt || '').slice(0, 16).replace('T', ' ')) + '</span>' : '';
       return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td class="k">' + esc(b.case || '—') + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
@@ -123,13 +158,14 @@ function bugs() {
   }));
 }
 function renderBugs() {
+  tiles();
   // a snapshot while the viewer holds a dropdown open must not destroy it: render once it closes
   const el = document.activeElement;
   if (el && el.matches && el.matches('select.bug')) {
     if (!renderPending) { renderPending = true; el.addEventListener('blur', () => { renderPending = false; renderBugs(); }, { once: true }); }
     return;
   }
-  bugs(); tiles();
+  bugs();
 }
 async function connectBugsDb() {
   try {
@@ -143,16 +179,15 @@ function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
     (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
-document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.tabs button').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b ? 'true' : 'false'); });
-  ['prs', 'stories', 'bugs', 'awaiting'].forEach(id => document.getElementById(id).classList.toggle('hidden', id !== b.dataset.tab));
-}));
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { view.tab = b.dataset.tab; show(); writeHash(); }));
+document.querySelectorAll('#tiles .tile').forEach(b => b.addEventListener('click', () => tileClick(b.dataset.tile)));
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
     '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry; once every thread has its reply and Copilot (or the gate) is clean on the head, the agents re-request the thread authors on GitHub. A push-only rework pings nobody: its row reads "reviewers not notified" and the lead decides.' +
     '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.';
 }
 if (STATE) { document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key; tiles(); prs(); stories(); bugs(); awaiting(); legend();
+  if (location.hash) applyHash(); window.addEventListener('hashchange', applyHash);
   if (window.claude && typeof window.claude.use === 'function') { connectBugsDb(); } else { window.addEventListener('load', () => { if (window.claude && typeof window.claude.use === 'function') connectBugsDb(); }); } }
 </script>
 </body>

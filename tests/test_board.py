@@ -18,6 +18,18 @@ class Board(unittest.TestCase):
         d = pathlib.Path(tempfile.mkdtemp()); html = board.render(FIX, d).read_text()
         for needle in ["s.mode === 'trunk'", "trunk · flag", "lastArm('treatment')", "lastArm('control')", "not_testable_here"]: self.assertIn(needle, html, needle)
         self.assertIn("'env ' + runMark(e.env_test)", html)
+    def test_tiles_filter_the_tables_and_deep_link_by_hash(self):
+        # 2026-11-06: the status tiles are buttons that filter the PR table (or the bug list to open bugs); the selection lives in location.hash
+        d = pathlib.Path(tempfile.mkdtemp()); html = board.render(FIX, d).read_text()
+        for s in ('data-tile="REWORK"', 'data-tile="bugs"', 'data-tile="awaiting"', 'aria-pressed="false"', "b.setAttribute('aria-pressed', on ? 'true' : 'false')",
+                  "b.disabled = !n[k] && !on", "Showing ' + esc(view.state) + ' only", 'id="show-all"', "addEventListener('hashchange', applyHash)",
+                  "history.replaceState(null, ''", "'&state=' + view.state", "'&open=1'", "new URLSearchParams(location.hash.slice(1))", "if (location.hash) applyHash()",
+                  "button.tile { font:inherit; text-align:left; color:inherit; cursor:pointer }", ".tile:disabled { opacity:.6; cursor:default }",
+                  '.tile[aria-pressed="true"] { border-color:var(--accent) }', '.tile[aria-pressed="true"] b { color:var(--accent) }',
+                  "!view.state || p.state === view.state", "!view.open || bugState(b) !== 'done'", "view.tab = b.dataset.tab; show(); writeHash();"):
+            self.assertIn(s, html, s)
+        self.assertEqual(html.count('<button type="button" class="tile" data-tile="'), 10)
+        self.assertIn("<button role=\"tab\" aria-selected=\"true\" data-tab=\"prs\" class=\"on\">PRs</button><button role=\"tab\" aria-selected=\"false\" data-tab=\"stories\">", html)
     def test_json_is_script_safe(self):
         d = pathlib.Path(tempfile.mkdtemp())
         data = json.loads(json.dumps(FIX)); data["bugs"] = [{"id": "b1", "title": "</script><b>x", "state": "todo", "story": "S1", "source": "", "pr": "", "note": ""}]
