@@ -90,6 +90,9 @@ def main():
             html = io.render_board(st.data)
             if html is not None:
                 st_mod.write_atomic(delivery / "board.html", html)
+                for rel, page in io.render_boards(st.data).items():
+                    (delivery / rel).parent.mkdir(parents=True, exist_ok=True)
+                    st_mod.write_atomic(delivery / rel, page)
             io.git_commit(delivery, "turnstile: " + line)
         except Exception as e:
             warn("send recorded in state.json and ledger.md but not committed (%s); the next pass commits delivery/." % e)

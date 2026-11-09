@@ -265,6 +265,7 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
     unknown_member = members.unknown_proposal(st.data, delivery)
     if unknown_member:
         props.append(unknown_member)
+    props += members.owner_unknown_proposals(st.data)
     rc = 1 if unknown else 0
     if as_json:
         print(json.dumps([p.__dict__ for p in props], indent=2)); return rc

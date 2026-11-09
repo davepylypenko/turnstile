@@ -27,6 +27,39 @@ def migrate(data: dict) -> bool:
     epic["members"] = {lead: entry}
     return True
 
+def migrate_owners(data: dict) -> bool:
+    lead = (((data.get("epic") or {}).get("roles")) or {}).get("lead_github") if isinstance(data, dict) else None
+    if not lead:
+        return False
+    changed = False
+    for table in (data.get("prs"), data.get("stories")):
+        for row in (table or {}).values():
+            if isinstance(row, dict) and not row.get("owner"):
+                row["owner"] = lead; changed = True
+    return changed
+
+def resolve_owner(data: dict, delivery, override: Optional[str] = None) -> Optional[str]:
+    table = (data.get("epic") or {}).get("members") or {}
+    if override:
+        if override not in table:
+            raise TurnstileError("--owner %s is not in epic.members (%s)" % (override, ", ".join(sorted(table)) or "none"))
+        return override
+    cur = current_or_none(data, delivery)
+    return cur[0] if cur else ((data.get("epic") or {}).get("roles") or {}).get("lead_github")
+
+def owner_unknown_proposals(data: dict):
+    from .reconcile import Proposal
+    table = (data.get("epic") or {}).get("members") or {}
+    out = []
+    for kind, rows in (("pr", data.get("prs")), ("story", data.get("stories"))):
+        for ident, row in (rows or {}).items():
+            owner = row.get("owner")
+            if owner and owner not in table:
+                cmd = ("turnstile pr add %s --story %s --ticket %s --owner <login>" % (ident, row.get("story"), row.get("ticket"))) if kind == "pr" \
+                    else "turnstile pass story %s IN_PROGRESS --owner <login>" % ident
+                out.append(Proposal(ident, "owner_unknown", "%s owner %s is not in epic.members (%s)" % (kind, owner, ", ".join(sorted(table)) or "none"), cmd))
+    return out
+
 def check_board_url(url: str) -> str:
     if not BOARD_URL_RX.match(url or ""):
         raise TurnstileError("board url must look like https://claude.ai/artifact/<id> or https://claude.ai/code/artifact/<id> (got %r)" % url)
@@ -64,9 +97,14 @@ def board_url_of(data: dict, delivery) -> Optional[str]:
         return (cur[1].get("board") or {}).get("artifact_url")
     return ((data.get("epic") or {}).get("board") or {}).get("artifact_url")
 
+def board_file(data: dict, delivery) -> str:
+    from .board import member_rel
+    cur = current_or_none(data, delivery)
+    return member_rel(cur[0]) if cur else "board.html"
+
 def board_line(data: dict, delivery) -> str:
     url = board_url_of(data, delivery)
-    return "BOARD: publish %s → %s" % (pathlib.Path(delivery) / "board.html", url or "new artifact (capabilities: db, user) — then: turnstile board-url <url>")
+    return "BOARD: publish %s → %s" % (pathlib.Path(delivery) / board_file(data, delivery), url or "new artifact (capabilities: db, user) — then: turnstile board-url <url>")
 
 def member_line(data: dict, delivery) -> str:
     cur = current_or_none(data, delivery)
@@ -77,7 +115,7 @@ def member_line(data: dict, delivery) -> str:
             return "MEMBER: unknown — %s" % e
         return "MEMBER: unknown"
     login, e = cur
-    return "MEMBER: %s · variant %s · desk %s · board %s" % (login, e.get("variant") or "none", e.get("desk") or "none", (e.get("board") or {}).get("artifact_url") or "none")
+    return "MEMBER: %s · variant %s · desk %s · board %s · board file %s" % (login, e.get("variant") or "none", e.get("desk") or "none", (e.get("board") or {}).get("artifact_url") or "none", board_file(data, delivery))
 
 def unknown_proposal(data: dict, delivery):
     from . import workspace

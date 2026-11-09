@@ -1,10 +1,10 @@
 import pathlib
 from typing import Optional
-from . import rules, state as st_mod
+from . import members, rules, state as st_mod
 from .bug_cmd import PR_RX, _commit
 from .errors import TurnstileError
 
-def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False, stacked_on: Optional[str] = None) -> int:
+def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool = False, no_push: bool = False, stacked_on: Optional[str] = None, owner: Optional[str] = None) -> int:
     from .pass_cmd import IO, _side_effects, _recompute_next_actions, jira_instruction, _now
     io = io or IO(); delivery = pathlib.Path(delivery)
     try:
@@ -24,6 +24,7 @@ def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool 
                 raise TurnstileError(missing_plan[len("MISSING "):])
             if not (delivery / "briefs" / (ticket + ".md")).exists():
                 raise TurnstileError("no brief briefs/%s.md (DEV DoR: turnstile brief implementer %s …)" % (ticket, ticket))
+            pr_owner = members.resolve_owner(data, delivery, owner)
             f = io.github_facts(pr_id, org)
             if f.merged:
                 raise TurnstileError("%s is already merged on GitHub" % pr_id)
@@ -47,7 +48,7 @@ def add(delivery, pr_id: str, story: str, ticket: str, io=None, no_commit: bool 
                 if f.base not in bases:
                     raise TurnstileError("%s is based on %s, not on the story branch %s or another open PR of %s" % (pr_id, f.base, s.get("branch"), story))
             data["prs"][pr_id] = {"ticket": ticket, "story": story, "state": "DEV", "state_since": _now(), "branch": f.branch, "base": f.base, "head": f.head,
-                                  "blocked_by": blocked_by, "evidence": {}, "jira": {"status": rules.JIRA_FOR_PR_STATE["DEV"], "synced": False}, "next_action": ""}
+                                  "blocked_by": blocked_by, "owner": pr_owner, "evidence": {}, "jira": {"status": rules.JIRA_FOR_PR_STATE["DEV"], "synced": False}, "next_action": ""}
             _recompute_next_actions(data)
             summary = "pr %s added (%s, %s) DEV head %s" % (pr_id, story, ticket, (f.head or "")[:8])
             _side_effects(delivery, st, [summary], io, no_commit, no_push)

@@ -1,6 +1,6 @@
 # Publishing the board
 
-`render-board` and every `pass` write `delivery/board.html` and print `BOARD: publish <path> → <url>`. The artifact read that a
+`render-board` and every `pass` write `delivery/board.html` (everything) and `delivery/boards/<login>.html` per member, and print `BOARD: publish <delivery>/boards/<login>.html → <url>` for the current member. The artifact read that a
 publish needs is large, so it never runs in the orchestrator: publish at most once per batch of passes, through one `haiku` subagent
 (`Agent` tool, `model: "haiku"`, no `subagent_type`) whose prompt carries the `<path>` and `<url>` of the last `BOARD:` line and these steps:
 

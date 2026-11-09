@@ -142,7 +142,7 @@ class Consumers(Delivery):
 
     def test_board_line_is_per_member(self):
         self.with_members(); data = self.data()
-        self.assertEqual(members.board_line(data, self.d), "BOARD: publish %s → https://claude.ai/artifact/lead" % (self.d / "board.html"))
+        self.assertEqual(members.board_line(data, self.d), "BOARD: publish %s → https://claude.ai/artifact/lead" % (self.d / "boards" / "leadlogin.html"))
         self.record_member("second")
         self.assertIn("→ new artifact (capabilities: db, user) — then: turnstile board-url <url>", members.board_line(data, self.d))
         data["epic"]["members"]["second"]["board"]["artifact_url"] = "https://claude.ai/artifact/s"
@@ -160,9 +160,9 @@ class Consumers(Delivery):
         self.with_members(); self.record_member("second")
         with mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
             rc, out = out_of(reconcile.cli, self.d, status=True); lines = out.splitlines()
-            self.assertTrue(lines[0].startswith("SYNC:")); self.assertEqual(lines[1], "MEMBER: second · variant myd-1-second · desk none · board none")
+            self.assertTrue(lines[0].startswith("SYNC:")); self.assertEqual(lines[1], "MEMBER: second · variant myd-1-second · desk none · board none · board file boards/second.html")
             self.assertNotIn("member_unknown", out)
-            rc, out = out_of(reconcile.cli, self.d, status=True, brief=True); self.assertEqual(out.splitlines()[1], "MEMBER: second · variant myd-1-second · desk none · board none")
+            rc, out = out_of(reconcile.cli, self.d, status=True, brief=True); self.assertEqual(out.splitlines()[1], "MEMBER: second · variant myd-1-second · desk none · board none · board file boards/second.html")
             rc, out = out_of(reconcile.cli, self.d); self.assertNotIn("MEMBER:", out)
             self.record_member("ghost"); rc, out = out_of(reconcile.cli, self.d, status=True)
             self.assertIn("MEMBER: unknown", out); self.assertIn("epic member_unknown:", out); self.assertIn("→ turnstile attach --epic MYD-1 --github ghost", out)

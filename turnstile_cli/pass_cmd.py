@@ -39,6 +39,7 @@ class Options:
     no_push: bool = False
     arm: Optional[str] = None
     base_heads: Optional[str] = None
+    owner: Optional[str] = None
 
 class IO:
     """Everything that touches the world; injectable so tests stay offline."""
@@ -77,6 +78,9 @@ class IO:
         except ImportError:
             return None
         return board.render_html(data)
+    def render_boards(self, data: dict) -> Dict[str, str]:
+        from . import board
+        return board.render_member_files(data)
     def github_facts(self, pr_id: str, org: str):
         from . import github
         return github.fetch(pr_id, org)
@@ -386,9 +390,9 @@ def _ensure_repo_files(delivery: pathlib.Path) -> None:
 
 class _Snapshot:
     NAMES = ("state.json", "ledger.md", "board.html")
-    def __init__(self, delivery: pathlib.Path):
+    def __init__(self, delivery: pathlib.Path, extra=()):
         self.delivery = pathlib.Path(delivery)
-        self.before: Dict[str, Optional[str]] = {n: (self.delivery / n).read_text() if (self.delivery / n).exists() else None for n in self.NAMES}
+        self.before: Dict[str, Optional[str]] = {n: (self.delivery / n).read_text() if (self.delivery / n).exists() else None for n in self.NAMES + tuple(extra)}
     def restore(self) -> None:
         for n, text in self.before.items():
             p = self.delivery / n
@@ -410,13 +414,17 @@ def _side_effects(delivery: pathlib.Path, st: "st_mod.State", lines: List[str], 
         html = io.render_board(st.data)
     except Exception as e:
         raise TurnstileError("board render failed: %s" % e)
-    snap = _Snapshot(delivery)
+    member_html = getattr(io, "render_boards", lambda d: {})(st.data) if html is not None else {}
+    snap = _Snapshot(delivery, member_html)
     st_mod.save(st)  # stale check happens here, before any other write
     try:
         for line in lines:
             ledger.append(delivery, line)
         if html is not None:
             st_mod.write_atomic(delivery / "board.html", html)
+            for rel, page in member_html.items():
+                (delivery / rel).parent.mkdir(parents=True, exist_ok=True)
+                st_mod.write_atomic(delivery / rel, page)
         _ensure_repo_files(delivery)
         if not no_commit:
             io.git_commit(delivery, "turnstile: " + lines[0])
@@ -553,6 +561,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 del trial["_id"]
                 data["stories"][ident] = story = trial
                 story["state"] = target
+                if target == "IN_PROGRESS" and (o.owner or src == "PLANNED" or not story.get("owner")):
+                    story["owner"] = members.resolve_owner(data, delivery, o.owner)
                 if src != target:
                     story["state_since"] = _now()
                 if o.reason:

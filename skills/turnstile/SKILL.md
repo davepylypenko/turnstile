@@ -35,8 +35,8 @@ never rebase or force — diverged histories go to the lead). `--no-push` only f
 `turnstile status` → reconcile against GitHub + plan state + next actions + what awaits the lead (exit 1 when `gh` facts are missing). Run it first in every session
 and after every batch of agent reports; run the proposed `turnstile pass` lines it prints (dry-run checked); show the lead the anomalies (`turnstile reconcile
 --json` for the raw list). A `WARN: send skill … not found` line means the lead must name the skill that sends PRs to review (`## preferences`).
-`status` prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|none>` after `SYNC:` (this machine's developer, from `delivery/.workspace.json` → `epic.members`; `member_unknown` in
-the reconcile list means the login is not in `epic.members`: run the `attach` line it proposes).
+`status` prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|none> · board file boards/<login>.html` after `SYNC:` (this machine's developer, from `delivery/.workspace.json` → `epic.members`; `member_unknown` in
+the reconcile list means the login is not in `epic.members`: run the `attach` line it proposes; `owner_unknown` means a PR or story owner is not in `epic.members`: re-own it with `turnstile pr add … --owner <login>` / `turnstile pass story <S> IN_PROGRESS --owner <login>` or record a note).
 `turnstile status --brief` prints only `SYNC:`, `MEMBER:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
 `delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
 
@@ -48,7 +48,7 @@ When the line says `assignee: you` (or `status` lists `jira_unassigned`), first 
 with `atlassianUserInfo` (no arguments; `account_id`, `name`), set it with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`) and run
 `turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → leave Jira alone, record that person with the same flags.
 Plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded. The ticket stays with whoever took it into work; the line is plain on MERGED and when a PR of the ticket already
-carries an assignee. It also prints `BOARD: publish <path> → <url>` with the board artifact of this machine's member (`epic.members.<login>.board`; Artifact tool, that `url`; a first publish loads `artifact-capabilities`
+carries an assignee. It also prints `BOARD: publish <delivery>/boards/<login>.html → <url>`: the member's own file (their stories, PRs, bugs and awaiting entries) and the board artifact of this machine's member (`epic.members.<login>.board`; Artifact tool, that `url`; a first publish loads `artifact-capabilities`
 and declares `db` + `user`; with no url the line says `new artifact … — then: turnstile board-url <url>`, and you run that after the publish). A deploy record (`pass story … INTEGRATION_REVIEW --build --head`)
 stores `deploy.variant` and `deploy.by` of the member. On `MISSING …` nothing was written: get the evidence, do not argue with the gate. A PR the implementer opened enters the state as `DEV` with
 `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch, base from GitHub; refused without the brief or when the base is neither the story branch nor another PR of the story).
@@ -99,6 +99,8 @@ and board url optional), commits and pushes it so every machine sees it, and rec
 It prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>` and `NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-<login> …) to create it
 through the prometey-variant skill; then turnstile board-url <url> after the first board publish`. Do that dispatch: every developer deploys to their own variant, so deploys never overwrite another one's.
 `turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`). Approvals stay the lead's alone.
+
+Boards per member: `turnstile pr add` and `turnstile pass story <S> IN_PROGRESS` record the machine's member as `owner` (override: `--owner <login>`, a known member); bugs follow their story's owner; older state gets the lead as owner on load. Every write renders `delivery/board.html` (everything, with an owner column) and `delivery/boards/<login>.html` for each member (only that member's rows; lead-only entries such as the plan approval show on every board). Publish your own file, never someone else's.
 
 ## dispatch <agent> <brief>
 

@@ -20,7 +20,8 @@ def build_parser():
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
                      ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"}),
                      ("--arm", {"choices": ["treatment", "control"], "help": "trunk mode: the arm a recorded env run tested (treatment = flag on, control = flag off)"}),
-                     ("--base-heads", {"help": "trunk mode, with --build --head: repo=sha pairs when the story spans repos (default: --head for every repo)"})]:
+                     ("--base-heads", {"help": "trunk mode, with --build --head: repo=sha pairs when the story spans repos (default: --head for every repo)"}),
+                     ("--owner", {"help": "story IN_PROGRESS: the member (GitHub login) who owns the story (default: this machine's member)"})]:
         ps.add_argument(flag, **kw)
     ps.add_argument("--not-clean", action="store_true"); ps.add_argument("--no-commit", action="store_true")
     ps.add_argument("--full", action="store_true", help="the recorded env run covered every case of the story (DONE needs a full clean run)")
@@ -42,7 +43,7 @@ def build_parser():
     bs = bsub.add_parser("set"); bs.add_argument("bug_id"); bs.add_argument("--state", choices=["todo", "ai", "testing", "done"]); bs.add_argument("--pr"); bs.add_argument("--note")
     prp = sub.add_parser("pr", help="register a PR of the epic (DEV) from its GitHub facts"); psub = prp.add_subparsers(dest="pr_cmd"); p.pr_parser = prp
     pa = psub.add_parser("add"); pa.add_argument("ident"); pa.add_argument("--story", required=True); pa.add_argument("--ticket", required=True)
-    pa.add_argument("--no-commit", action="store_true"); pa.add_argument("--stacked-on", help="trunk mode: the open PR of the story this PR deliberately stacks on (its base must be that PR's branch)")
+    pa.add_argument("--no-commit", action="store_true"); pa.add_argument("--owner", help="the member (GitHub login) who owns the PR (default: this machine's member)"); pa.add_argument("--stacked-on", help="trunk mode: the open PR of the story this PR deliberately stacks on (its base must be that PR's branch)")
     th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
     th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
     th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
@@ -145,7 +146,7 @@ def main(argv=None):
             return 2
         if a.cmd == "pr":
             from .pr_cmd import add as pr_add
-            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on)
+            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on, owner=a.owner)
         if a.cmd == "threads":
             from .threads import run as threads_run
             return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit, no_push=a.no_push)
@@ -160,8 +161,9 @@ def main(argv=None):
             return approve(delivery, a.ah_id)
         if a.cmd == "render-board":
             from . import board, state
-            board.render(state.load(delivery / "state.json").data, delivery)
-            print("OK rendered %s" % (delivery / "board.html")); return 0
+            files = board.render_files(state.load(delivery / "state.json").data)
+            board.write_files(delivery, files)
+            print("OK rendered %s" % ", ".join(str(delivery / rel) for rel in files)); return 0
         if a.cmd in ("reconcile", "status"):
             from .reconcile import cli
             return cli(delivery, as_json=getattr(a, "json", False), status=(a.cmd == "status"), brief=getattr(a, "brief", False))

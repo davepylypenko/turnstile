@@ -51,6 +51,12 @@ const TABS = ['prs', 'stories', 'bugs', 'awaiting', 'progress'];
 const STORY_STATES = ['PLANNED', 'IN_PROGRESS', 'INTEGRATION_REVIEW', 'ENV_TESTING', 'DONE'];
 const UPDATED = '__TURNSTILE_UPDATED__';
 function renderMembers() {
+  const v = STATE.view;
+  if (v) {
+    document.getElementById('title').textContent = 'Turnstile — ' + (STATE.epic || {}).key + ' — ' + v.name;
+    document.getElementById('members').textContent = v.name + ' · variant ' + (v.variant || 'none') + ' · desk ' + (v.desk || 'none') + '  |  full board: ' + (v.full || 'board.html');
+    return;
+  }
   const list = Object.entries((STATE.epic || {}).members || {});
   document.getElementById('members').textContent = list.length ? 'members: ' + list.map(([login, m]) => login + ' · ' + ((m && m.variant) || 'no variant') + ' · ' + ((m && m.desk) || 'no desk')).join('  |  ') : '';
 }
@@ -118,10 +124,11 @@ function prs() {
   Object.entries(STATE.prs || {}).filter(([, p]) => !view.state || p.state === view.state).forEach(([id, p]) => { const r = id.split('#')[0]; (byRepo[r] = byRepo[r] || []).push([id, p]); });
   const filter = view.state ? '<p class="filter">Showing ' + esc(view.state) + ' only · <a href="#" id="show-all">show all</a></p>' : '';
   document.getElementById('prs').innerHTML = filter + Object.entries(byRepo).map(([repo, rows]) =>
-    '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th><th>Note</th></tr></thead><tbody>' +
+    '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Owner</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th><th>Note</th></tr></thead><tbody>' +
     rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
       const h = (p.evidence || {}).human || {};
       return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
+        '<td class="k">' + esc(p.owner || '—') + '</td>' +
         '<td>' + (/^https:\/\//.test(h.slack_permalink || '') ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
         '<td>' + esc((p.jira || {}).status || '—') + ((p.jira || {}).synced === false ? ' <span class="muted">(not synced)</span>' : '') + jiraAssignee(p) + '</td><td>' + esc(p.next_action) + '</td><td class="muted">' + esc(note(p)) + '</td></tr>';
@@ -137,11 +144,11 @@ function gateMarks(s) {
     .concat(trunk ? ['treatment ' + runMark(lastArm('treatment')), 'control ' + runMark(lastArm('control'))] : ['env ' + runMark(e.env_test)]).join(' · ');
 }
 function stories() {
-  document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
+  document.getElementById('stories').innerHTML = '<div class="scroll"><table><thead><tr><th>Story</th><th>Owner</th><th>State</th><th>PRs</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>' +
     Object.entries(STATE.stories || {}).map(([sid, s]) => {
       const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
       const mode = s.mode === 'trunk' ? '<br><span class="muted">trunk · flag ' + esc((STATE.epic || {}).flag || 'none') + '</span>' : '';
-      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(gateMarks(s)) + '</td><td>' + esc(s.next_action) + '</td></tr>';
+      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td class="k">' + esc(s.owner || '—') + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(gateMarks(s)) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 const countBy = (items, order) => { const n = {}; order.forEach(k => { n[k] = 0; }); items.forEach(i => { if (i.state in n) n[i.state] += 1; }); return n; };
