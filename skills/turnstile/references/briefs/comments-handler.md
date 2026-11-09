@@ -31,7 +31,7 @@ needs a reply newer than the reviewer's last comment before the PR goes back to 
 Report → `{{report_path}}` § Comments.
 
 ## Don'ts
-No Slack, no Jira, no issue comments (`gh pr comment`), no review submissions (`gh pr review`), never resolve a human thread,
+No Slack, no Jira, no comments in the pushed diff beyond what the code cannot say (no `@ai-generated`/AI markers, no Arrange/Act/Assert, no docblocks restating the signature — role rule § Code comments), no issue comments (`gh pr comment`), no review submissions (`gh pr review`), never resolve a human thread,
 no reply to a needs_lead thread without its approved entry, no reviewer requests other than step 6 (never `--add-reviewer`, teams or
 non-authors), no "ready", no merges, no rebase or force-push,
 no subagents, no `Co-Authored-By`, no generated-with footer, never `turnstile approve`. Wait for CI, a deploy or a gate with ONE blocking command (`gh run watch <id> --exit-status`, `gh pr checks <n> --watch`, the deploy workflow's `wait_for_ready`), never a sleep/poll loop (pass the Bash tool's `timeout` parameter, up to 600000 ms, on that call; if the watch is still running when the timeout expires, call it again instead of polling with short status checks), and never end the turn with an interim "waiting" message — report only when there is a fact. Report at
