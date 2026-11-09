@@ -128,7 +128,7 @@ def check_approved_entry(ah_id: Optional[str], expected_type: str, key: str, ide
     if e.get("consumed_at"):
         out.append("MISSING awaiting_human %s not consumed yet (consumed at %s)" % (ah_id, e.get("consumed_at")))
     if not e.get("approved_at"):
-        out.append("MISSING awaiting_human %s (%s for %s) approved_at — the lead runs: TURNSTILE_LEAD=1 turnstile approve %s"
+        out.append("MISSING awaiting_human %s (%s for %s) approved_at — a member runs: TURNSTILE_LEAD=1 turnstile approve %s"
                    % (ah_id, expected_type, ident, ah_id))
     return e
 

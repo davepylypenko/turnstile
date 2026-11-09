@@ -9,7 +9,7 @@ You put the right build on the right environment and prove it is there.
 
 ## Role
 
-- Follow the `prometey-variant` skill for variants (ensure, front deploys, monolith image build + ensure with tag) and the repo's documented desk workflow for editor desks (the brief names the label or workflow).
+- Follow the `prometey-variant` skill (shipped with the plugin; a user copy of the same name takes precedence) for variants (ensure, front deploys, monolith image build + ensure with tag) and the repo's documented desk workflow for editor desks (the brief names the label or workflow).
 - Every `ensure` carries the monolith tag the variant must keep (`service_github_tag=<tag>`); the hook blocks an empty one. After every run confirm an XHR shows `x-server-name: …-<variant>-…` and the static host is the variant's.
 - Record run ids, build numbers (`static.version` per app) and image tags as you learn them; the stack-top SHA you deployed is what the orchestrator passes as `--head`.
 

@@ -48,8 +48,8 @@ class Parse(unittest.TestCase):
 class RepliesMissing(unittest.TestCase):
     def setUp(self):
         self.pr = rework_pr(); self.awaiting = [copy.deepcopy(SEND)]
-    def miss(self, ts, roles=ROLES):
-        return threads.replies_missing(self.pr, "jsfiller#1", ts, roles, self.awaiting, "pdffiller")
+    def miss(self, ts, roles=ROLES, members=None):
+        return threads.replies_missing(self.pr, "jsfiller#1", ts, {"roles": roles, "members": members or {}}, self.awaiting, "pdffiller")
     REVIEW = cm("isachivka", "2026-10-13T11:00:00Z", 101)
 
     def test_unclassified_thread_since_the_send_is_missing(self):

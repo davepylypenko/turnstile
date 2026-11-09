@@ -1,6 +1,6 @@
 import contextlib, io, json, pathlib, shutil, tempfile, unittest
 from unittest import mock
-from turnstile_cli import attach_cmd, board, brief_cmd, config, init_cmd, members, models, pass_cmd, reconcile, state, threads, workspace
+from turnstile_cli import attach_cmd, board, brief_cmd, config, init_cmd, members, models, pass_cmd, reconcile, rules, state, threads, workspace
 from turnstile_cli.errors import TurnstileError
 from tests.test_pass import FakeIO
 from tests.test_sync import Attach, FakeGit
@@ -80,7 +80,7 @@ class AttachMembers(unittest.TestCase):
         m = self.members()["Ivanov"]; self.assertEqual((m["name"], m["variant"], m["desk"], m["board"]["artifact_url"]), ("Ivanov", "myd-1-ivanov", None, None))
         self.assertIn("leadlogin", self.members())
         self.assertIn("MEMBER: Ivanov · variant myd-1-ivanov · desk none · board new artifact", out)
-        self.assertIn("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-Ivanov …) to create it through the prometey-variant skill; "
+        self.assertIn("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-Ivanov …) to create it through the plugin's prometey-variant skill; "
                       "then turnstile board-url <url> after the first board publish", out)
         self.assertEqual(json.loads((self.delivery() / ".workspace.json").read_text())["member"], "Ivanov")
         self.assertEqual(len(writer.commits), 1); self.assertEqual(writer.pushes, ["epic/myd-1"])
@@ -170,6 +170,63 @@ class Consumers(Delivery):
     def test_board_header_lists_the_members(self):
         self.with_members(); html = board.render_html(self.data())
         self.assertIn('id="members"', html); self.assertIn('"members"', html); self.assertIn("renderMembers", html)
+
+class MemberApproval(Delivery):
+    def setUp(self):
+        super().setUp(); d = self.with_members()
+        d["awaiting_human"] = [{"id": "ah-1", "type": "merge", "pr": "jsfiller#1", "approved_at": None}]
+        self.put(d)
+    def approve(self, login):
+        self.record_member(login)
+        with mock.patch.dict("os.environ", {"TURNSTILE_LEAD": "1"}):
+            return out_of(pass_cmd.approve, self.d, "ah-1", self.io)
+    def test_a_non_lead_member_approves_and_the_entry_records_their_login(self):
+        rc, out = self.approve("second")
+        self.assertEqual(rc, 0, out)
+        e = self.data()["awaiting_human"][0]
+        self.assertEqual((e["approved_by"], e["approved_via"]), ("second", "member-terminal")); self.assertTrue(e["approved_at"])
+        self.assertIn("approved ah-1 (merge jsfiller#1 by second) approved_via: member-terminal", (self.d / "ledger.md").read_text())
+    def test_without_a_workspace_member_the_lead_login_is_recorded(self):
+        with mock.patch.dict("os.environ", {"TURNSTILE_LEAD": "1"}):
+            rc, _ = out_of(pass_cmd.approve, self.d, "ah-1", self.io)
+        self.assertEqual(rc, 0); self.assertEqual(self.data()["awaiting_human"][0]["approved_by"], "leadlogin")
+    def test_the_approval_by_a_member_satisfies_the_pass_check_and_the_ledger_comparison(self):
+        self.approve("second")
+        d = self.data(); out = []
+        e = rules.check_approved_entry("ah-1", "merge", "pr", "jsfiller#1", d["awaiting_human"], out)
+        self.assertEqual(out, []); self.assertEqual(e["approved_by"], "second")
+        self.assertEqual(reconcile.compare_ledger(d, (self.d / "ledger.md").read_text()), [])
+    def test_the_old_lead_terminal_ledger_line_is_still_accepted(self):
+        d = self.data(); d["awaiting_human"][0]["approved_at"] = "2026-10-13T10:00Z"
+        line = "- 2026-10-13 10:00 UTC approved ah-1 (merge jsfiller#1 by lead) approved_via: lead-terminal\n"
+        self.assertEqual(reconcile.compare_ledger(d, line), [])
+    def test_without_the_marker_nobody_approves(self):
+        self.record_member("second")
+        with mock.patch.dict("os.environ", {}, clear=False):
+            import os; os.environ.pop("TURNSTILE_LEAD", None)
+            rc, _ = out_of(pass_cmd.approve, self.d, "ah-1", self.io)
+        self.assertEqual(rc, 2); self.assertIsNone(self.data()["awaiting_human"][0]["approved_at"])
+
+class MemberLogins(Delivery):
+    def test_our_logins_are_the_lead_the_agent_and_every_member(self):
+        d = self.with_members(); d["epic"]["roles"]["agent_github"] = "agentlogin"
+        self.assertEqual(members.our_logins(d), {"leadlogin", "agentlogin", "second"})
+        self.assertEqual(members.our_logins({"epic": {"roles": {"lead_github": None}}}), set())
+    def test_a_members_reply_counts_and_a_newer_reviewer_comment_still_blocks(self):
+        from tests.test_threads import cm, th, ROLES
+        d = self.with_members()
+        pr = {"_id": "jsfiller#1", "state": "REWORK", "head": "h2", "threads": {"PRRT_b": {"class": "self_resolved", "classified_at": "2026-10-13T13:00:00Z",
+              "comment_id": "101", "comment_ids": ["101"], "reviewer": "isachivka", "last_reviewer_at": "2026-10-13T11:00:00Z"}},
+              "evidence": {"human": {"sent_at": "2026-10-13T10:02Z"}}}
+        review = cm("isachivka", "2026-10-13T11:00:00Z", 101)
+        epic = dict(d["epic"], roles=dict(ROLES))
+        replied = th("PRRT_b", review, cm("second", "2026-10-13T12:00:00Z", 102))
+        self.assertEqual(threads.replies_missing(pr, "jsfiller#1", [replied], epic, [], "pdffiller"), [])
+        stranger = th("PRRT_b", review, cm("stranger", "2026-10-13T12:00:00Z", 102))
+        self.assertTrue(threads.replies_missing(pr, "jsfiller#1", [stranger], epic, [], "pdffiller"))
+        newer = th("PRRT_b", review, cm("second", "2026-10-13T12:00:00Z", 102), cm("isachivka", "2026-10-13T12:30:00Z", 103))
+        pr["threads"]["PRRT_b"]["last_reviewer_at"] = "2026-10-13T12:30:00Z"
+        self.assertTrue(threads.replies_missing(pr, "jsfiller#1", [newer], epic, [], "pdffiller"))
 
 class Reviewer(unittest.TestCase):
     def test_reviewer_defaults_to_opus_high_and_xhigh_is_a_previous_default(self):

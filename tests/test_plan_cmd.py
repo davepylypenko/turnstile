@@ -168,5 +168,5 @@ class Run(unittest.TestCase):
         buf = io.StringIO()
         with env(TURNSTILE_LEAD="1"), contextlib.redirect_stdout(buf):
             pass_cmd.approve(self.d, "ah-1", self.io)
-        self.assertIn("(plan plan.md by lead)", buf.getvalue()); self.assertNotIn("None", buf.getvalue())
-        self.assertIn("approved ah-1 (plan plan.md by lead) approved_via: lead-terminal", (self.d / "ledger.md").read_text())
+        self.assertIn("(plan plan.md by leadlogin)", buf.getvalue()); self.assertNotIn("None", buf.getvalue())
+        self.assertIn("approved ah-1 (plan plan.md by leadlogin) approved_via: member-terminal", (self.d / "ledger.md").read_text())

@@ -11,6 +11,11 @@ def _now() -> str:
 def new_entry(name: str, variant: Optional[str], desk: Optional[str], board_url: Optional[str]) -> dict:
     return {"name": name, "variant": variant, "desk": desk, "board": {"artifact_url": board_url, "capabilities": list(CAPABILITIES)}, "added_at": _now()}
 
+def our_logins(data: dict) -> set:
+    epic = (data.get("epic") if isinstance(data, dict) else None) or {}
+    roles = epic.get("roles") or {}
+    return {x for x in (roles.get("lead_github"), roles.get("agent_github"), *(epic.get("members") or {})) if x}
+
 def default_variant(epic_key: str, login: str) -> str:
     return "%s-%s" % (epic_key.lower(), login.lower())
 
@@ -77,6 +82,14 @@ def current(data: dict, delivery) -> Tuple[str, dict]:
         raise TurnstileError("this machine's member %s is not in epic.members (%s); run: %s" %
                              (login or "(none recorded)", ", ".join(sorted(members)) or "none", attach_line(epic.get("key") or "<KEY>", login or "<login>")))
     return login, members[login]
+
+def approver(data: dict, delivery) -> str:
+    from . import workspace
+    roles = (data.get("epic") or {}).get("roles") or {}
+    login = (workspace.load(delivery) or {}).get("member") or roles.get("lead_github")
+    if not login:
+        raise TurnstileError("no member login for this machine (.workspace.json) and no epic.roles.lead_github")
+    return login
 
 def current_or_none(data: dict, delivery) -> Optional[Tuple[str, dict]]:
     try:

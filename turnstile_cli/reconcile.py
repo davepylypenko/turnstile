@@ -42,8 +42,7 @@ def _threads_waiting_for_us(data: dict, f: github.PrFacts) -> int:
     after the reviewer's last word stays unresolved until the reviewer resolves it; it does not reopen REWORK (2026-10-14)."""
     if f.human_threads_open == 0 or not f.threads:
         return f.human_threads_open
-    agent, lead = threads.logins((data.get("epic") or {}).get("roles"))
-    ours = {agent, lead} - {""}
+    ours = members.our_logins(data)
     n = 0
     for t in f.threads:
         if not t.get("human") or t.get("resolved"):
@@ -64,7 +63,7 @@ def _changes_on_head(f: github.PrFacts) -> List[str]:
 def _threads_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: github.PrFacts) -> None:
     """REWORK: what the review threads still need before ON_HUMAN_REVIEW (classification, the agent's replies, the lead's word)."""
     epic = data.get("epic") or {}
-    miss = threads.replies_missing(dict(pr, _id=pid), pid, f.threads, epic.get("roles"), data.get("awaiting_human"), epic.get("github_org") or "")
+    miss = threads.replies_missing(dict(pr, _id=pid), pid, f.threads, epic, data.get("awaiting_human"), epic.get("github_org") or "")
     if miss:
         out.append(Proposal(pid, "threads", "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss), None))
 
@@ -73,10 +72,10 @@ def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: 
     threads, else the gate check is green), propose the GitHub re-request of the thread authors until GitHub shows it for the head;
     a push-only rework is named for the lead (nobody is pinged)."""
     epic = data.get("epic") or {}
-    roles, awaiting, org = epic.get("roles"), data.get("awaiting_human"), epic.get("github_org") or ""
-    if threads.replies_missing(dict(pr, _id=pid), pid, f.threads, roles, awaiting, org):
+    awaiting, org = data.get("awaiting_human"), epic.get("github_org") or ""
+    if threads.replies_missing(dict(pr, _id=pid), pid, f.threads, epic, awaiting, org):
         return  # the threads proposal says what is missing first
-    authors = threads.round_authors(pr, f.threads, roles, awaiting)
+    authors = threads.round_authors(pr, f.threads, epic, awaiting)
     if not authors:
         out.append(Proposal(pid, "push_only", "push-only rework (no reviewer comment since the PR last went to humans): nobody is re-requested; "
                             "the return to ON_HUMAN_REVIEW records reviewer_notified false and the board shows 'reviewers not notified' — the lead decides", None))
@@ -86,7 +85,7 @@ def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: 
         out.append(Proposal(pid, "rerequest", "every reviewer thread has its reply; re-request %s once %s on head %s (now: %s)"
                             % (", ".join(authors), threads.signal(repo), f.head[:12], why), None))
         return
-    if threads.request_problems(pr, f, roles, awaiting, repo, authors):
+    if threads.request_problems(pr, f, epic, awaiting, repo, authors):
         out.append(Proposal(pid, "rerequest", "every reviewer thread has its reply and %s on head %s: re-request review from the thread authors %s "
                             "(no lead approval; lead rule 2026-10-14)" % (threads.signal(repo), f.head[:12], ", ".join(authors)),
                             threads.request_route(org, pid, authors)))
@@ -177,18 +176,18 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             out.append(Proposal(pid, "draft_mismatch", "PR is still a draft on GitHub", None))
     return out
 
-APPROVED_LINE = re.compile(r"\bapproved (ah-\d+) \(.*approved_via: lead-terminal")
+APPROVED_LINE = re.compile(r"\bapproved (ah-\d+) \(.*approved_via: (?:member|lead)-terminal")
 
 def compare_ledger(data: dict, ledger_text: str) -> List[Proposal]:
-    """Every approved awaiting_human entry must have a ledger line written by `turnstile approve` from the lead's
+    """Every approved awaiting_human entry must have a ledger line written by `turnstile approve` from a member's
     terminal. An approved_at without that line was written some other way: defence in depth, not proof."""
     logged = set(APPROVED_LINE.findall(ledger_text or ""))
     out: List[Proposal] = []
     for a in data.get("awaiting_human", []):
         if a.get("approved_at") and a.get("id") not in logged:
             out.append(Proposal(a.get("id"), "approval_unlogged",
-                                "%s (%s %s) has approved_at %s but no ledger line 'approved %s (…) approved_via: lead-terminal'; "
-                                "the approval did not come through the lead's terminal — the lead decides"
+                                "%s (%s %s) has approved_at %s but no ledger line 'approved %s (…) approved_via: member-terminal'; "
+                                "the approval did not come through a member's terminal — the lead decides"
                                 % (a.get("id"), a.get("type"), a.get("pr") or a.get("story"), a.get("approved_at"), a.get("id")), None))
     return out
 

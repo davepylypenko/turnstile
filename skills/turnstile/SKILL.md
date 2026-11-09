@@ -14,9 +14,10 @@ never rebase or force — diverged histories go to the lead). `--no-push` only f
 
 ## Rules that never bend
 
-- The lead's word is an `awaiting_human` entry approved **by the lead typing** `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
-  in the Claude Code prompt (the `!` runs outside the model). You report the pending ids (`turnstile status`) and ask
-  for that line; you never run it, no agent runs it, and the Bash guard refuses any spelling of it.
+- A human's word is an `awaiting_human` entry approved **by a member typing** `! TURNSTILE_LEAD=1 turnstile approve <ah-id>`
+  in the Claude Code prompt (any member of `epic.members`, from their own terminal; the `!` runs outside the model; the ledger
+  records who). You report the pending ids (`turnstile status`) and ask for that line; you never run it, no agent runs it,
+  and the Bash guard refuses any spelling of it.
 - A reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
 - Slack sends are gated by the lead's word in chat only (2026-11-05): compose the message through the send skill (`## pass`),
   show it, send it when the lead says so. The plugin records the send (a ledger line from the PostToolUse hook, `send`
@@ -72,8 +73,8 @@ say so), the templates in `references/slack.md` are the fallback and you ask the
 2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`; write
    `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400 logic lines,
    test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
-3. `turnstile plan-submitted` → stories enter `PLANNED` and a `plan` entry opens; show the lead the summary and the approve line; wait. No story leaves `PLANNED` unapproved (no `--reason`).
-4. After the lead approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`, then dispatch implementers per the merge order.
+3. `turnstile plan-submitted` → stories enter `PLANNED` and a `plan` entry opens; show the members the summary and the approve line; wait. No story leaves `PLANNED` unapproved (no `--reason`).
+4. After a member approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`, then dispatch implementers per the merge order.
 
 ## preferences (right after init, and whenever the lead asks)
 
@@ -82,7 +83,7 @@ Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` o
 review (`init` printed `SEND_SKILL:`; if it is not found on this machine, which one to install or use), and do you want a different model/effort for any agent? Current effective
 values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`, `config set review_skill=/my-review`,
 `config set story_review_skill=…`, `config set send_skill=/my-send` (user layer, at once; `--epic` — only when the lead says it is for the whole epic or team — opens a `config` entry
-the lead approves with the usual line, then `turnstile config apply <ah-id>`; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions
+a member approves with the usual line, then `turnstile config apply <ah-id>`; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions
 ("use my /x-review skill", "reviewer on sonnet", "send with /x") map to the same commands; never ask what the user file already answers; `turnstile status` prints the effective line.
 `review_skill` is the `reviewer`'s deep-review skill (`--deep-review` report), `story_review_skill` the story-reviewer's, `send_skill` what posts a PR for review (`## pass`); the brief
 prints the exact invocation (`/code-review` takes the agent's effort as its level, `/code-review high` by default for the reviewer, `xhigh` for the story-reviewer; other skills run bare); an agent set without an effort (`models.reviewer=sonnet`)
@@ -98,7 +99,7 @@ session cannot drive it) and run `## preferences` there (this person's user file
 and board url optional), commits and pushes it so every machine sees it, and records `member` in `.workspace.json`; attaching again with the same login updates only the flags passed, never duplicates.
 It prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>` and `NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-<login> …) to create it
 through the prometey-variant skill; then turnstile board-url <url> after the first board publish`. Do that dispatch: every developer deploys to their own variant, so deploys never overwrite another one's.
-`turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`). Approvals stay the lead's alone.
+`turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`). Any member approves from their own terminal.
 
 Boards per member: `turnstile pr add` and `turnstile pass story <S> IN_PROGRESS` record the machine's member as `owner` (override: `--owner <login>`, a known member); bugs follow their story's owner; older state gets the lead as owner on load. Every write renders `delivery/board.html` (everything, with an owner column) and `delivery/boards/<login>.html` for each member (only that member's rows; lead-only entries such as the plan approval show on every board). Publish your own file, never someone else's.
 
@@ -148,8 +149,8 @@ is deployed to the story's slot (dispatch `deployer`).
 5. `turnstile pass story S DONE --approved <story_done ah-id>` — needs the last run `--full` with 0 fails, parity pass,
    `env_test.head == deploy.head ==` the current stack top, every bug of the story `done`, every PR ≥ READY. Steps 1, 3, 4
    and 5 ask GitHub for the head of every PR in `deploy.heads` and refuse on any drift (never `--offline` at DONE).
-6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story waits for the lead's
-   `start_story` entry (there is no `--reason` way to start a story, and a parallel start needs `parallel_with` in the
+6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story waits for a member's
+   `start_story` approval (there is no `--reason` way to start a story, and a parallel start needs `parallel_with` in the
    approved plan); the sends of this story's units go out through the send skill on the lead's word in chat (`## pass`).
 
 ## trunk mode (`stories.<S>.mode: trunk`, `epic.flag`)
@@ -163,7 +164,7 @@ recorded with `--arm`; `DONE` needs both arms full and clean. The brief carries 
 ## plan (re-plan after a scope change)
 
 Edit `delivery/plan.md` (stories, branches, units, map) with the rationale in `decisions.md`; `turnstile plan-submitted`
-(voids the old plan entry, opens a new one); the lead approves again. Stories past `PLANNED` keep their state and
+(voids the old plan entry, opens a new one); a member approves again. Stories past `PLANNED` keep their state and
 evidence; a started story cannot be dropped.
 
 ## REWORK (a human thread, changes requested, or a push after the send)
@@ -174,8 +175,9 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
 2. The agent fixes, then classifies every human thread from GitHub facts: `turnstile threads <repo#n> --self-resolved <ids>
    --needs-lead <ids> --report reports/COMMENTS-<n>.md`. `self_resolved` (fixed, or justified in code) → it replies on the thread
    at once through the guarded REST replies route. `needs_lead` (decision, direction, a recorded decision, another team) → a
-   `reply` entry per thread; show the lead the draft and the approve line; once approved, post exactly that text (yourself or a
+   `reply` entry per thread; show the members the draft and the approve line; once approved, post exactly that text (yourself or a
    `COMMENTS-<n>-r2` dispatch with `approved_replies=<ah-ids>`). A reviewer's follow-up needs a new classification first.
+   The reply comes from any member's login (`epic.members`), the lead's or the agent login.
 3. Gate and Copilot on the new head (no new deep review); `turnstile status` lists what the threads still need.
 4. Re-request (lead rule 2026-10-14: "replied to all comments and Copilot passed again → ping the reviewer to look again"): once
    every thread has its reply and Copilot reviewed the GitHub head with 0 open threads (repos without Copilot: the gate check

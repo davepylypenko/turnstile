@@ -7,7 +7,7 @@ from .errors import TurnstileError, StaleStateError
 GITATTRIBUTES = "ledger.md merge=union\n"
 GITIGNORE = ".*.tmp\n.sync.json\n.workspace.json\n.status-cache.json\n"
 HEAD_VERIFIED_TARGETS = ("READY", "ON_HUMAN_REVIEW", "APPROVED", "MERGED")
-APPROVED_VIA = "lead-terminal"  # the lead types the approve command in the Claude Code prompt with the `!` prefix
+APPROVED_VIA = "member-terminal"  # a member types the approve command in the Claude Code prompt with the `!` prefix
 
 @dataclass
 class Options:
@@ -170,11 +170,11 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Option
         # spec §3 REWORK DoD (lead rule 2026-10-14): every human thread opened since the send, and every unresolved one, has a reply newer
         # than its last reviewer comment — the agent's for a self_resolved thread, after the lead's approved reply entry for a needs_lead one
         epic = (data or {}).get("epic") or {}
-        out.extend(threads.replies_missing(pr, pr.get("_id") or "", facts.threads, epic.get("roles"), (data or {}).get("awaiting_human"),
+        out.extend(threads.replies_missing(pr, pr.get("_id") or "", facts.threads, epic, (data or {}).get("awaiting_human"),
                                            epic.get("github_org") or ""))
         # lead rule 2026-10-14 (re-request): a thread-driven rework re-requests the thread authors on GitHub after the replies and the
         # clean head; a push-only rework pings nobody
-        out.extend(threads.rerequest_missing(pr, pr.get("_id") or "", facts, epic.get("roles"), (data or {}).get("awaiting_human"),
+        out.extend(threads.rerequest_missing(pr, pr.get("_id") or "", facts, epic, (data or {}).get("awaiting_human"),
                                              epic.get("github_org") or "", repo_cfg))
     if target == "APPROVED":
         human = ev.get("human") or {}
@@ -210,7 +210,7 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
     rr = (ev.get("human") or {}).get("rerequested")
     if rr and target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK":  # GitHub's spelling of the logins
-        authors = {a.lower(): a for a in threads.round_authors(pr, facts.threads, (data or {}).get("epic", {}).get("roles"), (data or {}).get("awaiting_human"))}
+        authors = {a.lower(): a for a in threads.round_authors(pr, facts.threads, (data or {}).get("epic") or {}, (data or {}).get("awaiting_human"))}
         rr["logins"] = sorted({authors.get(x.lower(), x) for x in rr.get("logins") or []}, key=str.lower)
     return _facts_mismatches(pr, target, facts, repo_cfg, data)
 
@@ -636,13 +636,13 @@ def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO
         print("MISSING %s" % e); return 2
 
 def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
-    """The lead said the word for an awaiting_human entry. Only the lead runs this, with TURNSTILE_LEAD=1 typed
-    in the same command (the Bash guard refuses the command without it)."""
+    """A member said the word for an awaiting_human entry. Any member of epic.members runs this from their own terminal, with
+    TURNSTILE_LEAD=1 typed in the same command (the Bash guard refuses the model's attempts)."""
     io = io or IO()
     delivery = pathlib.Path(delivery)
     try:
         if os.environ.get("TURNSTILE_LEAD") != "1":
-            raise TurnstileError("approve is the lead's action: the lead types `TURNSTILE_LEAD=1 turnstile approve %s` themself" % ah_id)
+            raise TurnstileError("approve is typed by a member of the epic: `TURNSTILE_LEAD=1 turnstile approve %s` themself" % ah_id)
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
             entry = rules.find_entry(st.data.get("awaiting_human", []), ah_id)
@@ -653,9 +653,11 @@ def approve(delivery: pathlib.Path, ah_id: str, io: Optional[IO] = None) -> int:
             if entry.get("approved_at"):
                 print("OK %s already approved at %s" % (ah_id, entry["approved_at"])); return 0
             entry["approved_at"] = _now()
+            login = members.approver(st.data, delivery)
+            entry["approved_by"] = login
             entry["approved_via"] = APPROVED_VIA
             summary = "approved %s (%s %s by %s) approved_via: %s" % (ah_id, entry.get("type"), entry.get("pr") or entry.get("story") or entry.get("payload"),
-                                                                     entry.get("owner"), APPROVED_VIA)
+                                                                     login, APPROVED_VIA)
             _side_effects(delivery, st, [summary], io, False)
         print("OK " + summary)
         return 0

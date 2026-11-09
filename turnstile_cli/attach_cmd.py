@@ -110,7 +110,7 @@ def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
             print(line)
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("MEMBER: %s · variant %s · desk %s · board %s" % (login, entry.get("variant"), entry.get("desk") or "none", (entry.get("board") or {}).get("artifact_url") or "new artifact"))
-        print("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-%s …) to create it through the prometey-variant skill; "
+        print("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-%s …) to create it through the plugin's prometey-variant skill; "
               "then turnstile board-url <url> after the first board publish" % login)
         print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
               "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")

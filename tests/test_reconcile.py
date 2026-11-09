@@ -191,7 +191,7 @@ class Compare(unittest.TestCase):
                   "- 2026-10-13 10:01 UTC approved ah-2 (merge jsfiller#1 by lead)\n")
         props = reconcile.compare_ledger(d, ledger)
         self.assertEqual([(p.kind, p.pr) for p in props], [("approval_unlogged", "ah-2")])
-        self.assertIn("lead-terminal", props[0].message)
+        self.assertIn("member-terminal", props[0].message)
         props = reconcile.compare_ledger(d, "")
         self.assertEqual([p.pr for p in props], ["ah-1", "ah-2"])
         d["awaiting_human"][0]["approved_via"] = "lead-terminal"

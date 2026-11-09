@@ -8,6 +8,8 @@ Read first: the role rules you were launched with, then this brief, then every f
 
 Variant `{{variant}}` must keep monolith tag `{{monolith_tag}}` on every `ensure`. Desk `{{desk}}` via {{desk_workflow}}. Stack top to deploy: `{{head}}`. Repo worktrees: {{repo_paths}}.
 
+Skill: `prometey-variant` (plugin-provided; the user's own copy of the same name takes precedence if present).
+
 ## Health checks
 {{health_checks}}
 

@@ -31,7 +31,7 @@ command, role-scoped agents and hooks that physically block forbidden actions.
 ```
 claude plugin install turnstile --marketplace davepylypenko/turnstile       # adds the marketplace and installs the plugin
 sh ~/.claude/plugins/marketplaces/turnstile/scripts/install-cli.sh          # writes the `turnstile` shim into ~/.local/bin
-turnstile --version                                                         # turnstile 0.5.1 (add ~/.local/bin to PATH if the script says so)
+turnstile --version                                                         # turnstile 0.5.2 (add ~/.local/bin to PATH if the script says so)
 claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # optional: ✔ Validation passed
 ```
 
@@ -84,7 +84,7 @@ Without the shim the CLI is
    `origin/<base>` (or the story branch), never from `ws/*`; `turnstile brief … --var repo=<name>` renders that worktree's path.
 3. Write `delivery/plan.md` (`skills/turnstile/references/kickoff.md`; in Claude Code the orchestrator does this from the
    decomposition). The `turnstile-stories` JSON block needs at least `title`, `tickets`, `repos` and `branch` per story.
-   Then `turnstile plan-submitted` → `APPROVAL: the lead types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`.
+   Then `turnstile plan-submitted` → `APPROVAL: a member types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`.
 4. Approve it by typing `! TURNSTILE_LEAD=1 turnstile approve ah-1` in the Claude Code prompt (never through the model).
    `turnstile status` now lists `ah-2 lead start_story S1`; approve that the same way when the story may start, then
    the orchestrator records `turnstile pass story S1 IN_PROGRESS --approved ah-2`.
@@ -132,8 +132,7 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
 The delivery state lives on the epic branch, so every developer drives the same epic from their own machine: one `turnstile attach --epic MYD-1 --github <login>` each. `epic.members.<login>` holds a developer's
 Prometey variant (default `<key>-<login>`), desk and board artifact, so one developer's deploys never overwrite another's variant and `BOARD: publish` points at an artifact that developer can update. The
 member of a machine is the `member` in its untracked `delivery/.workspace.json`; `status` prints it, `turnstile board-url <url>` records the board artifact. Every writer fetches first and a worktree behind origin is
-refused until `turnstile sync` (never rebase, never force). `turnstile pr add` and `turnstile pass story … IN_PROGRESS` record the member as the `owner` of the PR or story (`--owner <login>` overrides); every write renders `delivery/board.html` (everything) and `delivery/boards/<login>.html` per member, with only that member's stories, PRs, bugs and awaiting entries. Every developer publishes their own file to their own artifact. Approvals (`turnstile approve`) stay with
-the lead only.
+refused until `turnstile sync` (never rebase, never force). `turnstile pr add` and `turnstile pass story … IN_PROGRESS` record the member as the `owner` of the PR or story (`--owner <login>` overrides); every write renders `delivery/board.html` (everything) and `delivery/boards/<login>.html` per member, with only that member's stories, PRs, bugs and awaiting entries. Every developer publishes their own file to their own artifact. Any member approves (`turnstile approve`, from their own terminal; the ledger records who). Replies posted from any member's login (`epic.members`), the lead's or the agent login count as ours when threads are checked, and the plugin ships the `prometey-variant` skill the deployer uses (a user copy of the same name takes precedence).
 
 ## What you get
 
@@ -298,7 +297,7 @@ approval; Slack sends are gated by the lead's word in chat only. `turnstile stat
 ### The lead's word (`awaiting_human`)
 
 `pass` opens entries for the lead: `merge` on APPROVED, `story_done` when a story enters ENV_TESTING, `start_story`
-for every PLANNED story whose `after` stories are DONE. Only the lead approves them (see "How the lead approves").
+for every PLANNED story whose `after` stories are DONE. Any member approves them (see "How a member approves"); an entry approved by a non-lead member is valid for every `pass` check.
 `pass … --approved <ah-id>` then requires an entry of the right type for that PR/story that is approved, not consumed
 and not voided; the pass consumes it. Slack sends are gated by the lead's word in chat only (2026-11-05): READY opens no
 entry, the message is composed by the configured send skill (`send_skill`, see "Per-person overrides"), the plugin records the send (a ledger line from the PostToolUse hook, `evidence.human` via `pass … --slack`) and
@@ -329,17 +328,17 @@ investigator (haiku), reviewer (opus, high), story-reviewer (opus, xhigh); the f
 `low|medium|high|xhigh`). Launched as `turnstile:<name>` with the model and effort from the `AGENT:` line of
 `turnstile brief`.
 
-### How the lead approves
+### How a member approves
 
-The lead approves an `awaiting_human` entry **only by typing the command themself in the Claude Code prompt with the
-`!` prefix**:
+Any member of `epic.members` approves an `awaiting_human` entry from their own terminal, **only by typing the command themself in the
+Claude Code prompt with the `!` prefix**:
 
 ```
 ! TURNSTILE_LEAD=1 turnstile approve ah-3
 ```
 
 The `!` prefix runs the line in the user's shell, outside the model's tool calls, so no hook sees it and no agent can
-issue it. `approve` records `approved_via: "lead-terminal"` on the entry and the ledger line says so. The Bash hook
+issue it. `approve` records `approved_by: <the machine's member login>` (`delivery/.workspace.json`, else `roles.lead_github`) and `approved_via: "member-terminal"` on the entry, and the ledger line reads `approved ah-N (<type> … by <login>)`; the old `lead-terminal` value is still read. `TURNSTILE_LEAD=1` stays as the typed-by-a-human marker. The Bash hook
 blocks **any** model-issued command that contains `turnstile approve` or `TURNSTILE_MIGRATION`, or that sets or reads
 `TURNSTILE_LEAD` (`TURNSTILE_LEAD=…`, `export TURNSTILE_LEAD`, `$TURNSTILE_LEAD`; a bare mention in a note is prose), in
 any quoting, `env`, `export`, `bash -c` or heredoc form (the check runs on the command with quotes and backslashes
@@ -378,7 +377,7 @@ inert — exit 0, nothing checked — except the Bash guard's universal safety r
   `gh api` call — also when they sit in a file given with `-F`/`--file`/`--body-file`/`--input` (the hook reads it) —
   `gh api graphql` with `query=@file` or `--input` (a mutation in a file), `git config pull.rebase true`, the spaced
   `service_github_tag ''` form, every command that contains `turnstile approve` or `TURNSTILE_MIGRATION` or sets or reads
-  `TURNSTILE_LEAD` (the lead's markers; see "How the lead approves"), and **every command that mentions `state.json` (also as a glob) or
+  `TURNSTILE_LEAD` (the lead's markers; see "How a member approves"), and **every command that mentions `state.json` (also as a glob) or
   the delivery dir and is not read-only** — read-only means every pipeline segment starts with `cat`, `less`, `head`,
   `tail`, `grep`, `jq`, `ls`, `find` without `-exec|-delete`, `sort` without `-o`, `wc`, `diff`, `sed` without `-i`, `git diff|log|show|status|blame|push|fetch`,
   `turnstile …` / `python3 -m turnstile_cli …`, and no redirect writes into the delivery dir. `perl -pi`, `node -e`,

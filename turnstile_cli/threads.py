@@ -60,8 +60,7 @@ def reply_route(org: str, pid: str, comment_id) -> str:
     repo, n = pid.split("#", 1)
     return "gh api -X POST repos/%s/%s/pulls/%s/comments/%s/replies -f body=…" % (org or "<org>", repo, n, comment_id or "<comment id>")
 
-def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, awaiting, org: str) -> Optional[str]:
-    ours = {agent, lead} - {""}
+def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, ours: set, awaiting, org: str) -> Optional[str]:
     tid, lr = t.get("id"), last_reviewer_at(t, ours)
     if t.get("truncated"):
         return "MISSING thread %s has more than 100 comments; the facts are truncated, so its replies are verified by hand (the lead decides)" % tid
@@ -92,20 +91,20 @@ def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, awaiting
                 % (tid, e.get("id"), e.get("approved_at"), lr, reply_route(org, pid, rec.get("comment_id"))))
     return None
 
-def replies_missing(pr: dict, pid: str, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]], org: str) -> List[str]:
+def replies_missing(pr: dict, pid: str, facts_threads: List[dict], epic: dict, awaiting: Optional[List[dict]], org: str) -> List[str]:
     """Spec §3 REWORK DoD after 2026-10-14: every human thread opened since the send, and every unresolved one, has a reply
     newer than its last reviewer comment — from the agent for self_resolved threads, after the lead's approved `reply`
     entry (or from the lead in person) for needs_lead ones. Fails closed without logins or a send time."""
-    agent, lead = logins(roles)
+    agent, lead = logins(epic.get("roles"))
     if not agent:
         return ["MISSING epic.roles.agent_github or epic.roles.lead_github (the GitHub login the replies come from)"]
     since = send_since(pr, awaiting)
     out = [] if since else ["MISSING a parsable evidence.human.sent_at (has %r): the send time bounds the threads that need replies"
                             % ((pr.get("evidence") or {}).get("human") or {}).get("sent_at")]
-    ours = {agent, lead} - {""}
+    ours = members.our_logins({"epic": epic})
     for t in facts_threads or []:
         if in_scope(t, since, ours):
-            m = _thread_missing(pid, pr, t, agent, lead, awaiting, org)
+            m = _thread_missing(pid, pr, t, agent, lead, ours, awaiting, org)
             if m:
                 out.append(m)
     return out
@@ -150,8 +149,7 @@ def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str,
     t = next((x for x in live or [] if x.get("id") == tid), None)
     if t is None:
         return "blocked by rule reply-unverified. Thread %s of %s is not on GitHub; failing closed." % (tid, pid)
-    agent, lead = logins(epic.get("roles"))
-    lr = last_reviewer_at(t, {agent, lead} - {""})
+    lr = last_reviewer_at(t, members.our_logins(data))
     if _ts(lr) > _ts(rec.get("last_reviewer_at")):
         return ("blocked by rule reply-reclassify. The reviewer commented on thread %s at %s, after it was classified %s (%s): re-classify it with "
                 "turnstile threads %s before replying — a pushback may need the lead." % (tid, lr, rec.get("class"), rec.get("last_reviewer_at"), pid))
@@ -168,10 +166,9 @@ def round_since(pr: dict, awaiting: Optional[List[dict]]) -> Optional[datetime.d
     times = [x for x in (send_since(pr, awaiting), github.ts(h.get("returned_at"))) if x]
     return max(times) if times else None
 
-def _round_comments(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]]):
+def _round_comments(pr: dict, facts_threads: List[dict], epic: dict, awaiting: Optional[List[dict]]):
     """(thread, reviewer comment) for every reviewer comment of this review round on a human thread in scope."""
-    agent, lead = logins(roles)
-    ours = {agent, lead} - {""}
+    ours = members.our_logins({"epic": epic})
     since, start = send_since(pr, awaiting), round_since(pr, awaiting)
     for t in facts_threads or []:
         if in_scope(t, since, ours):
@@ -179,19 +176,18 @@ def _round_comments(pr: dict, facts_threads: List[dict], roles: Optional[dict], 
                 if start is None or _ts(c.get("at")) >= start:
                     yield t, c
 
-def round_authors(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]]) -> List[str]:
+def round_authors(pr: dict, facts_threads: List[dict], epic: dict, awaiting: Optional[List[dict]]) -> List[str]:
     """The thread authors to re-request: every reviewer who commented on a human thread in scope during this review round. Empty for
     a push-only rework."""
     out: Dict[str, str] = {}
-    for _, c in _round_comments(pr, facts_threads, roles, awaiting):
+    for _, c in _round_comments(pr, facts_threads, epic, awaiting):
         out.setdefault(c["login"].lower(), c["login"])
     return sorted(out.values(), key=str.lower)
 
-def _replied_at(pr: dict, facts_threads: List[dict], roles: Optional[dict], awaiting: Optional[List[dict]], login: str) -> Optional[datetime.datetime]:
+def _replied_at(pr: dict, facts_threads: List[dict], epic: dict, awaiting: Optional[List[dict]], login: str) -> Optional[datetime.datetime]:
     """Our last reply on the threads this reviewer commented on in this round."""
-    agent, lead = logins(roles)
-    ours = {agent, lead} - {""}
-    times = [_ts(c.get("at")) for t, rc in _round_comments(pr, facts_threads, roles, awaiting) if rc["login"].lower() == login.lower()
+    ours = members.our_logins({"epic": epic})
+    times = [_ts(c.get("at")) for t, rc in _round_comments(pr, facts_threads, epic, awaiting) if rc["login"].lower() == login.lower()
              for c in t.get("comments") or [] if c.get("login") in ours]
     return max(times) if times else None
 
@@ -222,7 +218,7 @@ def clean_on_head(f, repo_cfg: dict) -> Tuple[Optional[str], Optional[datetime.d
         return "the gate check %s is %s on head %s" % (gc, f.checks.get(gc) or "absent", f.head[:12]), None
     return None, github.ts(f.check_times.get(gc))
 
-def request_problems(pr: dict, f, roles: Optional[dict], awaiting: Optional[List[dict]], repo_cfg: dict, people: List[str]) -> List[str]:
+def request_problems(pr: dict, f, epic: dict, awaiting: Optional[List[dict]], repo_cfg: dict, people: List[str]) -> List[str]:
     """What GitHub does not show for each re-requested reviewer: a review request newer than our last reply on their threads and
     than the clean signal on the head, still pending in reviewRequests or already answered by a review of the head."""
     out: List[str] = []
@@ -236,7 +232,7 @@ def request_problems(pr: dict, f, roles: Optional[dict], awaiting: Optional[List
         at = github.ts(req_at.get(login.lower()))
         if at is None:
             out.append("no review request for %s on GitHub" % login); continue
-        replied = _replied_at(pr, f.threads, roles, awaiting, login)
+        replied = _replied_at(pr, f.threads, epic, awaiting, login)
         late = [(x, what) for x, what in ((replied, "our last reply on their threads"),
                                           (clean_at, "Copilot's review of head %s" % f.head[:12] if repo_cfg.get("copilot") else
                                            "the gate check %s on head %s" % (gate_context(repo_cfg), f.head[:12]))) if x and at < x]
@@ -247,10 +243,10 @@ def request_problems(pr: dict, f, roles: Optional[dict], awaiting: Optional[List
             out.append("%s is not in GitHub reviewRequests and has not reviewed head %s" % (login, f.head[:12]))
     return out
 
-def rerequest_missing(pr: dict, pid: str, f, roles: Optional[dict], awaiting: Optional[List[dict]], org: str, repo_cfg: dict) -> List[str]:
+def rerequest_missing(pr: dict, pid: str, f, epic: dict, awaiting: Optional[List[dict]], org: str, repo_cfg: dict) -> List[str]:
     """REWORK → ON_HUMAN_REVIEW: a thread-driven rework needs `evidence.human.rerequested` for the head, naming exactly the thread
     authors, and GitHub showing those requests; a push-only rework takes no --rerequested (reviewer_notified: false)."""
-    authors = round_authors(pr, f.threads, roles, awaiting)
+    authors = round_authors(pr, f.threads, epic, awaiting)
     h = (pr.get("evidence") or {}).get("human") or {}
     rr = h.get("rerequested") if rules.same_head((h.get("rerequested") or {}).get("head"), pr.get("head")) else None
     if not authors:
@@ -265,7 +261,7 @@ def rerequest_missing(pr: dict, pid: str, f, roles: Optional[dict], awaiting: Op
         return ["MISSING evidence.human.rerequested for head %s (thread-driven rework, lead rule 2026-10-14): %s" % (pr.get("head"), hint)]
     if {x.lower() for x in rr.get("logins") or []} != {a.lower() for a in authors}:
         return ["MISSING --rerequested to be exactly the thread authors %s (has %s): %s" % (", ".join(authors), ", ".join(rr.get("logins") or []), hint)]
-    return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, roles, awaiting, repo_cfg, authors)]
+    return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, epic, awaiting, repo_cfg, authors)]
 
 def rerequest_refusal(data: dict, org: str, repo: str, number: str, people: List[str], live_facts: Callable[[str], object]) -> Optional[str]:
     """The Bash guard's verdict on a `requested_reviewers` POST that names humans: None to allow, else the refusal. State first (an
@@ -283,12 +279,12 @@ def rerequest_refusal(data: dict, org: str, repo: str, number: str, people: List
         f = live_facts(pid)
     except Exception as e:
         return "blocked by rule rerequest-unverified. Cannot read %s on GitHub (%s); failing closed." % (pid, e)
-    roles, awaiting = epic.get("roles"), data.get("awaiting_human")
-    miss = replies_missing(dict(pr, _id=pid), pid, f.threads, roles, awaiting, org)
+    awaiting = data.get("awaiting_human")
+    miss = replies_missing(dict(pr, _id=pid), pid, f.threads, epic, awaiting, org)
     if miss:
         return ("blocked by rule rerequest-replies. Every reviewer thread needs its reply before the reviewers are pinged: %s"
                 % "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss))
-    authors = round_authors(pr, f.threads, roles, awaiting)
+    authors = round_authors(pr, f.threads, epic, awaiting)
     if not authors:
         return ("blocked by rule rerequest-push-only. No reviewer commented on %s's threads since it last went to humans: a push-only rework "
                 "pings nobody (the return records reviewer_notified false); the lead decides." % pid)
@@ -324,8 +320,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json"); data = st.data
             pr = st_mod.pr(st, pid); org = rules.require_org(data)
-            agent, lead = logins((data.get("epic") or {}).get("roles"))
-            ours = {agent, lead} - {""}
+            ours = members.our_logins(data)
             awaiting = data.setdefault("awaiting_human", [])
             facts = io.github_facts(pid, org)
             if not sids and not lids:
@@ -388,7 +383,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                     replies_now.append("REPLY NOW: thread %s — %s" % (tid, reply_route(org, pid, t.get("comment_id"))))
             summary = "threads %s: self_resolved %s; needs_lead %s" % (pid, ", ".join(sorted(t for t, (c, _) in picked.items() if c == SELF)) or "none",
                                                                        ", ".join(sorted(t for t, (c, _) in picked.items() if c == LEAD)) or "none")
-            pending = [m for m in replies_missing(pr, pid, facts.threads, (data.get("epic") or {}).get("roles"), awaiting, org)
+            pending = [m for m in replies_missing(pr, pid, facts.threads, data.get("epic") or {}, awaiting, org)
                        if m.startswith("MISSING classification") or m.startswith("MISSING re-classification")]
             pass_cmd._recompute_next_actions(data)
             pass_cmd._side_effects(delivery, st, [summary] + extra, io, no_commit, no_push)

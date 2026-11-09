@@ -46,15 +46,15 @@ class RoundAuthors(unittest.TestCase):
               th("PRRT_b", cm("agentlogin", "2026-10-13T11:00:00Z", 201), cm("lMakDen", "2026-10-13T11:10:00Z", 202)),
               th("PRRT_c", cm("copilot-pull-request-reviewer", "2026-10-13T11:00:00Z", 301, bot=True), human=False),
               th("PRRT_o", cm("oldhand", "2026-10-12T09:00:00Z", 90), resolved=True)]
-        self.assertEqual(threads.round_authors(pr, ts, ROLES, aw), ["isachivka", "lMakDen"])
+        self.assertEqual(threads.round_authors(pr, ts, {"roles": ROLES}, aw), ["isachivka", "lMakDen"])
         self.assertEqual(threads.request_route("pdffiller", "jsfiller#1", ["isachivka", "lMakDen"]),
                          "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=isachivka' -f 'reviewers[]=lMakDen'")
     def test_a_later_round_counts_only_comments_after_the_return(self):
         pr = rework_pr(); pr["evidence"]["human"]["returned_at"] = "2026-10-13T14:00:00Z"; aw = [copy.deepcopy(SEND)]
         old = th("PRRT_a", self.REVIEW, cm("agentlogin", "2026-10-13T11:05:00Z", 102))  # answered in the first round, still unresolved
-        self.assertEqual(threads.round_authors(pr, [old], ROLES, aw), [])
+        self.assertEqual(threads.round_authors(pr, [old], {"roles": ROLES}, aw), [])
         old["comments"].append(cm("isachivka", "2026-10-13T14:30:00Z", 103))
-        self.assertEqual(threads.round_authors(pr, [old], ROLES, aw), ["isachivka"])
+        self.assertEqual(threads.round_authors(pr, [old], {"roles": ROLES}, aw), ["isachivka"])
 
 class Back(unittest.TestCase):
     """REWORK → ON_HUMAN_REVIEW: thread-driven rework needs the re-request on GitHub; push-only rework records reviewer_notified false."""
