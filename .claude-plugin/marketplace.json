@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Evidence-gated delivery for AI agent teams: a Claude Code plugin that runs a multi-repo epic through a strict state machine",
-    "version": "0.5.3"
+    "version": "0.5.4"
   },
   "plugins": [
     {
       "name": "turnstile",
       "source": "./",
       "description": "Evidence-gated delivery for AI agent teams: state machine for PRs and stories, role agents, hooks that block unapproved merges and reviewer requests and record Slack sends",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "author": {
         "name": "Davyd Pylypenko"
       }

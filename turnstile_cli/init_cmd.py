@@ -33,6 +33,7 @@ class InitOptions:
     models: Optional[str] = None
     flag: Optional[str] = None
     story_mode: str = "stack"
+    jira_base_url: Optional[str] = None
 
 class InitIO:
     def github_login(self) -> str:
@@ -98,6 +99,7 @@ def build_state(o: InitOptions) -> dict:
     if o.story_mode not in ("stack", "trunk"):
         raise TurnstileError("--story-mode must be stack or trunk (got %r)" % o.story_mode)
     e["flag"] = (o.flag or "").strip() or None; e["story_mode"] = o.story_mode
+    e["jira_base_url"] = config.parse_value("jira_base_url", o.jira_base_url) if o.jira_base_url else members.DEFAULT_JIRA_BASE_URL
     return data
 
 CLAUDE_MD_MARKER = "— orchestrator workspace"

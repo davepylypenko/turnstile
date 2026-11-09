@@ -106,7 +106,7 @@ Without the shim the CLI is
 6. The implementer reports a draft PR: `turnstile pr add app#12 --story S1 --ticket MYD-2` records it as `DEV` (head,
    branch and base from GitHub; refused when the base is not the story branch); with CI green,
    `turnstile pass pr app#12 AI_REVIEW --head <sha> --ci success`. On `MISSING …` nothing was written.
-7. `turnstile status` (reconcile against GitHub + what awaits the lead) and `turnstile render-board` (`delivery/board.html`;
+7. `turnstile status` (reconcile against GitHub + what awaits the lead) and `turnstile render-board` (every ticket key on the board links to `<epic.jira_base_url>/browse/<KEY>`; `delivery/board.html`;
    publish it as a claude.ai artifact and pass its url to `init --board-url` so every `pass` prints `BOARD: publish …`).
 
 Verified end to end on 2026-10-30 (`docs/superpowers/reviews/2026-10-30-onboarding-check.md`).

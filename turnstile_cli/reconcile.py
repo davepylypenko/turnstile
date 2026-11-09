@@ -264,6 +264,8 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
         print(sync.line(sync.load(delivery)))
         if status:
             print(members.member_line(st.data, delivery))
+            from . import config as _cfg
+            print("JIRA: %s" % _cfg.jira_base_url(st.data))
             for ln in members.onboard_lines(st.data, delivery, onboard):
                 print(ln)
     if status:

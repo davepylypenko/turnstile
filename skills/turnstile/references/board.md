@@ -8,4 +8,6 @@ publish needs is large, so it never runs in the orchestrator: publish at most on
 2. `Artifact` with `file_path: <path>` and `url: <url>` (publish; on a conflict re-read and publish again, never `force`).
 3. Reply with one line: `OK <url>` or the refusal text.
 
+Every ticket key on the board (PR rows, story rows and their ticket lists, bug rows, awaiting entries, the Progress tab) is a link to `<jira base>/browse/<KEY>`; keys inside titles stay plain text. The base is `epic.jira_base_url` (`init --jira-base-url`, `turnstile config set jira_base_url=<url> [--epic]`; the user layer wins; default `https://pdffiller.atlassian.net`) and `status` prints it as `JIRA:`.
+
 The orchestrator does not read the artifact and does not wait on the reply before the next step.

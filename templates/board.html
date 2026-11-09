@@ -79,6 +79,9 @@ function note(p) {
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const badge = s => '<span class="badge" style="background:' + (COLORS[s] || 'var(--muted)') + '">' + esc(s) + '</span>';
 const prUrl = id => { const [repo, n] = id.split('#'); const org = ((STATE || {}).epic || {}).github_org; return org ? 'https://github.com/' + org + '/' + repo + '/pull/' + n : '#'; };
+const jiraBase = () => String(((STATE || {}).epic || {}).jira_base_url || '').replace(/\/+$/, '');
+const ticket = k => k && /^[A-Z][A-Z0-9]+-\d+$/.test(k) && /^https:\/\//.test(jiraBase()) ? '<a href="' + esc(jiraBase() + '/browse/' + k) + '" target="_blank" rel="noopener">' + esc(k) + '</a>' : esc(k);
+const tickets = s => (s.tickets || []).map(ticket).join(' ');
 const short = h => h ? String(h).slice(0, 8) : '—';
 const pressed = k => (view.tab === 'prs' && view.state === k) || (view.tab === 'bugs' && view.open && k === 'bugs');
 function tiles() {
@@ -127,7 +130,7 @@ function prs() {
     '<h2>' + esc(repo) + '</h2><div class="scroll"><table><thead><tr><th>Ticket</th><th>PR</th><th>Owner</th><th>Slack</th><th>State</th><th>AI gates (head)</th><th>Blocked by</th><th>Jira</th><th>Next action</th><th>Note</th></tr></thead><tbody>' +
     rows.sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([id, p]) => {
       const h = (p.evidence || {}).human || {};
-      return '<tr><td>' + esc(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
+      return '<tr><td>' + ticket(p.ticket) + '</td><td class="k"><a href="' + esc(prUrl(id)) + '" target="_blank" rel="noopener">#' + esc(id.split('#')[1]) + '</a> <span class="muted">' + short(p.head) + '</span></td>' +
         '<td class="k">' + esc(p.owner || '—') + '</td>' +
         '<td>' + (/^https:\/\//.test(h.slack_permalink || '') ? '<a href="' + esc(h.slack_permalink) + '" target="_blank" rel="noopener">thread ↗</a>' : '—') + '</td>' +
         '<td>' + badge(p.state) + '</td><td class="k">' + esc(gateCell(p)) + '</td><td class="k">' + esc(p.blocked_by || '—') + '</td>' +
@@ -148,7 +151,7 @@ function stories() {
     Object.entries(STATE.stories || {}).map(([sid, s]) => {
       const prs = Object.entries(STATE.prs || {}).filter(([, p]) => p.story === sid).map(([id, p]) => esc(id) + ' ' + badge(p.state)).join('<br>');
       const mode = s.mode === 'trunk' ? '<br><span class="muted">trunk · flag ' + esc((STATE.epic || {}).flag || 'none') + '</span>' : '';
-      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + mode + '</td><td class="k">' + esc(s.owner || '—') + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(gateMarks(s)) + '</td><td>' + esc(s.next_action) + '</td></tr>';
+      return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + (tickets(s) ? '<br><span class="k">' + tickets(s) + '</span>' : '') + mode + '</td><td class="k">' + esc(s.owner || '—') + '</td><td>' + badge(s.state) + '</td><td>' + prs + '</td><td class="k">' + esc(gateMarks(s)) + '</td><td>' + esc(s.next_action) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 const countBy = (items, order) => { const n = {}; order.forEach(k => { n[k] = 0; }); items.forEach(i => { if (i.state in n) n[i.state] += 1; }); return n; };
@@ -182,11 +185,11 @@ function progress() {
   const card = (title, n, N, counts, order) => '<div class="card"><h3>' + title + ' ' + n + ' / ' + N + '<span>' + pct(n, N) + '</span></h3>' + meter(n, N) + stackBar(counts, order, 16, false) + keys(counts, order) + '</div>';
   const rows = stories.map(([sid, s]) => {
     const mine = prs.filter(([, p]) => p.story === sid).map(([, p]) => p), c = countBy(mine, PR_STATES);
-    return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + '</td><td>' + badge(s.state) + '</td><td class="bar-cell">' + stackBar(c, PR_STATES, 8, true) + '<span class="muted">' + mine.length + ' PR' + (mine.length === 1 ? '' : 's') + '</span></td><td class="k">' + esc(gateMarks(s)) + '</td></tr>';
+    return '<tr><td><b>' + esc(sid) + '</b> ' + esc(s.title) + (tickets(s) ? '<br><span class="k">' + tickets(s) + '</span>' : '') + '</td><td>' + badge(s.state) + '</td><td class="bar-cell">' + stackBar(c, PR_STATES, 8, true) + '<span class="muted">' + mine.length + ' PR' + (mine.length === 1 ? '' : 's') + '</span></td><td class="k">' + esc(gateMarks(s)) + '</td></tr>';
   });
   const open = prs.filter(([, p]) => p.state !== 'MERGED').map(([id, p]) => { const at = since(p), t = tsIso(at); return { id, p, at, days: t ? Math.max(0, Math.floor((Date.now() - t) / 86400000)) : null }; })
     .sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days));
-  const ageing = open.map(r => '<tr' + (r.days != null && r.days >= 3 && AGE_STATES.includes(r.p.state) ? ' class="aged"' : '') + '><td class="k"><a href="' + esc(prUrl(r.id)) + '" target="_blank" rel="noopener">' + esc(r.id) + '</a></td><td>' + badge(r.p.state) +
+  const ageing = open.map(r => '<tr' + (r.days != null && r.days >= 3 && AGE_STATES.includes(r.p.state) ? ' class="aged"' : '') + '><td class="k"><a href="' + esc(prUrl(r.id)) + '" target="_blank" rel="noopener">' + esc(r.id) + '</a> ' + ticket(r.p.ticket) + '</td><td>' + badge(r.p.state) +
     '</td><td class="num">' + (r.days == null ? '—' : r.days) + '</td><td class="muted">' + esc(r.at || '—') + '</td></tr>');
   document.getElementById('progress').innerHTML =
     '<div class="cards">' + card('Stories DONE', sc.DONE, stories.length, sc, STORY_STATES) + card('PRs MERGED', pc.MERGED, prs.length, pc, PR_STATES) +
@@ -214,7 +217,7 @@ function bugs() {
     (STATE.bugs || []).filter(b => !view.open || bugState(b) !== 'done').map(b => {
       const cur = bugState(b);
       const manual = bugOverrides[b.id] ? '<span class="manual">changed ' + esc(String(bugOverrides[b.id].updatedAt || '').slice(0, 16).replace('T', ' ')) + '</span>' : '';
-      return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td class="k">' + esc(b.case || '—') + '</td><td>' + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
+      return '<tr><td class="k">' + esc(b.id) + '</td><td>' + esc(b.story) + '</td><td class="k">' + esc(b.case || '—') + '</td><td>' + (b.ticket ? ticket(b.ticket) + ' ' : '') + esc(b.title) + '</td><td class="muted">' + esc(b.source) + '</td><td class="k">' +
         (b.pr ? '<a href="' + esc(prUrl(b.pr)) + '" target="_blank" rel="noopener">' + esc(b.pr) + '</a>' : '—') + '</td><td class="k">' + esc(b.figma || '—') + '</td>' +
         '<td>' + badge(cur) + ' <select class="bug" data-bug="' + esc(b.id) + '"' + (bugsCanWrite ? '' : ' disabled title="Status changes are saved by the board owner"') + '>' +
         BUG_STATES.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join('') + '</select>' + manual + '</td>' +
@@ -250,7 +253,7 @@ async function connectBugsDb() {
 }
 function awaiting() {
   document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
-    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + (a.ticket || ((STATE.prs || {})[a.pr] || {}).ticket ? ' ' + ticket(a.ticket || STATE.prs[a.pr].ticket) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { view.tab = b.dataset.tab; show(); writeHash(); }));
 document.querySelectorAll('#tiles .tile').forEach(b => b.addEventListener('click', () => tileClick(b.dataset.tile)));

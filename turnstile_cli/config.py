@@ -1,6 +1,7 @@
 import json, os, pathlib, re
 from typing import Iterable, List, Optional, Tuple
 from . import models, workspace
+from .members import DEFAULT_JIRA_BASE_URL
 from .errors import TurnstileError
 from .rules import DEFAULT_SEND_SKILL
 
@@ -8,7 +9,8 @@ DEFAULT_REVIEW_SKILL = "/code-review"
 SKILL_KEYS = ("review_skill", "story_review_skill", "send_skill")
 SKILL_DEFAULTS = {"review_skill": DEFAULT_REVIEW_SKILL, "story_review_skill": DEFAULT_REVIEW_SKILL, "send_skill": DEFAULT_SEND_SKILL}
 SKILL_RX = re.compile(r"^/(?:[\w][\w.-]*:)?[\w][\w.-]*$")
-KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, reviewers (comma-separated logins; empty = any human), flag (epic only)"
+KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, reviewers (comma-separated logins; empty = any human), jira_base_url, flag (epic only)"
+JIRA_BASE_RX = re.compile(r"^https://[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?(/[\w./-]*)?$")
 LOGIN_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 SEND_SKILL_INSTALL = "ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review"
 
@@ -39,6 +41,9 @@ def _check_user_shape(data, p: pathlib.Path) -> dict:
     for k in SKILL_KEYS:
         if data.get(k) is not None and not (isinstance(data[k], str) and SKILL_RX.match(data[k])):
             raise TurnstileError("user config %s: %s must be a slash command like /my-review (is %r)" % (p, k, data[k]))
+    jb = data.get("jira_base_url")
+    if jb is not None and not (isinstance(jb, str) and JIRA_BASE_RX.match(jb)):
+        raise TurnstileError("user config %s: jira_base_url must look like https://<host>.atlassian.net (is %r)" % (p, jb))
     rv = data.get("reviewers")
     if rv is not None and not (isinstance(rv, list) and all(isinstance(x, str) and LOGIN_RX.match(x) for x in rv)):
         raise TurnstileError("user config %s: reviewers must be a list of GitHub logins (is %r)" % (p, rv))
@@ -68,7 +73,7 @@ def parse_key(key: str) -> Tuple[str, Optional[str]]:
         if agent not in models.DEFAULTS:
             raise TurnstileError("unknown agent %r in %s (known: %s)" % (agent, key, ", ".join(sorted(models.DEFAULTS))))
         return "models", agent
-    if key in SKILL_KEYS or key in ("flag", "reviewers"):
+    if key in SKILL_KEYS or key in ("flag", "reviewers", "jira_base_url"):
         return key, None
     raise TurnstileError("unknown config key %r (allowed: %s)" % (key, KEYS_HELP))
 
@@ -87,6 +92,11 @@ def parse_value(key: str, value: str):
         if bad:
             raise TurnstileError("reviewers takes GitHub logins, no teams or bots (got %s)" % ", ".join(bad))
         return logins
+    if key == "jira_base_url":
+        url = value.strip().rstrip("/")
+        if not JIRA_BASE_RX.match(url):
+            raise TurnstileError("jira_base_url must look like https://pdffiller.atlassian.net (got %r)" % value)
+        return url
     if not value or not value.strip():
         raise TurnstileError("%s needs a non-empty %s" % (key, "flag name" if key == "flag" else "skill name (e.g. /pdf-review:run)"))
     if key != "flag" and not SKILL_RX.match(value.strip()):
@@ -142,8 +152,20 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
         out["reviewers"] = {"value": list(epic["reviewers"]), "source": "epic"}
     else:
         out["reviewers"] = {"value": None, "source": "default"}
+    if user.get("jira_base_url"):
+        out["jira_base_url"] = {"value": str(user["jira_base_url"]), "source": "user"}
+    elif epic.get("jira_base_url"):
+        out["jira_base_url"] = {"value": str(epic["jira_base_url"]), "source": "epic"}
+    else:
+        out["jira_base_url"] = {"value": DEFAULT_JIRA_BASE_URL, "source": "default"}
     out["flag"] = {"value": epic.get("flag") or None, "source": "epic" if epic.get("flag") else "default"}
     return out
+
+def jira_base_url(data: Optional[dict] = None) -> str:
+    try:
+        return effective(data)["jira_base_url"]["value"]
+    except TurnstileError:
+        return ((data or {}).get("epic") or {}).get("jira_base_url") or DEFAULT_JIRA_BASE_URL
 
 def reviewer_policy(data: Optional[dict] = None, user: Optional[dict] = None) -> Tuple[bool, set]:
     value = effective(data, user)["reviewers"]["value"]
@@ -165,7 +187,7 @@ def _source_note(agent: str, entry: dict) -> str:
 
 def lines(eff: dict) -> list:
     out = ["models.%s = %s (%s)" % (a, fmt_resolved(a, m), _source_note(a, m)) for a, m in eff["models"].items()]
-    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["reviewers = %s (%s)" % (fmt_reviewers(eff), eff["reviewers"]["source"]), "flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
+    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["reviewers = %s (%s)" % (fmt_reviewers(eff), eff["reviewers"]["source"]), "jira_base_url = %s (%s)" % (eff["jira_base_url"]["value"], eff["jira_base_url"]["source"]), "flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
 
 def one_line(eff: dict) -> str:
     overrides = ["%s models.%s" % (m["source"], a) for a, m in eff["models"].items() if m["source"] != "default"]

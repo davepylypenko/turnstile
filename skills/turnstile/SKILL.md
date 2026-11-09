@@ -60,7 +60,7 @@ say so), the templates in `references/slack.md` are the fallback and you ask the
 1. "Start epic MYD-X" comes from the lead in the **clone root** (the folder holding `pdffiller-knowledge/`, `jsfiller/`, …) or inside
    the knowledge clone. Run there: `turnstile init --epic <KEY> --workitem <slug> --lead <login> --lead-github <GitHub login>
    --github-org <org> --repo '<json>'… --variant <v> --desk <d>` (`--knowledge <clone>` only when it is not `<root>/pdffiller-knowledge`,
-   `--clone-root <dir>` when run elsewhere). It creates the workspace `<root>/<key-lower>/`: the knowledge worktree on `epic/<key>`, a
+   `--clone-root <dir>` when run elsewhere; `--jira-base-url https://<site>.atlassian.net` sets the Jira site the board links ticket keys to, default `https://pdffiller.atlassian.net`). It creates the workspace `<root>/<key-lower>/`: the knowledge worktree on `epic/<key>`, a
    worktree of every `--repo` clone on `ws/<key-lower>` (from `origin/<base>`; a missing clone is refused with its expected path), `delivery/`,
    `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths and `member`; `brief --var repo=<name>` renders them). `--lead-github` becomes `epic.members.<login>` with the
    lead's `--variant`, `--desk` and `--board-url` (also kept in `epic.environment` and `epic.board`, so older readers keep working); every other developer gets an entry at `attach`. Repo JSON keys: `name,
@@ -79,7 +79,7 @@ Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` o
 `epic.story_review_skill`, `epic.send_skill`) > plugin defaults. Ask the lead **one** batched question — "Do you use your own review skill (name it), which skill sends PRs to Slack
 review (`init` printed `SEND_SKILL:`; if it is not found on this machine, which one to install or use), and do you want a different model/effort for any agent? Current effective
 values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`, `config set review_skill=/my-review`,
-`config set story_review_skill=…`, `config set send_skill=/my-send` (user layer, at once; `--epic` — only when the lead says it is for the whole epic or team — opens a `config` entry
+`config set story_review_skill=…`, `config set send_skill=/my-send`, `config set jira_base_url=https://<site>.atlassian.net` (the Jira site every ticket key on the board links to; the user layer wins over `epic.jira_base_url`, default `https://pdffiller.atlassian.net`; `status` prints `JIRA: <base>`) (user layer, at once; `--epic` — only when the lead says it is for the whole epic or team — opens a `config` entry
 a member approves with the usual line, then `turnstile config apply <ah-id>`; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions
 ("use my /x-review skill", "reviewer on sonnet", "send with /x") map to the same commands; never ask what the user file already answers; `turnstile status` prints the effective line.
 `review_skill` is the `reviewer`'s deep-review skill (`--deep-review` report), `story_review_skill` the story-reviewer's, `send_skill` what posts a PR for review (`## pass`); the brief

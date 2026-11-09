@@ -54,7 +54,7 @@ def build_parser():
     pl = sub.add_parser("plan-submitted", help="read stories from plan.md into state and open the lead's plan approval"); pl.add_argument("--no-commit", action="store_true")
     cf = sub.add_parser("config", help="agent models/effort, review skills and the send skill: user (~/.config/turnstile/config.json or $TURNSTILE_USER_CONFIG) > epic (state.json) > plugin defaults")
     csub = cf.add_subparsers(dest="config_cmd"); csub.add_parser("list", help="effective values with their source")
-    cs = csub.add_parser("set"); cs.add_argument("assignment", metavar="key=value", help="models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill, send_skill=/skill (the local skill that posts PRs to Slack review; default /send-pr-review); value 'default' resets")
+    cs = csub.add_parser("set"); cs.add_argument("assignment", metavar="key=value", help="models.<agent>=<model>[:<effort>], review_skill=/skill, story_review_skill=/skill, jira_base_url=https://<site>.atlassian.net (board ticket links), send_skill=/skill (the local skill that posts PRs to Slack review; default /send-pr-review); value 'default' resets")
     cu = csub.add_parser("unset"); cu.add_argument("key", help="reset the key in the chosen layer")
     ca = csub.add_parser("apply", help="apply an epic-layer change the lead approved (turnstile approve <ah-id>)"); ca.add_argument("ah_id")
     ca.add_argument("--no-commit", action="store_true"); ca.add_argument("--no-push", action="store_true")
@@ -91,6 +91,7 @@ def build_parser():
                      ("--chat-language", {"default": "English", "help": "language the orchestrator chats with the lead in (written to the workspace CLAUDE.md)"}),
                      ("--flag", {"help": "the one experiment feature flag of the epic (trunk mode; also: turnstile config set flag=<name> --epic)"}),
                      ("--story-mode", {"default": "stack", "choices": ["stack", "trunk"], "help": "default story mode for plan.md stories without `mode` (trunk recommended: PRs merge into the base behind the flag)"}),
+                     ("--jira-base-url", {"help": "Jira site the board links ticket keys to (default https://pdffiller.atlassian.net; also: turnstile config set jira_base_url=<url> [--epic])"}),
                      ("--models", {"help": "JSON agent → {model, effort} merged over the defaults (model: haiku|sonnet|opus|fable, effort: low|medium|high|xhigh)"})]:
         ini.add_argument(flag, **kw)
     return p

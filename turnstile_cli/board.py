@@ -1,4 +1,5 @@
 import copy, datetime, json, pathlib
+from . import config
 from typing import Dict, Optional
 
 TEMPLATE = pathlib.Path(__file__).resolve().parents[1] / "templates" / "board.html"
@@ -10,6 +11,7 @@ def member_rel(login: str) -> str:
 
 def render_html(data: dict) -> str:
     html = TEMPLATE.read_text()
+    data = dict(data, epic=dict(data.get("epic") or {}, jira_base_url=config.jira_base_url(data)))
     payload = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
     html = html.replace(TOKEN, payload)
     return html.replace("__TURNSTILE_UPDATED__", datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))

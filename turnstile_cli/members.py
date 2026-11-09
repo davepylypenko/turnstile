@@ -4,6 +4,7 @@ from .errors import TurnstileError
 
 BOARD_URL_RX = re.compile(r"^https://claude\.ai/(code/)?artifact/\S+$")
 CAPABILITIES = ["db", "user"]
+DEFAULT_JIRA_BASE_URL = "https://pdffiller.atlassian.net"
 
 def _now() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -30,6 +31,24 @@ def migrate(data: dict) -> bool:
     entry = new_entry(roles.get("lead") or lead, env.get("variant"), env.get("desk"), board.get("artifact_url"))
     entry["board"]["capabilities"] = list(board.get("capabilities") or CAPABILITIES)
     epic["members"] = {lead: entry}
+    return True
+
+BROWSE_RX = re.compile(r"(https://[A-Za-z0-9.-]+\.atlassian\.net)/browse/[A-Z][A-Z0-9]*-\d+")
+
+def migrate_jira(data: dict, delivery) -> bool:
+    epic = data.get("epic") if isinstance(data, dict) else None
+    if not isinstance(epic, dict) or epic.get("jira_base_url"):
+        return False
+    found = None
+    root = pathlib.Path(delivery)
+    for f in [root / "plan.md"] + sorted((root / "briefs").glob("*.md")):
+        try:
+            m = BROWSE_RX.search(f.read_text())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if m:
+            found = m.group(1); break
+    epic["jira_base_url"] = found or DEFAULT_JIRA_BASE_URL
     return True
 
 def migrate_owners(data: dict) -> bool:
