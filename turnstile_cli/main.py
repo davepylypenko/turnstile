@@ -64,8 +64,12 @@ def build_parser():
                      ("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd — the knowledge clone's parent, or the cwd when it holds a named clone)"}),
                      ("--workspace", {"help": "the workspace folder to create (default: <clone root>/<epic key, lower case>)"}),
                      ("--workitem", {"help": "the workitem folder (needed when the epic branch holds several deliveries)"}),
-                     ("--chat-language", {"help": "default: the epic's recorded chat_language"})]:
+                     ("--chat-language", {"help": "default: the epic's recorded chat_language"}),
+                     ("--github", {"help": "your GitHub login (default: gh api user)"}), ("--name", {"help": "display name (default: the login)"}),
+                     ("--variant", {"help": "your Prometey variant (default: <epic key>-<login>, lower case)"}), ("--desk", {"help": "your editor desk, e.g. desk05 (default: none)"}),
+                     ("--board-url", {"help": "your board artifact url, when it already exists (default: a new artifact on the first publish)"})]:
         at.add_argument(flag, **kw)
+    bu = sub.add_parser("board-url", help="record the url of this machine's board artifact for the current member"); bu.add_argument("url"); bu.add_argument("--no-push", action="store_true")
     for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
         sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
     ini = sub.add_parser("init", help="create the epic workspace <clone root>/<key>: the knowledge worktree, a worktree per repo and the delivery/ skeleton")
@@ -121,6 +125,9 @@ def main(argv=None):
         if a.cmd == "sync":
             from .sync import run as sync_run
             return sync_run(delivery)
+        if a.cmd == "board-url":
+            from . import members
+            return members.board_url(delivery, a.url, no_push=a.no_push)
         if a.cmd == "pass":
             from .pass_cmd import run, Options
             o = Options(**{k.replace("-", "_"): v for k, v in vars(a).items()

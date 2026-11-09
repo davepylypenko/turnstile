@@ -50,7 +50,9 @@ class Workspace(unittest.TestCase):
         self.assertEqual((ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo-%s/delivery" % key)
         rec = json.loads((delivery / ".workspace.json").read_text())
         self.assertEqual(rec["repos"], {"app": str(ws / "app"), "web": str(ws / "web")}); self.assertEqual(rec["workspace"], str(ws)); self.assertEqual(rec["knowledge"], str(ws / "pdffiller-knowledge"))
+        self.assertEqual(rec["member"], "lg")
         data = json.loads((delivery / "state.json").read_text())["epic"]
+        self.assertEqual(list(data["members"]), ["lg"])
         self.assertEqual((data["repos"]["app"]["path"], data["repos"]["web"]["path"]), ("app", "web")); self.assertNotIn("workspace", data); self.assertNotIn(str(ws), json.dumps(data))
         self.assertEqual(self.git(ws / "pdffiller-knowledge", "status", "--porcelain"), "")
         text = (ws / "CLAUDE.md").read_text(); self.assertIn("`app/` (ws/%s from `origin/main`)" % key, text); self.assertIn("`web/` (ws/%s from `origin/develop`)" % key, text)
@@ -89,14 +91,14 @@ class Workspace(unittest.TestCase):
         rc, out = out_of(init_cmd.run, init_opts("MYD-5")); self.assertEqual(rc, 2); self.assertIn("no clone root", out); self.assertIn("pdffiller-knowledge, app, web", out)
         self.assertEqual(list(nowhere.iterdir()), [])
         root2 = self.tmp / "root2"; self.clone_all(root2); os.chdir(root2)
-        rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-1")); self.assertEqual(rc, 0, out); self.assertIn("OK attach MYD-1", out)
+        rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-1", github="lg")); self.assertEqual(rc, 0, out); self.assertIn("OK attach MYD-1", out)
         d2 = self.assert_layout(root2 / "myd-1", "myd-1"); self.assertIn("NEXT: cd %s && claude" % (root2 / "myd-1"), out)
         self.assertEqual(json.loads((d2 / "state.json").read_text())["epic"]["repos"], json.loads((d / "state.json").read_text())["epic"]["repos"])
         self.assertEqual(json.loads((d2 / ".workspace.json").read_text())["clone_root"], str(root2))
         os.chdir(self.root); shutil.rmtree(ws / "app"); self.git(self.root / "app", "worktree", "prune")
         rc, out = out_of(init_cmd.run, init_opts("MYD-1")); self.assertEqual(rc, 0, out); self.assertIn("already holds epic MYD-1; attaching", out)
         self.assertEqual(self.branch(ws / "app"), "ws/myd-1"); self.assertEqual(self.branch(ws / "web"), "ws/myd-1")
-        rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-9")); self.assertEqual(rc, 2); self.assertIn("origin has no epic/myd-9", out)
+        rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-9", github="lg")); self.assertEqual(rc, 2); self.assertIn("origin has no epic/myd-9", out)
         self.assertFalse((self.root / "myd-9").exists())
 
     def approve_plan(self, d):

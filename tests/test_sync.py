@@ -137,6 +137,7 @@ class SyncCmd(unittest.TestCase):
 class FakeGit(init_cmd.InitIO):
     def __init__(self, fail=(), workitems=("demo",), key="MYD-1", current="epic/myd-1", local_branch=False):
         self.calls = []; self.fail = set(fail); self.workitems = workitems; self.key = key; self.current = current; self.local_branch = local_branch; self.branches = {}
+    def github_login(self): return ""
     def git(self, args, cwd):
         self.calls.append((args, pathlib.Path(cwd)))
         if args[0] in self.fail:
@@ -161,8 +162,8 @@ class Attach(unittest.TestCase):
         for repo in ("jsfiller", "docs-platform"): (self.tmp / repo / ".git").mkdir(parents=True)
         self.gh = mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")); self.gh.start(); self.addCleanup(self.gh.stop)
     def attach(self, git, **kw):
-        o = attach_cmd.AttachOptions(**dict(dict(knowledge=str(self.knowledge), epic="MYD-1", workspace=str(self.ws)), **kw))
-        return out_of(attach_cmd.run, o, git)
+        o = attach_cmd.AttachOptions(**dict(dict(knowledge=str(self.knowledge), epic="MYD-1", workspace=str(self.ws), github="leadlogin"), **kw))
+        return out_of(attach_cmd.run, o, git, FakeIO(heads={}))
     def test_attach_adds_the_worktree_marker_claude_md_and_prints_status(self):
         git = FakeGit(); rc, out = self.attach(git)
         self.assertEqual(rc, 1, out)  # attach itself is fine; status exits 1 because gh facts are missing offline

@@ -20,9 +20,11 @@ def load(delivery) -> Optional[dict]:
         return None
     return data if isinstance(data, dict) and isinstance(data.get("repos"), dict) else None
 
-def record(delivery, workspace: pathlib.Path, clone_root: pathlib.Path, knowledge_wt: pathlib.Path, repos: Dict[str, pathlib.Path]) -> dict:
+def record(delivery, workspace: pathlib.Path, clone_root: pathlib.Path, knowledge_wt: pathlib.Path, repos: Dict[str, pathlib.Path], member: Optional[str] = None) -> dict:
     rec = {"workspace": str(workspace), "clone_root": str(clone_root), "knowledge": str(knowledge_wt),
            "repos": {r: str(p) for r, p in sorted(repos.items())}, "at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    if member:
+        rec["member"] = member
     st_mod.write_atomic(pathlib.Path(delivery) / FILE, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     return rec
 

@@ -5,7 +5,7 @@ the head and the evidence against GitHub (`IO.github_facts`): CI rollup, the gat
 approvals for the head, signed commits, no trailer in commit messages, no generated-with footer in the body, the PR base.
 Every story pass into INTEGRATION_REVIEW (a deploy record), ENV_TESTING and DONE asks GitHub for the head of every PR in
 `evidence.deploy.heads` (`IO.github_head`) and is refused when any differs from the snapshot — a push without `pass pr` cannot
-hide behind a stale `state.json`. `--offline` records `deploy.head_verified: false` and is refused at DONE.
+hide behind a stale `state.json`. `--offline` records `deploy.head_verified: false` and is refused at DONE. A deploy record also carries `deploy.variant` (the Prometey variant of the member who deployed) and `deploy.by` (that member's GitHub login), both from `epic.members` of this machine's `.workspace.json` member.
 
 Review threads (lead rule 2026-10-14): `turnstile threads <repo#n> --self-resolved <ids> --needs-lead <ids>` records each human
 thread's class on the PR from GitHub facts, bound to the reviewer's last comment. The Bash guard lets a reply through only on the

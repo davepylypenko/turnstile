@@ -41,8 +41,8 @@ class SkillFiles(unittest.TestCase):
                            "epic.models", "--models", "AGENT:"]:
                 self.assertIn(needle, doc, needle)
             self.assertNotIn("xhigh, story-reviewer fable", doc); self.assertNotIn("the rest opus", doc)
-        self.assertIn("model=opus effort=xhigh", text); self.assertNotIn("effort=medium", text)
-        self.assertIn("reviewer (opus, xhigh)", readme); self.assertIn("story-reviewer (opus, xhigh)", readme); self.assertNotIn("story-reviewer opus high", readme)
+        self.assertIn("model=opus effort=high", text); self.assertNotIn("effort=medium", text)
+        self.assertIn("reviewer (opus, high)", readme); self.assertIn("story-reviewer (opus, xhigh)", readme); self.assertNotIn("story-reviewer opus high", readme)
     def test_preferences_section_three_layers_and_review_skill_semantics(self):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
         self.assertIn("## preferences", text); self.assertIn("### Per-person overrides", readme)

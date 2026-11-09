@@ -1,7 +1,7 @@
-import os, pathlib, re
+import json, os, pathlib, re
 from dataclasses import dataclass
 from typing import Optional
-from . import state as st_mod, sync, workspace
+from . import state as st_mod, sync, workspace, members
 from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md, next_lines
 from .errors import TurnstileError
 
@@ -13,6 +13,11 @@ class AttachOptions:
     workspace: Optional[str] = None
     workitem: Optional[str] = None
     chat_language: Optional[str] = None
+    github: Optional[str] = None
+    name: Optional[str] = None
+    variant: Optional[str] = None
+    desk: Optional[str] = None
+    board_url: Optional[str] = None
 
 NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -30,10 +35,36 @@ def _find_delivery(wt: pathlib.Path, workitem: Optional[str]) -> pathlib.Path:
                              % (len(found) or "no", wt, ", ".join(p.parent.parent.name for p in found) or "none"))
     return found[0].parent
 
-def run(o: AttachOptions, io: Optional[InitIO] = None) -> int:
+def _write_member(delivery: pathlib.Path, login: str, o: AttachOptions, writer) -> dict:
+    from .pass_cmd import _side_effects
+    with st_mod.locked(delivery):
+        st = st_mod.load(delivery / "state.json"); epic = st.data["epic"]
+        table = epic.setdefault("members", {}); before = json.dumps(table.get(login), sort_keys=True)
+        entry = table.get(login)
+        if entry is None:
+            entry = table[login] = members.new_entry(o.name or login, o.variant or members.default_variant(epic.get("key") or o.epic, login), o.desk, o.board_url)
+        else:
+            for key, value in (("name", o.name), ("variant", o.variant), ("desk", o.desk)):
+                if value:
+                    entry[key] = value
+            if o.board_url:
+                entry.setdefault("board", {"capabilities": list(members.CAPABILITIES)})["artifact_url"] = o.board_url
+        if (epic.get("roles") or {}).get("lead_github") == login and o.board_url:
+            epic.setdefault("board", {"capabilities": list(members.CAPABILITIES)})["artifact_url"] = o.board_url
+        if json.dumps(table[login], sort_keys=True) != before:
+            _side_effects(delivery, st, ["attach member %s (variant %s)" % (login, entry.get("variant"))], writer, False, False)
+        return entry
+
+def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
     from .reconcile import cli as status_cli
-    io = io or InitIO()
+    from .pass_cmd import IO as WriterIO
+    io = io or InitIO(); writer = writer or WriterIO()
     try:
+        login = (o.github or "").strip() or (getattr(io, "github_login", lambda: "")() or "").strip()
+        if not login:
+            raise TurnstileError("--github <login> is required (gh api user did not return a login on this machine)")
+        if o.board_url:
+            members.check_board_url(o.board_url)
         cwd = pathlib.Path.cwd(); root = workspace.detect_root(cwd, o.clone_root, o.knowledge, [], io)
         knowledge = workspace.resolve_knowledge(root, o.knowledge)
         ws = pathlib.Path(o.workspace).expanduser().resolve() if o.workspace else workspace.default_workspace(root, o.epic)
@@ -70,13 +101,17 @@ def run(o: AttachOptions, io: Optional[InitIO] = None) -> int:
         marker.write_text(rel + "\n")
         target = write_workspace_claude_md(ws, key, rel, o.chat_language or data["epic"].get("chat_language") or "English",
                                            workspace.claude_md_repos(repos, repo_wts, key))
-        workspace.record(delivery, ws, root, wt, repo_wts)
+        workspace.record(delivery, ws, root, wt, repo_wts, member=login)
         head = io.git(["rev-parse", "HEAD"], wt).strip() or None
         sync.record(delivery, synced, head, None if synced else "not fast-forwarded to origin/%s" % branch)
+        entry = _write_member(delivery, login, o, writer)
         print("WORKSPACE: %s (clone root %s)" % (ws, root)); print("WORKTREE: %s (%s)" % (wt, branch))
         for line in workspace.repo_lines(repos, repo_wts, key):
             print(line)
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
+        print("MEMBER: %s · variant %s · desk %s · board %s" % (login, entry.get("variant"), entry.get("desk") or "none", (entry.get("board") or {}).get("artifact_url") or "new artifact"))
+        print("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-%s …) to create it through the prometey-variant skill; "
+              "then turnstile board-url <url> after the first board publish" % login)
         print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
               "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
         for line in next_lines(ws, cwd):

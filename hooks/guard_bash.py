@@ -345,7 +345,7 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
                   "`..`, no symlinks, no cd into the delivery dir). The rest of the delivery dir is written only by 'turnstile pass' and, for "
                   "plan.md/decisions.md, the Write tool." % (mention, bad[0][:60]))
 
-TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "-h", "--help", "--version"}
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "board-url", "-h", "--help", "--version"}
 
 def _turnstile_sub_ok(flat: str) -> bool:
     """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""

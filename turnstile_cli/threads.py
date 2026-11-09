@@ -8,7 +8,7 @@ before anyone replies again. REWORK → ON_HUMAN_REVIEW requires, for every huma
 unresolved one, a reply on GitHub newer than the thread's last reviewer comment (`replies_missing`)."""
 import datetime, pathlib
 from typing import Callable, Dict, List, Optional, Tuple
-from . import github, rules, state as st_mod
+from . import github, rules, members, state as st_mod
 from .errors import TurnstileError
 
 SELF, LEAD = "self_resolved", "needs_lead"
@@ -396,8 +396,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
             print(line)
         for m in pending:
             print("WARN " + m[len("MISSING "):])
-        url = ((data.get("epic") or {}).get("board") or {}).get("artifact_url")
-        print("BOARD: publish %s → %s" % (delivery / "board.html", url or "new artifact"))
+        print(members.board_line(data, delivery))
         print("OK " + summary)
         return 0
     except TurnstileError as e:

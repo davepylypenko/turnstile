@@ -35,7 +35,9 @@ never rebase or force — diverged histories go to the lead). `--no-push` only f
 `turnstile status` → reconcile against GitHub + plan state + next actions + what awaits the lead (exit 1 when `gh` facts are missing). Run it first in every session
 and after every batch of agent reports; run the proposed `turnstile pass` lines it prints (dry-run checked); show the lead the anomalies (`turnstile reconcile
 --json` for the raw list). A `WARN: send skill … not found` line means the lead must name the skill that sends PRs to review (`## preferences`).
-`turnstile status --brief` prints only `SYNC:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
+`status` prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|none>` after `SYNC:` (this machine's developer, from `delivery/.workspace.json` → `epic.members`; `member_unknown` in
+the reconcile list means the login is not in `epic.members`: run the `attach` line it proposes).
+`turnstile status --brief` prints only `SYNC:`, `MEMBER:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
 `delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
 
 ## pass (one transition)
@@ -46,8 +48,9 @@ When the line says `assignee: you` (or `status` lists `jira_unassigned`), first 
 with `atlassianUserInfo` (no arguments; `account_id`, `name`), set it with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`) and run
 `turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → leave Jira alone, record that person with the same flags.
 Plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded. The ticket stays with whoever took it into work; the line is plain on MERGED and when a PR of the ticket already
-carries an assignee. It also prints `BOARD: publish <path> → <url>` (Artifact tool, that `url`; a first publish loads `artifact-capabilities` and declares `db` + `user`; the url comes
-from `init --board-url` or the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate. A PR the implementer opened enters the state as `DEV` with
+carries an assignee. It also prints `BOARD: publish <path> → <url>` with the board artifact of this machine's member (`epic.members.<login>.board`; Artifact tool, that `url`; a first publish loads `artifact-capabilities`
+and declares `db` + `user`; with no url the line says `new artifact … — then: turnstile board-url <url>`, and you run that after the publish). A deploy record (`pass story … INTEGRATION_REVIEW --build --head`)
+stores `deploy.variant` and `deploy.by` of the member. On `MISSING …` nothing was written: get the evidence, do not argue with the gate. A PR the implementer opened enters the state as `DEV` with
 `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch, base from GitHub; refused without the brief or when the base is neither the story branch nor another PR of the story).
 **Sending a READY PR to humans:** invoke the configured send skill — `<send_skill> <pr url> …` (`send_skill` in `turnstile config list`, default `/send-pr-review`); it picks the channel
 and the format and shows the draft; when the epic sets `epic.repos.<repo>.slack`, tell it that channel explicitly (the explicit channel wins over the skill's own routing). The lead's word
@@ -61,7 +64,8 @@ say so), the templates in `references/slack.md` are the fallback and you ask the
    --github-org <org> --repo '<json>'… --variant <v> --desk <d>` (`--knowledge <clone>` only when it is not `<root>/pdffiller-knowledge`,
    `--clone-root <dir>` when run elsewhere). It creates the workspace `<root>/<key-lower>/`: the knowledge worktree on `epic/<key>`, a
    worktree of every `--repo` clone on `ws/<key-lower>` (from `origin/<base>`; a missing clone is refused with its expected path), `delivery/`,
-   `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths; `brief --var repo=<name>` renders them). Repo JSON keys: `name,
+   `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths and `member`; `brief --var repo=<name>` renders them). `--lead-github` becomes `epic.members.<login>` with the
+   lead's `--variant`, `--desk` and `--board-url` (also kept in `epic.environment` and `epic.board`, so older readers keep working); every other developer gets an entry at `attach`. Repo JSON keys: `name,
    base, epic_branch, slack, gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix, path`; `--models '{"reviewer":
    {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in the new folder; this session stays in
    the root and cannot drive the epic (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run there.
@@ -81,15 +85,20 @@ values:" + the output of `turnstile config list` — then record: `turnstile con
 the lead approves with the usual line, then `turnstile config apply <ah-id>`; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions
 ("use my /x-review skill", "reviewer on sonnet", "send with /x") map to the same commands; never ask what the user file already answers; `turnstile status` prints the effective line.
 `review_skill` is the `reviewer`'s deep-review skill (`--deep-review` report), `story_review_skill` the story-reviewer's, `send_skill` what posts a PR for review (`## pass`); the brief
-prints the exact invocation (`/code-review` takes the agent's effort as its level, `/code-review xhigh` by default; other skills run bare); an agent set without an effort (`models.reviewer=sonnet`)
+prints the exact invocation (`/code-review` takes the agent's effort as its level, `/code-review high` by default for the reviewer, `xhigh` for the story-reviewer; other skills run bare); an agent set without an effort (`models.reviewer=sonnet`)
 runs at its default effort and the `AGENT:` line prints that resolved effort. Neither review skill replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 
 ## attach (continue an epic from another machine)
 
 "Continue epic X" → in the person's clone root (or knowledge clone): `turnstile attach --epic <KEY> [--clone-root <dir>] [--knowledge <clone>]
-[--workspace <dir>] [--workitem <name>]`: fetches `origin/epic/<key>`, creates `<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
+[--workspace <dir>] [--workitem <name>] [--github <login>] [--name <n>] [--variant <v>] [--desk <d>] [--board-url <url>]`: fetches `origin/epic/<key>`, creates `<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
 worktree per `epic.repos` clone, `.turnstile`, `.workspace.json`, the workspace `CLAUDE.md`, prints `status`. Then `cd <workspace> && claude` (this
 session cannot drive it) and run `## preferences` there (this person's user file may be empty). A worktree behind origin refuses every writer until `turnstile sync`.
+`--github` is this developer's login (default `gh api user`; without either, attach refuses). Attach writes `epic.members.<login>` (variant default `<key lower>-<login lower>`, e.g. `myd-16539-ivanov`; desk
+and board url optional), commits and pushes it so every machine sees it, and records `member` in `.workspace.json`; attaching again with the same login updates only the flags passed, never duplicates.
+It prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>` and `NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-<login> …) to create it
+through the prometey-variant skill; then turnstile board-url <url> after the first board publish`. Do that dispatch: every developer deploys to their own variant, so deploys never overwrite another one's.
+`turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`). Approvals stay the lead's alone.
 
 ## dispatch <agent> <brief>
 
@@ -105,7 +114,7 @@ session cannot drive it) and run `## preferences` there (this person's user file
    `TURNSTILE_TEST_PASSWORD` or the keychain item `turnstile-test-password` itself at login (`references/env/pdffiller-dev.md`
    § Credentials); the tester resolves its Figma tools per `references/tools/figma.md` and comes back `BLOCKED` when the
    environment has none. Model and effort come from the `AGENT:` line the command printed (`AGENT: turnstile:reviewer
-   model=opus effort=xhigh`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
+   model=opus effort=high`, resolved per `## preferences`): pass `model` and, when the line carries one, `effort` to the
    Agent tool — never pick a model yourself. The reviewer briefs carry the resolved review skill and the agent's effort as its argument. One agent per task;
    parallel agents only across different repositories (`## Token discipline`). On a fresh head dispatch the `gate-runner` (`GATE-<n>`,
    sonnet; vars `pr_id head repo repo_path base_branch gate gate_skill previous_reports scope`) first, then the `reviewer`, whose brief

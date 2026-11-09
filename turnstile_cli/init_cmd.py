@@ -1,7 +1,7 @@
 import json, os, pathlib, shutil, subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from . import state as st_mod, ledger, models, config, sync, workspace
+from . import state as st_mod, ledger, models, config, sync, workspace, members
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -35,6 +35,12 @@ class InitOptions:
     story_mode: str = "stack"
 
 class InitIO:
+    def github_login(self) -> str:
+        try:
+            out = subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return out.stdout.strip() if out.returncode == 0 else ""
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
         out = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
         if out.returncode != 0:
@@ -85,6 +91,7 @@ def build_state(o: InitOptions) -> dict:
     e["environment"] = {"variant": o.variant, "desk": o.desk, "recipe": o.recipe}
     e["chat_language"] = o.chat_language
     e["board"] = {"artifact_url": o.board_url, "capabilities": ["db", "user"]}
+    e["members"] = {o.lead_github: members.new_entry(o.lead, o.variant, o.desk, o.board_url)}
     e["plan"] = {"path": "plan.md", "submitted_at": None, "digest": None}
     e["models"] = models.overrides(o.models)
     e["knowledge"] = {"branch": epic_branch_name(o.epic), "remote": "origin"}
@@ -159,7 +166,7 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
             from .attach_cmd import run as attach_run, AttachOptions
             print("WORKSPACE: %s already holds epic %s; attaching" % (ws, o.epic))
             return attach_run(AttachOptions(epic=o.epic, knowledge=str(knowledge), clone_root=str(root), workspace=str(ws), workitem=o.workitem,
-                                            chat_language=o.chat_language), io)
+                                            chat_language=o.chat_language, github=o.lead_github), io)
         foreign = workspace.foreign_entries(ws, [knowledge.name] + list(repos))
         if foreign:
             raise TurnstileError("%s exists and is not empty (%s) and is not a turnstile workspace of %s; pass another --workspace"
@@ -201,7 +208,7 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
                     path.unlink()
             raise TurnstileError("%s — init rolled back (%s removed; the worktree %s stays); fix the cause and re-run the same init command"
                                  % (e, ", ".join(str(c) for c in created) or "nothing", wt))
-        workspace.record(delivery, ws, root, wt, repo_wts)
+        workspace.record(delivery, ws, root, wt, repo_wts, member=o.lead_github)
         head = io.git(["rev-parse", "HEAD"], delivery).strip() or None
         try:
             io.git(["push", "-q", "origin", "HEAD:refs/heads/" + branch], delivery); rec = sync.record(delivery, True, head)

@@ -1,5 +1,6 @@
 import contextlib, fcntl, hashlib, json, os, pathlib, tempfile
 from dataclasses import dataclass
+from . import members
 from .errors import TurnstileError, StaleStateError, LockHeld
 
 
@@ -21,6 +22,7 @@ def load(path: pathlib.Path) -> State:
         data = json.loads(text)
     except json.JSONDecodeError as e:
         raise TurnstileError("state file is not valid JSON: %s (%s)" % (path, e))
+    members.migrate(data)
     return State(data=data, path=path, loaded_digest=digest(text))
 
 def dumps(data: dict) -> str:

@@ -31,7 +31,7 @@ command, role-scoped agents and hooks that physically block forbidden actions.
 ```
 claude plugin install turnstile --marketplace davepylypenko/turnstile       # adds the marketplace and installs the plugin
 sh ~/.claude/plugins/marketplaces/turnstile/scripts/install-cli.sh          # writes the `turnstile` shim into ~/.local/bin
-turnstile --version                                                         # turnstile 0.4.3 (add ~/.local/bin to PATH if the script says so)
+turnstile --version                                                         # turnstile 0.5.0 (add ~/.local/bin to PATH if the script says so)
 claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # optional: ✔ Validation passed
 ```
 
@@ -127,6 +127,14 @@ review skill, send skill and models. Every writer first fetches: a worktree
 behind origin is refused (`MISSING: epic branch behind origin by N commits — run: turnstile sync`). `turnstile sync` fetches,
 fast-forwards and pushes — never rebase, never force; diverged histories print both heads and wait for the lead to merge.
 
+## Several developers on one epic
+
+The delivery state lives on the epic branch, so every developer drives the same epic from their own machine: one `turnstile attach --epic MYD-1 --github <login>` each. `epic.members.<login>` holds a developer's
+Prometey variant (default `<key>-<login>`), desk and board artifact, so one developer's deploys never overwrite another's variant and `BOARD: publish` points at an artifact that developer can update. The
+member of a machine is the `member` in its untracked `delivery/.workspace.json`; `status` prints it, `turnstile board-url <url>` records the board artifact. Every writer fetches first and a worktree behind origin is
+refused until `turnstile sync` (never rebase, never force). Every developer publishes the same derived `board.html` (its header lists the members) to their own artifact. Approvals (`turnstile approve`) stay with
+the lead only.
+
 ## What you get
 
 - `state.json` — a single source of truth for the epic, in git, readable by any session or person. Every write is
@@ -155,7 +163,7 @@ fast-forwards and pushes — never rebase, never force; diverged histories print
   anything reaches human review.
 - Token discipline (lead rules 2026-10-19, 2026-10-26): every agent's model and effort come from the plugin defaults
   (`models.DEFAULTS`: implementer, deployer, tester sonnet; stack-step, comments-handler, investigator haiku;
-  reviewer opus xhigh; story-reviewer opus xhigh); `epic.models` (`init --models`, `config set --epic`) holds only
+  reviewer opus high; story-reviewer opus xhigh); `epic.models` (`init --models`, `config set --epic`) holds only
   overrides, and `turnstile brief` prints the result on its `AGENT:` line; agents start
   one at a time, in parallel only across different repositories; waiting on GitHub or CI goes through `Monitor` or a background command,
   never a cron or watchdog, with no interim "still waiting" messages to the lead; the repo gate runs once per head and is
@@ -177,7 +185,7 @@ type `config` (old and new value) that the lead approves with the usual line, af
 it; `turnstile config unset <key> [--epic]` (or `=default`) resets. `TURNSTILE_USER_CONFIG` is the lead's shell variable: the Bash
 guard refuses it in any model-issued command, and the CLI accepts only a `.json` path outside every git checkout or workspace. Keys: `models.<agent>` (`<model>` or `<model>:<effort>`), `review_skill`, `story_review_skill`, `send_skill`.
 `review_skill` is the skill the `reviewer` agent runs for the deep review (the `--deep-review` report), `story_review_skill`
-the story-reviewer's; `/code-review` is invoked with the agent's own effort level as its argument (`/code-review xhigh` by default), any other skill bare, exactly as the brief prints it; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+the story-reviewer's; `/code-review` is invoked with the agent's own effort level as its argument (`/code-review high` by default for the reviewer, `xhigh` for the story-reviewer), any other skill bare, exactly as the brief prints it; neither replaces the repo gate CI check (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 `send_skill` (default `/send-pr-review`) is the slash command the orchestrator invokes to post a READY PR to Slack review — a skill
 that lives on the developer's machine, never in the plugin: the name is resolved as `~/.claude/skills/<name>/SKILL.md` or
 `~/.claude/commands/<name>.md` (`$CLAUDE_CONFIG_DIR` replaces `~/.claude` when set), then the same two under `.claude/` of the cwd,
@@ -315,7 +323,7 @@ when any differs (a push without `pass pr` leaves `state.json` stale); `--offlin
 and DONE refuses it.
 
 Agents (`agents/`): implementer, deployer, gate-runner, tester (sonnet; the tester does Figma parity), stack-step, comments-handler,
-investigator (haiku), reviewer (opus, xhigh), story-reviewer (opus, xhigh); the frontmatter equals the plugin defaults
+investigator (haiku), reviewer (opus, high), story-reviewer (opus, xhigh); the frontmatter equals the plugin defaults
 (`models.DEFAULTS`), and `epic.models` holds only the per-epic overrides written by `init --models
 '{"<agent>":{"model":…,"effort":…}}'` or `config set --epic` (model `haiku|sonnet|opus|fable`, effort
 `low|medium|high|xhigh`). Launched as `turnstile:<name>` with the model and effort from the `AGENT:` line of

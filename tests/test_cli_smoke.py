@@ -7,7 +7,7 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "--version"],
                              cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.strip(), "turnstile 0.4.4")
+        self.assertEqual(out.stdout.strip(), "turnstile 0.5.0")
 
     def test_bug_without_subcommand_exits_2_with_help(self):
         # 2026-10-14 nit 15
@@ -27,7 +27,7 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "--help"], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("--epic", out.stdout)
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
-        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:xhigh (default)", out.stdout)
+        self.assertEqual(out.returncode, 0, out.stderr); self.assertIn("EPIC: none", out.stdout); self.assertIn("models.reviewer = opus:high (default)", out.stdout)
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "config", "set", "review_skill=/x", "--epic"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
         self.assertEqual(out.returncode, 2); self.assertIn("MISSING no .turnstile", out.stdout)
     def test_sync_attach_and_no_push_are_wired(self):
@@ -41,4 +41,4 @@ class CliSmoke(unittest.TestCase):
     def test_shim_forwards(self):
         out = subprocess.run([str(ROOT / "scripts" / "turnstile"), "--version"],
                              cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "turnstile 0.4.4")
+        self.assertEqual(out.stdout.strip(), "turnstile 0.5.0")

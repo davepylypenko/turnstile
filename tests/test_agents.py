@@ -3,7 +3,7 @@ from turnstile_cli import models
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
-EXPECTED = {"implementer": ("sonnet", None), "reviewer": ("opus", "xhigh"), "story-reviewer": ("opus", "xhigh"), "stack-step": ("haiku", None),
+EXPECTED = {"implementer": ("sonnet", None), "reviewer": ("opus", "high"), "story-reviewer": ("opus", "xhigh"), "stack-step": ("haiku", None),
             "comments-handler": ("haiku", None), "investigator": ("haiku", None), "tester": ("sonnet", None), "deployer": ("sonnet", None),
             "gate-runner": ("sonnet", None)}
 SECTIONS = ["## Role", "## Procedure", "## Cannot", "## Report", "## Common rules"]

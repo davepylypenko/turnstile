@@ -1,7 +1,7 @@
 import copy, datetime, os, pathlib, re, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from . import state as st_mod, rules, ledger, threads, sync
+from . import state as st_mod, rules, ledger, threads, sync, members
 from .errors import TurnstileError, StaleStateError
 
 GITATTRIBUTES = "ledger.md merge=union\n"
@@ -245,7 +245,7 @@ def _check_head(o: Options) -> Optional[str]:
         raise TurnstileError("--head must be 8–40 hex characters (got %r)" % o.head)
     return o.head.lower() if o.head else None
 
-def _apply_story_evidence(story: dict, o: Options) -> None:
+def _apply_story_evidence(story: dict, o: Options, member: Optional[tuple] = None) -> None:
     """One of three records per call: an env run (case counts + the build/head it tested), an integration-review round
     (--report --head --rounds), or a deploy (--build --head, the stack top on the story's slot)."""
     ev = story.setdefault("evidence", {})
@@ -277,6 +277,8 @@ def _apply_story_evidence(story: dict, o: Options) -> None:
         if not o.build or not head:
             raise TurnstileError("--build and --head go together when recording a deploy (the build number and the stack-top sha on the slot)")
         ev["deploy"] = {"build": o.build, "head": head, "at": _now()}
+        if member:
+            ev["deploy"]["variant"] = member[1].get("variant"); ev["deploy"]["by"] = member[0]
         if o.base_heads:
             if not rules.is_trunk(story):
                 raise TurnstileError("--base-heads is a trunk-mode flag (story %s is in stack mode)" % story.get("_id"))
@@ -517,7 +519,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
             elif kind == "story":
                 story = st_mod.story(st, ident)
                 trial = copy.deepcopy(story); trial["_id"] = ident
-                _apply_story_evidence(trial, o)
+                _apply_story_evidence(trial, o, members.current_or_none(data, delivery))
                 recording = _recording_run(o)
                 if not recording and not o.report and o.build and o.head:  # a deploy: snapshot every open PR head of the story (all repos)
                     trial["evidence"]["deploy"]["heads"] = rules.open_heads(ident, data["prs"])
@@ -579,8 +581,7 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
             print(n)
         if jira_line:
             print(jira_line)
-        url = ((data.get("epic") or {}).get("board") or {}).get("artifact_url")
-        print("BOARD: publish %s → %s" % (delivery / "board.html", url or "new artifact (capabilities: db, user; then record the url in state.json at migration or init --board-url)"))
+        print(members.board_line(data, delivery))
         print("OK " + summary)
         return 0
     except StaleStateError as e:

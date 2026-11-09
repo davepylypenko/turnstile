@@ -1,7 +1,7 @@
 import copy, json, pathlib, re, subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-from . import rules, state as st_mod, github, threads
+from . import rules, state as st_mod, github, threads, members
 
 @dataclass
 class Proposal:
@@ -243,6 +243,8 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     if not as_json:
         print(sync.line(sync.load(delivery)))
+        if status:
+            print(members.member_line(st.data, delivery))
     if status:
         from . import config
         warn = config.send_skill_warning(*config.send_skill(st.data, pathlib.Path(delivery)))
@@ -260,6 +262,9 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
         except Exception as e:  # network/gh problems must not hide the rest
             print("WARN %s: %s" % (pid, e)); unknown.append(pid)
     props = compare(st.data, facts) + compare_ledger(st.data, ledger_path.read_text() if ledger_path.exists() else "")
+    unknown_member = members.unknown_proposal(st.data, delivery)
+    if unknown_member:
+        props.append(unknown_member)
     rc = 1 if unknown else 0
     if as_json:
         print(json.dumps([p.__dict__ for p in props], indent=2)); return rc
