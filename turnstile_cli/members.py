@@ -130,6 +130,32 @@ def member_line(data: dict, delivery) -> str:
     login, e = cur
     return "MEMBER: %s · variant %s · desk %s · board %s · board file %s" % (login, e.get("variant") or "none", e.get("desk") or "none", (e.get("board") or {}).get("artifact_url") or "none", board_file(data, delivery))
 
+def variant_ready(data: dict, delivery) -> bool:
+    cur = current_or_none(data, delivery)
+    if not cur:
+        return True
+    login, entry = cur
+    if entry.get("variant_ready_at"):
+        return True
+    return any((s.get("evidence") or {}).get("deploy", {}).get("by") == login for s in (data.get("stories") or {}).values())
+
+def _version_tuple(v: str):
+    return tuple(int(x) if x.isdigit() else 0 for x in (v or "").split("."))
+
+def onboard_lines(data: dict, delivery, onboard: bool = True) -> list:
+    from . import __version__, workspace
+    out = []
+    cur = current_or_none(data, delivery)
+    if onboard and cur and not variant_ready(data, delivery):
+        login, entry = cur
+        out.append("ONBOARD: variant %s not created — dispatching the deployer is the next step (turnstile brief deployer DEPLOY-env-%s …)"
+                   % (entry.get("variant") or default_variant((data.get("epic") or {}).get("key") or "epic", login), login))
+    loaded = (workspace.load(delivery) or {}).get("hooks_version")
+    if loaded and loaded != __version__:
+        newer = max(loaded, __version__, key=_version_tuple)
+        out.append("PLUGIN: %s (restart the session to load %s if `claude plugin list` shows it)" % (loaded, newer))
+    return out
+
 def unknown_proposal(data: dict, delivery):
     from . import workspace
     from .reconcile import Proposal
@@ -150,6 +176,7 @@ def board_url(delivery, url: str, io=None, no_push: bool = False) -> int:
             st = st_mod.load(delivery / "state.json"); epic = st.data["epic"]
             login, entry = current(st.data, delivery)
             entry.setdefault("board", {"capabilities": list(CAPABILITIES)})["artifact_url"] = url
+            entry["variant_ready_at"] = entry.get("variant_ready_at") or _now()
             if login == (epic.get("roles") or {}).get("lead_github"):
                 epic.setdefault("board", {"capabilities": list(CAPABILITIES)})["artifact_url"] = url
             _side_effects(delivery, st, ["board-url %s: %s" % (login, url)], io, False, no_push)

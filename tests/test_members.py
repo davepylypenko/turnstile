@@ -80,8 +80,10 @@ class AttachMembers(unittest.TestCase):
         m = self.members()["Ivanov"]; self.assertEqual((m["name"], m["variant"], m["desk"], m["board"]["artifact_url"]), ("Ivanov", "myd-1-ivanov", None, None))
         self.assertIn("leadlogin", self.members())
         self.assertIn("MEMBER: Ivanov · variant myd-1-ivanov · desk none · board new artifact", out)
-        self.assertIn("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-Ivanov …) to create it through the plugin's prometey-variant skill; "
-                      "then turnstile board-url <url> after the first board publish", out)
+        lines = out.splitlines(); nexts = [ln for ln in lines if ln.startswith("NEXT:")]
+        self.assertEqual(nexts, ["NEXT: cd %s && claude" % self.ws,
+                                 'NEXT: in that session say "turnstile status" — the plugin dispatches the deployer to create your variant and asks the one preferences question'])
+        self.assertEqual(lines[-2:], nexts); self.assertNotIn("ONBOARD:", out)
         self.assertEqual(json.loads((self.delivery() / ".workspace.json").read_text())["member"], "Ivanov")
         self.assertEqual(len(writer.commits), 1); self.assertEqual(writer.pushes, ["epic/myd-1"])
         self.assertEqual(out.count("MEMBER: Ivanov · variant myd-1-ivanov"), 2)
@@ -98,13 +100,37 @@ class AttachMembers(unittest.TestCase):
     def test_login_comes_from_gh_when_the_flag_is_absent_and_is_required_otherwise(self):
         git = FakeGit(); git.github_login = lambda: "from-gh"
         (rc, out), w = self.run_attach(git=git); self.assertEqual(rc, 1, out); self.assertIn("from-gh", self.members())
+        self.assertEqual(self.members()["from-gh"]["variant"], "myd-1-from-gh")
         shutil.rmtree(str(self.ws)); self.ws.mkdir()
-        (rc, out), w = self.run_attach(); self.assertEqual(rc, 2); self.assertIn("MISSING --github <login> is required", out)
+        (rc, out), w = self.run_attach(); self.assertEqual(rc, 2); self.assertIn("MISSING no GitHub login", out)
         self.assertFalse((self.ws / ".turnstile").exists()); self.assertEqual(w.commits, [])
 
     def test_a_bad_board_url_is_refused_before_anything_is_touched(self):
         (rc, out), w = self.run_attach(github="x", board_url="https://example.com/a")
         self.assertEqual(rc, 2); self.assertIn("board url must look like", out); self.assertFalse((self.ws / ".turnstile").exists())
+
+class Onboarding(Delivery):
+    def status(self):
+        with mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
+            return out_of(reconcile.cli, self.d, status=True)[1]
+    def test_onboard_is_printed_once_until_the_variant_is_recorded(self):
+        self.with_members(); self.record_member("second")
+        out = self.status(); self.assertEqual(out.count("ONBOARD:"), 1)
+        self.assertIn("ONBOARD: variant myd-1-second not created — dispatching the deployer is the next step (turnstile brief deployer DEPLOY-env-second …)", out)
+        self.assertEqual(self.status().count("ONBOARD:"), 1)
+        self.assertEqual(members.board_url(self.d, "https://claude.ai/artifact/abc", io=self.io, no_push=True), 0)
+        self.assertNotIn("ONBOARD:", self.status())
+    def test_a_member_with_a_deploy_record_or_no_member_is_not_nagged(self):
+        d = self.with_members(); self.record_member("second")
+        d["stories"]["S1"].setdefault("evidence", {})["deploy"] = {"build": "1", "head": "a" * 8, "by": "second", "variant": "myd-1-second"}; self.put(d)
+        self.assertNotIn("ONBOARD:", self.status())
+    def test_plugin_line_appears_only_when_the_hooks_version_differs(self):
+        self.with_members(); self.record_member("leadlogin")
+        rec = json.loads((self.d / ".workspace.json").read_text()); rec["hooks_version"] = "0.0.1"; (self.d / ".workspace.json").write_text(json.dumps(rec))
+        from turnstile_cli import __version__
+        self.assertIn("PLUGIN: 0.0.1 (restart the session to load %s if `claude plugin list` shows it)" % __version__, self.status())
+        rec["hooks_version"] = __version__; (self.d / ".workspace.json").write_text(json.dumps(rec)); self.assertNotIn("PLUGIN:", self.status())
+        del rec["hooks_version"]; (self.d / ".workspace.json").write_text(json.dumps(rec)); self.assertNotIn("PLUGIN:", self.status())
 
 class BoardUrl(Delivery):
     def test_validation(self):

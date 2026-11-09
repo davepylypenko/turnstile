@@ -8,7 +8,8 @@ DEFAULT_REVIEW_SKILL = "/code-review"
 SKILL_KEYS = ("review_skill", "story_review_skill", "send_skill")
 SKILL_DEFAULTS = {"review_skill": DEFAULT_REVIEW_SKILL, "story_review_skill": DEFAULT_REVIEW_SKILL, "send_skill": DEFAULT_SEND_SKILL}
 SKILL_RX = re.compile(r"^/(?:[\w][\w.-]*:)?[\w][\w.-]*$")
-KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, flag (epic only)"
+KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, reviewers (comma-separated logins; empty = any human), flag (epic only)"
+LOGIN_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 SEND_SKILL_INSTALL = "ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review"
 
 def default_user_dir() -> pathlib.Path:
@@ -38,6 +39,9 @@ def _check_user_shape(data, p: pathlib.Path) -> dict:
     for k in SKILL_KEYS:
         if data.get(k) is not None and not (isinstance(data[k], str) and SKILL_RX.match(data[k])):
             raise TurnstileError("user config %s: %s must be a slash command like /my-review (is %r)" % (p, k, data[k]))
+    rv = data.get("reviewers")
+    if rv is not None and not (isinstance(rv, list) and all(isinstance(x, str) and LOGIN_RX.match(x) for x in rv)):
+        raise TurnstileError("user config %s: reviewers must be a list of GitHub logins (is %r)" % (p, rv))
     return data
 
 def load_user() -> dict:
@@ -64,7 +68,7 @@ def parse_key(key: str) -> Tuple[str, Optional[str]]:
         if agent not in models.DEFAULTS:
             raise TurnstileError("unknown agent %r in %s (known: %s)" % (agent, key, ", ".join(sorted(models.DEFAULTS))))
         return "models", agent
-    if key in SKILL_KEYS or key == "flag":
+    if key in SKILL_KEYS or key in ("flag", "reviewers"):
         return key, None
     raise TurnstileError("unknown config key %r (allowed: %s)" % (key, KEYS_HELP))
 
@@ -77,6 +81,12 @@ def parse_value(key: str, value: str):
         if effort and effort not in models.EFFORTS:
             raise TurnstileError("%s: effort %r not in %s" % (key, effort, ", ".join(models.EFFORTS)))
         return {"model": model, "effort": effort or None}
+    if key == "reviewers":
+        logins = [x.strip() for x in value.split(",") if x.strip()]
+        bad = [x for x in logins if not LOGIN_RX.match(x)]
+        if bad:
+            raise TurnstileError("reviewers takes GitHub logins, no teams or bots (got %s)" % ", ".join(bad))
+        return logins
     if not value or not value.strip():
         raise TurnstileError("%s needs a non-empty %s" % (key, "flag name" if key == "flag" else "skill name (e.g. /pdf-review:run)"))
     if key != "flag" and not SKILL_RX.match(value.strip()):
@@ -126,8 +136,22 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
             out[key] = {"value": str(epic[key]), "source": "epic"}
         else:
             out[key] = {"value": SKILL_DEFAULTS[key], "source": "default"}
+    if user.get("reviewers") is not None:
+        out["reviewers"] = {"value": list(user["reviewers"]), "source": "user"}
+    elif epic.get("reviewers") is not None:
+        out["reviewers"] = {"value": list(epic["reviewers"]), "source": "epic"}
+    else:
+        out["reviewers"] = {"value": None, "source": "default"}
     out["flag"] = {"value": epic.get("flag") or None, "source": "epic" if epic.get("flag") else "default"}
     return out
+
+def reviewer_policy(data: Optional[dict] = None, user: Optional[dict] = None) -> Tuple[bool, set]:
+    value = effective(data, user)["reviewers"]["value"]
+    return (value == [], set(value or []))
+
+def fmt_reviewers(eff: dict) -> str:
+    v = eff["reviewers"]["value"]
+    return "any human login" if v == [] else ", ".join(v) if v else "epic.members only"
 
 def fmt_model(entry: dict) -> str:
     return entry["model"] + (":" + entry["effort"] if entry.get("effort") else "")
@@ -141,7 +165,7 @@ def _source_note(agent: str, entry: dict) -> str:
 
 def lines(eff: dict) -> list:
     out = ["models.%s = %s (%s)" % (a, fmt_resolved(a, m), _source_note(a, m)) for a, m in eff["models"].items()]
-    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
+    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["reviewers = %s (%s)" % (fmt_reviewers(eff), eff["reviewers"]["source"]), "flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
 
 def one_line(eff: dict) -> str:
     overrides = ["%s models.%s" % (m["source"], a) for a, m in eff["models"].items() if m["source"] != "default"]

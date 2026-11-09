@@ -11,9 +11,8 @@ WRITE_FLAGS = r"(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--method[\s=]+(?:POST|PUT|PATC
 
 RULES = [
     ("merge", GH + PR + r"merge\b"),
-    ("ready", GH + PR + r"ready\b"),
-    ("add-reviewer", r"--add-reviewer\b"),
-    ("graphql-merge-or-ready", r"\b(?:markPullRequestReadyForReview|mergePullRequest|requestReviews\w*|ready_for_review)\b"),
+    ("graphql-merge-or-ready", r"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b"),
+    ("graphql-request-reviews", r"\brequestReviews\w*\b"),
     ("force-push", GIT + r"push\b[^\n;&|]*(\s[\"']?--force(-with-lease)?\b|\s-[a-z]*f[a-z]*\b|\s\+\S)"),
     ("rebase", GIT + r"rebase\b|" + GIT + r"pull\b[^\n;&|]*\s(?:--rebase\b|-r\b)|pull\.rebase\s+true\b"),
     ("unsigned", r"--no-gpg-sign\b|commit\.gpgsign\s*=\s*false"),
@@ -40,12 +39,6 @@ LEAD_HINT = ("The lead approves by typing `! TURNSTILE_LEAD=1 turnstile approve 
 
 # R2-2: the delivery dir is written only by the CLI. A command that mentions state.json or the delivery dir and is
 # not read-only is refused whatever interpreter it uses (perl/node/ruby/python heredocs, git restores, redirects).
-READ_ONLY = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "jq", "ls", "find", "wc", "diff", "stat", "file", "cd",
-             "pwd", "echo", "printf", "test", "[", "true", "sort", "uniq", "cut", "tr", "column", "md5", "md5sum", "shasum", "sha256sum",
-             "turnstile", "sed", "python3", "python", "xargs", "which", "type"}
-GIT_READ_ONLY = {"diff", "log", "show", "status", "blame", "ls-files", "rev-parse", "cat-file", "grep", "branch", "remote", "describe",
-                 "push", "fetch", "shortlog", "name-rev"}
-GIT_RESTORE = re.compile(GIT + r"(?:checkout|switch|restore|stash|reset|clean)\b", re.I)
 TREE_SUBS = {"checkout", "switch", "restore", "stash", "reset", "clean", "read-tree", "checkout-index", "revert"}
 # round 2 R2-12: an agent's own frontmatter hooks run this guard with TURNSTILE_ROLE set; these rules apply on top of the common ones
 ROLE_RULES = {"tester": [("tester-push", GIT + r"push\b"), ("tester-commit", GIT + r"commit\b"),
@@ -57,14 +50,10 @@ REDIRECT_TARGET = re.compile(r"\d?>{1,2}\s*(\S+)")
 STATE_GLOB = re.compile(r"\bstate\.(?:json|\*|\?|\[)|\bstate[*?\[]")
 # 2026-10-14 finding 1: the tester's evidence (PNG, JSON) and the agents' reports/briefs may be written by any command, as long as
 # every delivery path the segment names is strictly inside one of these folders. The root and the CLI's files stay protected.
-WRITABLE_SUBDIRS = ("evidence", "reports", "briefs")
+WRITABLE_SUBDIRS = ("evidence", "reports", "briefs", "boards")
 PROTECTED = {"state.json", "ledger.md", "plan.md", "decisions.md", "board.html", ".state.lock", ".gitattributes", ".gitignore"}
 UNSAFE_PATH = re.compile(r"[$`*?\[{~]")          # a computed or glob path may expand to `..`
 # git writes go through `turnstile pass`; symlinks never; a shell runs code the guard does not see
-NO_ALLOWANCE_HEADS = {"git", "ln", "turnstile", "turnstile_cli", "bash", "sh", "zsh", "dash", "ksh", "eval", "exec", "source", "."}
-INLINE_CODE = re.compile(r"^(?:\S*/)?(?:python3?|node|deno|bun|perl|ruby|php|osascript)\b.*\s(?:-[a-zA-Z]*[ceEpr]\b|--eval\b|--print\b)"
-                         r"|^(?:\S*/)?tar\b.*\s(?:-[a-zA-Z]*P|--absolute-names\b)")
-
 def _segments(flat: str):
     return [s.strip() for s in re.split(r"\n|;|&&|\|\||\|&?", flat) if s.strip()]
 
@@ -84,41 +73,6 @@ def _segments_for_writes(flat: str, mention):
         out.extend(_segments(line))
         terminators.extend(HEREDOC.findall(line))
     return out
-
-def _read_only_segment(seg: str, mention, in_delivery: bool) -> bool:
-    """True when the segment cannot write into the delivery dir. `mention(text)` tells whether a path names it;
-    `in_delivery` is set when an earlier segment cd-ed into it, so relative redirects count as writes."""
-    for target in REDIRECT_TARGET.findall(HARMLESS_REDIRECTS.sub(" ", seg)):
-        if in_delivery or mention(target):
-            return False
-    words = seg.split()
-    while words and re.match(r"^\w+=", words[0]):
-        words.pop(0)
-    if not words:
-        return True
-    head = words[0].rsplit("/", 1)[-1]
-    if head == "git":
-        # the subcommand is the first non-option word; -C / -c take an argument
-        sub = None
-        it = iter(words[1:])
-        for w in it:
-            if w in ("-C", "-c"):
-                next(it, None); continue
-            if w.startswith("-"):
-                continue
-            sub = w; break
-        return sub in GIT_READ_ONLY
-    if head in ("python", "python3"):
-        return len(words) > 2 and words[1] == "-m" and words[2] == "turnstile_cli"
-    if head == "sed":
-        return not re.search(r"\s(?:-[a-zA-Z]*i|--in-place)\b", seg)
-    if head == "find" and re.search(r"\s-(?:exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)\b", seg):
-        return False
-    if head == "sort" and re.search(r"\s(?:-[a-zA-Z]*o|--output)\b", seg):
-        return False
-    if head in ("xargs", "env"):
-        return len(words) > 1 and _read_only_segment(" ".join(words[1:]), mention, in_delivery)
-    return head in READ_ONLY
 
 def _delivery_matcher(cwd: str):
     """Returns mention(text) -> str: the delivery reference found in `text` ('' when none). `mention.paths(seg)` lists the
@@ -162,36 +116,136 @@ def _delivery_matcher(cwd: str):
     mention.paths = paths; mention.abs_path = abs_path
     return mention
 
-def _writable_segment(seg: str, mention) -> bool:
-    """True when every delivery path the segment names is strictly inside evidence/, reports/ or briefs/ (after `..`
-    normalisation and, when the dir exists, symlink resolution), none is computed, and the command is not git/ln."""
-    if STATE_GLOB.search(seg):
+DELETERS = {"rm", "rmdir", "unlink", "shred", "mv", "truncate", "touch", "mkdir"}
+DEST_LAST = {"cp", "install", "rsync", "scp"}
+WRAPPER_HEADS = {"env", "command", "exec", "nohup", "time", "sudo", "nice", "timeout", "xargs"}
+RECURSIVE_RM = re.compile(r"^-[a-zA-Z]*[rR][a-zA-Z]*$|^--recursive$")
+INTERP_OR_SHELL = re.compile(r"(?:^|[\s;&|(])(?:\S*/)?(?:python3?|node|deno|bun|perl|ruby|php|osascript|bash|sh|zsh|dash|ksh)\b(?!\s+-m\s+turnstile_cli)")
+INLINE_WRITE = re.compile(r"""open\s*\([^)]*,\s*(?:mode\s*=\s*)?[bBrRuU]*["'][^"']*[wax+]|\.write_text\b|\.write_bytes\b|\.write\s*\(|\bwriteFile(?:Sync)?\b"""
+                          r"""|\bappendFile(?:Sync)?\b|\bcreateWriteStream\b|\bshutil\.(?:copy\w*|move|rmtree)\b|\bos\.(?:remove|rename|replace|unlink|truncate|rmdir)\b"""
+                          r"""|\bfs\.(?:rm|rmSync|unlink|unlinkSync|rename|renameSync|copyFile\w*)\b|\bFile\.(?:write|delete|rename)\b|\bfile_put_contents\b|\bFileUtils\.\w+""")
+
+def _unwrap(seg: str):
+    words = seg.strip("() ").split()
+    while words:
+        w = words[0]
+        if re.match(r"^\w+=", w) or w.rsplit("/", 1)[-1] in WRAPPER_HEADS or w.startswith("-"):
+            words.pop(0)
+        elif w.rsplit("/", 1)[-1] in SHELLS and len(words) > 1 and words[1] == "-c":
+            words = words[2:]
+        else:
+            break
+    return words
+
+def _rel_writable(rel: str, mention) -> bool:
+    if not rel or UNSAFE_PATH.search(rel):
         return False
-    words = seg.split()
-    while words and re.match(r"^\w+=", words[0]):
-        words.pop(0)
-    if words and words[0] == "env":
-        words = [w for w in words[1:] if not re.match(r"^\w+=", w)]
-    if not words or words[0].rsplit("/", 1)[-1] in NO_ALLOWANCE_HEADS:
+    norm = posixpath.normpath(rel)
+    parts = norm.split("/")
+    if len(parts) < 2 or parts[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in parts):
         return False
-    if INLINE_CODE.search(" ".join(words)):  # round 2: inline code or tar -P writes wherever it likes, whatever evidence path it also names
-        return False
-    rels = mention.paths(seg)
-    if not rels:
-        return False
-    for rel in rels:
-        if not rel or UNSAFE_PATH.search(rel):
+    if mention.abs_path:
+        root = os.path.realpath(mention.abs_path)
+        real = os.path.relpath(os.path.realpath(os.path.join(root, norm)), root).split(os.sep)
+        if len(real) < 2 or real[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in real):
             return False
-        norm = posixpath.normpath(rel)
-        parts = norm.split("/")
-        if len(parts) < 2 or parts[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in parts):
-            return False
-        if mention.abs_path:  # a symlink under evidence/ must not lead back to the root or the CLI's files
-            root = os.path.realpath(mention.abs_path)
-            real = os.path.relpath(os.path.realpath(os.path.join(root, norm)), root).split(os.sep)
-            if len(real) < 2 or real[0] not in WRITABLE_SUBDIRS or any(p in PROTECTED for p in real):
-                return False
     return True
+
+def _delivery_writes(flat: str, joined: str, mention, cwd: str):
+    root = os.path.realpath(mention.abs_path) if mention.abs_path else None
+    cur = cwd or "."
+    def inside(d: str) -> bool:
+        return bool(root) and (os.path.realpath(d) + os.sep).startswith(root + os.sep)
+    in_d = inside(cur)
+    def rel_of(w: str):
+        w = w.strip("()")
+        for cand in ([w] + ([w.split("=", 1)[1]] if "=" in w and not w.startswith("=") else [])):
+            if not cand or (cand.startswith("-") and "=" not in cand):
+                continue
+            hits = mention.paths(cand)
+            if hits:
+                return hits[0]
+            if STATE_GLOB.search(cand):
+                return "state.json"
+            if in_d and root and not cand.startswith("-"):
+                if UNSAFE_PATH.search(cand):
+                    return cand
+                ap = os.path.realpath(os.path.join(cur, os.path.expanduser(cand)))
+                if ap == root or ap.startswith(root + os.sep):
+                    rel = os.path.relpath(ap, root)
+                    return "" if rel == "." else rel
+        return None
+    def refused(targets) -> bool:
+        for t in targets:
+            if re.search(r"[$`]", t) and mention(flat):
+                return True
+            rel = rel_of(t)
+            if rel is not None and not _rel_writable(rel, mention):
+                return True
+        return False
+    for seg in _segments_for_writes(flat, mention):
+        m = re.match(r"\(?\s*(?:cd|pushd)\s+(\S+)", seg)
+        if m:
+            cur = os.path.join(cur, os.path.expanduser(m.group(1).rstrip(")")))
+            in_d = inside(cur) or bool(mention(seg))
+            continue
+        if refused(REDIRECT_TARGET.findall(HARMLESS_REDIRECTS.sub(" ", seg))):
+            return "delivery-write", seg
+        words = _unwrap(seg)
+        if not words:
+            continue
+        head, args = words[0].rsplit("/", 1)[-1], words[1:]
+        operands = [w for w in args if not w.startswith("-")]
+        targets = []
+        if head == "tee":
+            targets = operands
+        elif head == "sed" and any(re.match(r"^(?:-[a-zA-Z]*i\S*|--in-place\S*)$", a) for a in args):
+            targets = operands
+        elif head in DELETERS:
+            if head == "rm" and any(RECURSIVE_RM.match(a) for a in args) and any(rel_of(w) is not None for w in operands):
+                return "delivery-write", seg
+            targets = operands
+        elif head == "ln":
+            if any(rel_of(w) is not None for w in operands):
+                return "delivery-write", seg
+        elif head in DEST_LAST:
+            targets = operands[-1:] + [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-t", "--target-directory")]
+        elif head == "sort":
+            targets = [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-o", "--output")] + [a.split("=", 1)[1] for a in args if a.startswith("--output=")]
+        elif head in SHELLS and any(rel_of(w) is not None for w in operands):
+            return "delivery-write", seg
+        elif head == "dd":
+            targets = [a.split("=", 1)[1] for a in args if a.startswith("of=")]
+        elif head in ("perl", "ruby") and any(re.match(r"^-[a-zA-Z]*i\S*$", a) for a in args):
+            targets = operands
+        elif head == "find" and any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls") for a in args):
+            targets = operands
+        elif head in ("curl", "wget"):
+            targets = [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-o", "--output", "-O", "--output-document", "--output-dir")]
+            targets += [a.split("=", 1)[1] for a in args if a.startswith(("--output=", "--output-document="))]
+        elif head == "tar":
+            flags = "".join(a.lstrip("-") for a in args if a.startswith("-")) + (args[0] if args and not args[0].startswith("-") else "")
+            if ("P" in flags or "--absolute-names" in args) and mention(seg):
+                return "delivery-write", seg
+            if args and not args[0].startswith("-"):
+                operands = operands[1:]
+            if "c" in flags or "--create" in args:
+                targets = operands[:1]
+            targets += [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-C", "--directory")]
+        elif head in ("awk", "gawk", "mawk") and re.search(r"system\s*\(|print[^;}]*[>|]|printf[^;}]*[>|]", seg) and mention(seg):
+            return "delivery-write", seg
+        elif head == "git":
+            call = _git_call(seg)
+            if call and call[0] == "config" and refused([call[1][i + 1] for i, a in enumerate(call[1][:-1]) if a in ("--file", "-f")]):
+                return "delivery-write", seg
+            if call and call[0] in ("checkout", "switch", "restore", "stash", "reset", "clean", "worktree") \
+                    and any(rel_of(w) is not None for w in call[1] + ([call[2]] if call[2] else [])):
+                return ("delivery-write" if call[0] == "worktree" else "delivery-git-restore"), seg
+        if refused(targets):
+            return "delivery-write", seg
+    if INTERP_OR_SHELL.search(flat) and INLINE_WRITE.search(joined):
+        return "delivery-write", "inline code that opens a file for writing"
+    return None
 
 def _worktree_root(path: str):
     """The git worktree that contains `path` (the nearest ancestor with a .git dir or file), or None."""
@@ -330,22 +384,12 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     cwd_inside = bool(mention_fn.abs_path) and (os.path.realpath(cwd or ".") + os.sep).startswith(os.path.realpath(mention_fn.abs_path) + os.sep)
     mention = mention or ("cwd " + cwd if cwd_inside else "")
     if mention:
-        if GIT_RESTORE.search(flat):
-            block("blocked by rule delivery-git-restore. git checkout/restore/stash/reset must not touch %s: the delivery dir changes only "
-                  "through 'turnstile pass'." % mention)
-        bad, in_delivery = [], cwd_inside
-        for seg in _segments_for_writes(flat, mention_fn):
-            if not _read_only_segment(seg, mention_fn, in_delivery) and (in_delivery or not _writable_segment(seg, mention_fn)):
-                bad.append(seg)
-            if re.match(r"cd\s", seg) and mention_fn(seg):
-                in_delivery = True
-        if bad:
-            block("blocked by rule delivery-write. The command mentions %s and '%s' is not read-only (allowed: cat, less, head, tail, grep, jq, "
-                  "git diff/log/show/status, turnstile …) and does not write only inside evidence/, reports/ or briefs/ (literal paths, no "
-                  "`..`, no symlinks, no cd into the delivery dir). The rest of the delivery dir is written only by 'turnstile pass' and, for "
-                  "plan.md/decisions.md, the Write tool." % (mention, bad[0][:60]))
+        hit = _delivery_writes(flat, joined, mention_fn, cwd)
+        if hit:
+            block("blocked by rule %s. '%s' writes into %s outside evidence/, reports/, briefs/ and boards/ (the rest is written by 'turnstile pass' "
+                  "and, for plan.md/decisions.md, the Write tool). Reads (cat, grep, jq, git log/diff/show, cd) are fine." % (hit[0], hit[1][:60], mention))
 
-TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "board-url", "-h", "--help", "--version"}
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "board-url", "repo", "-h", "--help", "--version"}
 
 def _turnstile_sub_ok(flat: str) -> bool:
     """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""
@@ -559,51 +603,63 @@ def _review_writes(flat: str, cwd: str) -> None:
                 if method == "DELETE" or not _gate_comment(flat, cwd):
                     _issue_comment_refused()
 
-# Lead rule 2026-10-14 (re-request): "if you replied to all comments on a PR and Copilot passed again, ping the reviewer to look again".
-# A `requested_reviewers` write that names humans passes only as `gh api` with literal `-f|-F reviewers[]=<login>` fields on a literal
-# route of a REWORK PR of the epic, when every classified thread has its reply, Copilot reviewed the GitHub head with 0 open threads
-# (repos without Copilot: the gate check is green on it) and the logins are exactly the reviewers who commented on the threads in this
-# round (threads.rerequest_refusal). Team reviewers, JSON bodies, computed logins or routes and every other way of requesting a human
-# (`--add-reviewer`, `gh pr create --reviewer`, GraphQL `requestReviews*`) stay the lead's. A request for the Copilot bot alone passes.
 REQ_ROUTE = re.compile(r"(?:^|[\s/=])/?repos/([^/\s]+)/([^/\s]+)/pulls/([^/\s]+)/requested_reviewers(?=[\s?#]|$)")
 REQ_VALUES = re.compile(r"(?:^|\s)(?:-[fF]|--field|--raw-field)(?:\s+|=)(team_)?reviewers\[\]=(\S*)")
-HUMAN_REQUEST = ("blocked by rule human-reviewer-request. The lead requests human reviewers; the agents may only request the Copilot bot (%s) and "
-                 "re-request the thread authors of a REWORK PR as `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f "
-                 "'reviewers[]=<login>'` (literal route and logins, no team, no JSON body)." % COPILOT)
+ADD_REVIEWER = re.compile(r"(?:^|\s)--add-reviewer(?:=|\s+)(\S+)")
+HUMAN_REQUEST = ("blocked by rule human-reviewer-request. Reviewers are requested as `gh api -X POST|DELETE repos/<org>/<repo>/pulls/<n>/requested_reviewers "
+                 "-f 'reviewers[]=<login>'` (literal route and logins, no team, no bot, no JSON body) for a login in epic.members or epic.reviewers "
+                 "(turnstile config set reviewers=login1,login2 [--epic]); the Copilot bot (%s) is always allowed." % COPILOT)
 
-def _rerequest_verdict(org: str, repo: str, number: str, people, cwd: str):
+def _reviewer_verdict(org, people, cwd: str):
     try:
         data = load_state(cwd)
     except Exception as e:
-        return "blocked by rule rerequest-unverified. A re-request is checked against the delivery state, which cannot be read (%s); failing closed." % e
-    github, threads = _turnstile_modules()
-    epic_org = (data.get("epic") or {}).get("github_org") or ""
-    return threads.rerequest_refusal(data, org, repo, number, people, lambda pid: github.fetch(pid, epic_org))
+        return "blocked by rule reviewer-unverified. A reviewer request is checked against the delivery state, which cannot be read (%s); failing closed." % e
+    sys.path.insert(0, str(plugin_root()))
+    from turnstile_cli import config, members
+    epic = data.get("epic") or {}
+    if org is not None and (org or "").lower() != (epic.get("github_org") or "").lower():
+        return "blocked by rule reviewer-foreign-org. %s is not the epic's GitHub org (%s)." % (org, epic.get("github_org") or "unset")
+    anyone, allowed = config.reviewer_policy(data)
+    allowed = {x.lower() for x in allowed | members.our_logins(data)}
+    for login in people:
+        if "/" in login or login.endswith("[bot]") or not re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*$", login):
+            return "blocked by rule human-reviewer-request. %s is a team, a bot or not a plain login; request people by login. %s" % (login, HUMAN_REQUEST)
+        if not anyone and login.lower() not in allowed:
+            return ("blocked by rule reviewer-not-member. %s is not in epic.members or epic.reviewers (%s): add the person to the epic or set "
+                    "turnstile config set reviewers=…" % (login, ", ".join(sorted(allowed)) or "none"))
+    return None
 
 def _reviewer_requests(flat: str, cwd: str) -> None:
-    if "requested_reviewers" not in flat:
-        return
     for seg in _segments(flat):
+        added = ADD_REVIEWER.findall(seg)
+        if added:
+            people = [x for v in added for x in v.split(",") if x]
+            if any(not x or SHELL_COMPUTED.search(x) or COMPUTED.search(x) for x in people):
+                block(HUMAN_REQUEST)
+            why = _reviewer_verdict(None, people, cwd)
+            if why:
+                block(why)
         if "requested_reviewers" not in seg:
             continue
         values = REQ_VALUES.findall(seg)
         loose = re.findall(r"reviewers\[\]=", seg)
         if not values and not loose and _method(seg) == "GET" and not re.search(WRITE_FLAGS, seg):
-            continue  # a read of the requested reviewers
+            continue
         if "--input" in seg or not values or len(loose) != len(values) or any(team for team, _ in values) \
                 or any(not v or COMPUTED.search(v) or not re.match(r"^[\w.\[\]-]+$", v) for _, v in values):
             block(HUMAN_REQUEST)
         people = [v for _, v in values]
         if all(v == COPILOT for v in people):
             continue
-        if not GH_API.search(seg) or _method(seg) not in ("POST",):
+        if not GH_API.search(seg) or _method(seg) not in ("POST", "DELETE"):
             block(HUMAN_REQUEST)
         found = {x.groups() for x in REQ_ROUTE.finditer(seg)}
         m = REQ_ROUTE.search(" " + (_api_endpoint(seg) or ""))
         if not m or len(found) != 1 or m.groups() not in found or any(COMPUTED.search(x) or not re.match(r"^[\w.-]+$", x) for x in m.groups()) \
                 or not m.group(3).isdigit():
-            block(HUMAN_REQUEST)  # 2026-10-14 review: one literal route, and it is the endpoint (a decoy in a header names another PR)
-        why = _rerequest_verdict(m.group(1), m.group(2), m.group(3), people, cwd)
+            block(HUMAN_REQUEST)
+        why = _reviewer_verdict(m.group(1), [p for p in people if p != COPILOT], cwd)
         if why:
             block(why)
 
@@ -688,6 +744,10 @@ def _skip_repo(cmd, j):
         j += 1 if "=" in cmd[j][0] else 2
     return j
 
+def _literal_read_query(word: str) -> bool:
+    body = word.split("query=", 1)[1].lstrip()
+    return bool(re.match(r"(?:query\b|\{)", body)) and not re.search(r"\bmutation\b|\bsubscription\b", body, re.I)
+
 def _cli_words(joined: str) -> None:
     for cmd in _commands(_words(joined)):
         head, comp = cmd[0]
@@ -715,9 +775,10 @@ def _cli_words(joined: str) -> None:
         if sub == "api":
             if any(w == "graphql" or w.endswith("/graphql") for w, _ in cmd[j + 1:]):
                 for w, c in cmd[j + 1:]:
-                    if "query=" in w and c:
-                        block("blocked by rule graphql-computed. The GraphQL query is computed by the shell ($(…), `…` or $VAR): pass it literally in "
-                              "single quotes (-f query='…') so the guard can read the mutation.")
+                    if "query=" in w and c and not _literal_read_query(w):
+                        block("blocked by rule graphql-computed. A GraphQL mutation (or a query the shell builds whole) is computed by the shell "
+                              "($(…), `…` or $VAR): pass it literally in single quotes (-f query='…') so the guard can read the mutation; "
+                              "a literal `query { … }` with computed values passes.")
             continue
         if sub not in ("pr", "issue"):
             continue
@@ -752,9 +813,25 @@ def _interpreter_heredocs(joined: str) -> None:
             i += len(body) + 1
         i += 1
 
+def _note_hooks_version(cwd: str) -> None:
+    try:
+        import json
+        from _common import delivery_dir
+        manifest = json.loads((plugin_root() / ".claude-plugin" / "plugin.json").read_text())
+        rec = delivery_dir(cwd) / ".workspace.json"
+        data = json.loads(rec.read_text())
+        if data.get("hooks_version") != manifest.get("version"):
+            data["hooks_version"] = manifest.get("version")
+            tmp = rec.with_name(rec.name + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n"); os.replace(tmp, rec)
+    except Exception:
+        pass
+
 def main():
     p = read_payload()
     ti = p.get("tool_input"); cwd = p.get("cwd") or "."
+    if managed(cwd):
+        _note_hooks_version(cwd)
     if not isinstance(ti, dict) or not isinstance(ti.get("command"), str):
         if managed(cwd):
             block("malformed hook payload (no tool_input.command); failing closed.")

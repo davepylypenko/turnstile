@@ -67,6 +67,21 @@ def _threads_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: gi
     if miss:
         out.append(Proposal(pid, "threads", "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss), None))
 
+def _unclassified_replies(out: List[Proposal], data: dict, pid: str, pr: dict, f: github.PrFacts) -> None:
+    roles = (data.get("epic") or {}).get("roles") or {}
+    agent = roles.get("agent_github")
+    if not agent or agent == roles.get("lead_github"):
+        return
+    ours = members.our_logins(data)
+    for t in f.threads or []:
+        if not t.get("human") or t.get("resolved") or (pr.get("threads") or {}).get(t.get("id")) is not None:
+            continue
+        last = threads.last_reviewer_at(t, ours)
+        if last and any(c.get("login") == agent and threads._ts(c.get("at")) > threads._ts(last) for c in t.get("comments") or []):
+            out.append(Proposal(pid, "threads", "%s answered thread %s while the PR is %s (not REWORK) and it is not classified: record it with "
+                                "turnstile threads %s --self-resolved %s" % (agent, t.get("id"), pr.get("state"), pid, t.get("id")),
+                                "turnstile threads %s --self-resolved %s" % (pid, t.get("id"))))
+
 def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: github.PrFacts, repo: dict) -> None:
     """REWORK, lead rule 2026-10-14: once every reviewer thread has its reply and the head is clean (Copilot reviewed it with 0 open
     threads, else the gate check is green), propose the GitHub re-request of the thread authors until GitHub shows it for the head;
@@ -170,6 +185,11 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
         ci = _ev_for_head(pr, "ci")
         if ci and ci.get("status") == "success" and f.ci == "failure":
             out.append(Proposal(pid, "ci_red", "CI is red on GitHub but evidence says success", None))
+        if st not in ("REWORK", "MERGED"):
+            _unclassified_replies(out, data, pid, pr, f)
+        for c in f.cancelled:
+            out.append(Proposal(pid, "ci_cancelled_dup", "check %s was CANCELLED with no newer run on head %s: pending, not red — re-run it"
+                                % (c["name"], f.head[:12]), "gh run rerun %s" % c["run"] if c.get("run") else "gh run rerun <run id of %s>" % c["name"]))
         if f.head_signed is False:
             out.append(Proposal(pid, "unsigned", "head commit is not signed (DEV DoD: signed commits)", None))
         if f.draft and st in ("ON_HUMAN_REVIEW", "APPROVED"):
@@ -237,13 +257,15 @@ def changes(prev: dict, now: dict) -> List[str]:
                 out.append("%s %s: %s → %s" % (label, ident, " ".join(str(x) for x in old) if old else "new", " ".join(str(x) for x in cur)))
     return out
 
-def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, brief: bool = False) -> int:
+def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, brief: bool = False, onboard: bool = True) -> int:
     from . import sync
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     if not as_json:
         print(sync.line(sync.load(delivery)))
         if status:
             print(members.member_line(st.data, delivery))
+            for ln in members.onboard_lines(st.data, delivery, onboard):
+                print(ln)
     if status:
         from . import config
         warn = config.send_skill_warning(*config.send_skill(st.data, pathlib.Path(delivery)))

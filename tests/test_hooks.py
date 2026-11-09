@@ -82,28 +82,73 @@ class BashGuard(unittest.TestCase):
         self.assertAllowed(["git pull origin develop", "gh pr view 1 --repo o/r"])
 
     def test_blocks(self):
-        self.assertBlocked(["gh pr merge 1", "gh pr ready 1", "gh pr edit 1 --add-reviewer x", "git push --force origin x", "git push -f",
+        self.assertBlocked(["gh pr merge 1", "gh pr merge 3 --auto", "git push --force origin x", "git push -f",
                             "git rebase develop", "git commit --no-gpg-sign -m x", "git commit -m 'x\n\nCo-Authored-By: a'",
-                            "gh api -X POST repos/o/r/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
+                            "gh api -X POST repos/pdffiller/r/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
                             "gh workflow run x -f service_github_tag= -f y=1", "git push -fu origin x", "git push origin x \"--force\"",
                             "gh workflow run x -f \"service_github_tag=\"", "gh workflow run x -f service_github_tag=''"])
 
     def test_global_options_before_the_subcommand(self):
         self.assertBlocked(["git -C /tmp/x push --force origin y", "git -c core.x=y rebase develop", "gh -R pdffiller/jsfiller pr merge 1",
-                            "gh --repo pdffiller/jsfiller pr ready 1", "git -C dir -c a=b push -f", "cd x && git push --force-with-lease"])
+                            "gh --repo pdffiller/jsfiller pr merge 2 --auto", "git -C dir -c a=b push -f", "cd x && git push --force-with-lease"])
 
     def test_rest_and_graphql_routes(self):
         self.assertBlocked(["gh api -X PUT repos/pdffiller/jsfiller/pulls/13222/merge", "gh api graphql -f query='mutation{mergePullRequest(input:{})}'",
-                            "gh api graphql -f query='mutation { markPullRequestReadyForReview(input: {pullRequestId: \"x\"}) { pullRequest { id } } }'",
-                            "gh api graphql -f query='mutation{requestReviews(input:{})}'", "gh api -X POST repos/o/r/pulls/1/ready_for_review",
+                            "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+                            "gh api graphql -f query='mutation{requestReviews(input:{})}'",
                             "git -c commit.gpgsign=false commit -m x", "git -c commit.gpgsign=false -c user.name=t commit -m x"])
 
     def test_reviewer_requests(self):
-        self.assertBlocked(["gh api -X POST repos/o/r/pulls/1/requested_reviewers -f 'reviewers[]=%s' -f 'reviewers[]=isachivka'" % COPILOT,
-                            "gh api -X POST repos/o/r/pulls/1/requested_reviewers --input body.json",
-                            "gh api repos/o/r/pulls/1/requested_reviewers -f reviewers[]=lMakDen"], "human-reviewer-request")
-        self.assertAllowed(["gh api -X POST repos/o/r/pulls/1/requested_reviewers -f 'reviewers[]=%s'" % COPILOT,
-                            "gh api repos/o/r/pulls/1/requested_reviewers", "gh api -X GET repos/o/r/pulls/1/requested_reviewers --jq '.users[].login'"])
+        R = "repos/pdffiller/r/pulls/1/requested_reviewers"
+        self.assertBlocked(["gh api -X POST %s --input body.json" % R, "gh api -X POST %s -f 'team_reviewers[]=core'" % R,
+                            "gh api -X POST %s -f 'reviewers[]=$X'" % R, "gh api -X POST %s -f 'reviewers[]=a/b'" % R,
+                            "gh api -X POST %s -f 'reviewers[]=dependabot[bot]'" % R, "gh api -X POST repos/other/r/pulls/1/requested_reviewers -f reviewers[]=leadlogin",
+                            "gh api -X POST repos/pdffiller/r/pulls/$N/requested_reviewers -f reviewers[]=leadlogin", "gh pr edit 1 --add-reviewer myorg/core"], "reviewer")
+        self.assertBlocked(["gh api -X POST %s -f 'reviewers[]=%s' -f 'reviewers[]=isachivka'" % (R, COPILOT), "gh api %s -f reviewers[]=lMakDen" % R,
+                            "gh api -X DELETE %s -f reviewers[]=stranger" % R, "gh pr edit 1 --add-reviewer stranger", "gh pr edit 1 --add-reviewer=leadlogin,stranger"], "reviewer-not-member")
+        self.assertAllowed(["gh api -X POST %s -f 'reviewers[]=%s'" % (R, COPILOT), "gh api %s" % R, "gh api -X GET %s --jq '.users[].login'" % R,
+                            "gh api -X POST %s -f 'reviewers[]=leadlogin'" % R, "gh api -X DELETE %s -f 'reviewers[]=leadlogin'" % R,
+                            "gh api %s -f reviewers[]=leadlogin" % R, "gh pr edit 1 --add-reviewer leadlogin", "gh pr edit 1 --remove-reviewer stranger"])
+
+    def test_reviewers_list_and_empty_list_extend_the_allow_list(self):
+        R = "repos/pdffiller/r/pulls/1/requested_reviewers"
+        d = json.loads((self.ws / "delivery" / "state.json").read_text())
+        d["epic"]["reviewers"] = ["lMakDen"]; (self.ws / "delivery" / "state.json").write_text(json.dumps(d))
+        self.assertAllowed(["gh api -X POST %s -f 'reviewers[]=lMakDen'" % R])
+        self.assertBlocked(["gh api -X POST %s -f 'reviewers[]=stranger'" % R], "reviewer-not-member")
+        d["epic"]["reviewers"] = []; (self.ws / "delivery" / "state.json").write_text(json.dumps(d))
+        self.assertAllowed(["gh api -X POST %s -f 'reviewers[]=stranger'" % R, "gh pr edit 1 --add-reviewer stranger"])
+        self.assertBlocked(["gh api -X POST %s -f 'reviewers[]=a/b'" % R, "gh api -X POST %s -f 'team_reviewers[]=core'" % R], "reviewer")
+
+    def test_ready_undo_and_read_only_gh_pass(self):
+        self.assertAllowed(["gh pr ready 1", "gh pr ready 1 --undo", "gh pr ready --undo 1", "gh -R pdffiller/r pr ready 4",
+                            "gh api graphql -f query='mutation { markPullRequestReadyForReview(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+                            "gh api graphql -f query='mutation { convertPullRequestToDraft(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+                            "gh run rerun 123", "gh run rerun 123 --failed", "gh run watch 123 --exit-status", "gh pr checks 1", "gh pr checks 1 --watch",
+                            "gh pr view 1 --json mergeable,reviewRequests", "gh run list --branch x", "gh pr list --search 'delivery gate S10 parallel_with PATCH draft reply'"])
+        self.assertBlocked(["gh pr merge 1", "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+                            "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
+                            "gh pr comment 1 --body hi", "gh pr review 1 --approve", "gh api -X POST repos/pdffiller/r/issues/1/comments -f body=x",
+                            "gh api -X POST repos/pdffiller/r/pulls/1/reviews -f event=APPROVE", "turnstile approve ah-1"])
+
+    def test_computed_graphql_reads_pass_and_computed_mutations_do_not(self):
+        self.assertAllowed(['gh api graphql -f query="query { repository(owner: \"o\", name: \"$R\") { id } }"', 'gh api graphql -f query="{ viewer { login } }"'])
+        self.assertBlocked(["gh api graphql -f query=$Q", "gh api graphql -f query=\"$(cat q.txt)\"",
+                            'gh api graphql -f query="mutation { addStar(input: {starrableId: \"$ID\"}) { clientMutationId } }"'], "graphql-computed")
+
+    def test_the_hooks_version_is_noted_in_the_workspace_record_and_only_there(self):
+        rec = self.ws / "delivery" / ".workspace.json"; rec.write_text(json.dumps({"repos": {}, "member": "leadlogin"}))
+        self.assertAllowed(["ls"])
+        data = json.loads(rec.read_text())
+        self.assertEqual(data["hooks_version"], json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]); self.assertEqual(data["member"], "leadlogin")
+        rec.unlink(); self.assertAllowed(["ls"]); self.assertFalse(rec.exists())
+
+    def test_delivery_write_fires_on_write_operators_only(self):
+        self.assertBlocked(["echo '{}' > delivery/state.json", "sed -i '' s/a/b/ delivery/plan.md", "echo x >> delivery/ledger.md"], "delivery-write")
+        self.assertAllowed(["grep gate delivery/plan.md", "grep -n 'S10\\|parallel_with' delivery/plan.md", "cat delivery/decisions.md | wc -l",
+                            "awk '/PATCH/' delivery/plan.md", "jq .prs delivery/state.json", "gh pr list --search 'draft reply delivery gate'",
+                            "git log --oneline -3 -- delivery", "git merge-tree HEAD origin/epic/x", "cd delivery && cat plan.md", "turnstile board-url https://claude.ai/artifact/x",
+                            "turnstile repo set docs-platform gate=pdf-review", "turnstile sync"])
 
     def test_trailer_and_footer_only_on_writes(self):
         self.assertBlocked(["gh pr create --title x --body 'y\n\nGenerated with [Claude Code]'", "gh pr edit 1 --body 'Generated with [Claude Code](u)'",
@@ -146,9 +191,9 @@ class BashGuard(unittest.TestCase):
         self.assertBlocked(["perl -pi -e 's/DEV/READY/' delivery/state.json", "node -e \"require('fs').writeFileSync('delivery/state.json','{}')\"",
                             "ruby -e 'File.write(\"delivery/state.json\", \"{}\")'", "python3 - <<EOF\nimport json\nopen('delivery/' + 'state.json','w')\nEOF",
                             "sed -i '' s/a/b/ state.*", "rm -rf %s/reports" % d, "echo x > %s/ledger.md" % d, "cd delivery && rm ledger.md",
-                            "mkdir delivery/x", "cat delivery/state.json | python3",
-                            "cat other.json | tee delivery/state.json", "cp -r delivery /tmp/d", "jq '.x=1' delivery/state.json > tmp && mv tmp delivery/state.json",
-                            "perl -e 'print 1' > delivery/state.json", "git add delivery/state.json && git commit -m x"], "delivery-write")
+                            "mkdir delivery/x", "cat delivery/state.json | python3 -c 'open(\"x\", \"w\")'",
+                            "cat other.json | tee delivery/state.json", "jq '.x=1' delivery/state.json > tmp && mv tmp delivery/state.json",
+                            "perl -e 'print 1' > delivery/state.json"], "delivery-write")
         self.assertBlocked(["git checkout HEAD~3 -- delivery/state.json", "git restore delivery/state.json", "git stash push -- delivery",
                             "git reset --hard HEAD~1 -- delivery/", "git -C delivery checkout .", "git checkout -- %s/state.json" % d,
                             "git restore --source=HEAD~1 state.json"], "delivery-git-restore")
@@ -171,17 +216,18 @@ class BashGuard(unittest.TestCase):
                             "cp /tmp/a.png delivery/evidence/S1/TP-1/env.png", "echo '{}' > delivery/evidence/S1/TP-1/dom.json",
                             "cat > delivery/reports/X.md <<EOF\nhi\nEOF", "cp /tmp/b.md delivery/briefs/B.md", "rm delivery/evidence/S1/TP-1/env.png",
                             "python3 measure.py --out delivery/evidence/S1/TP-1/dom.json", "mv delivery/evidence/S1 /tmp/x",
-                            "cat /tmp/a.png | tee delivery/evidence/S1/TP-1/figma.png", "rm -rf delivery/evidence/S1/",
-                            "mkdir -p delivery/evidence/S1 && cp /tmp/a.png delivery/evidence/S1/env.png && echo done"])
+                            "cat /tmp/a.png | tee delivery/evidence/S1/TP-1/figma.png", "cp -r delivery /tmp/d",
+                            "mkdir -p delivery/evidence/S1 && cp /tmp/a.png delivery/evidence/S1/env.png && echo done",
+                            "cd delivery/evidence/S1 && node x --out env.png"])
         self.assertBlocked(["echo x > delivery/evidence/../state.json", "cp a delivery/evidence/../../delivery/ledger.md",
                             "cp a delivery/evidence/./../plan.md", "cp a 'delivery/evidence/S1/../../decisions.md'", "echo x > delivery/board.html",
-                            "echo x > delivery/.state.lock", "echo x > delivery/decisions.md", "echo x > delivery/plan.md", "rm -rf delivery/evidence",
-                            "rm -rf delivery/evidence/S1/..", "mkdir delivery/x", "tar cf delivery/evidence/S1/all.tar delivery/",
-                            "cp delivery/state.json delivery/evidence/S1/s.json", "mv delivery/plan.md delivery/evidence/S1/",
+                            "echo x > delivery/.state.lock", "echo x > delivery/decisions.md", "echo x > delivery/plan.md", "rm -rf delivery/evidence", "rm -rf delivery/evidence/S1/",
+                            "rm -rf delivery/evidence/S1/..", "mkdir delivery/x", "tar cf delivery/state.json delivery/evidence/S1",
+                            "mv delivery/plan.md delivery/evidence/S1/",
                             "echo x > delivery/evidence/$S/x", "echo x > delivery/evidence/*/x", "echo x > delivery/evidence/`echo S1`/x",
                             "ln -s ../ledger.md delivery/evidence/S1/x", "ln -s %s/ledger.md delivery/evidence/S1/x" % d,
-                            "ln -s ../state.json delivery/evidence/S1/x", "git add delivery/evidence/S1", "git -C delivery add evidence",
-                            "cd delivery/evidence/S1 && node x --out env.png", "cd delivery/evidence && echo x > ../ledger.md",
+                            "ln -s ../state.json delivery/evidence/S1/x",
+                            "cd delivery/evidence && echo x > ../ledger.md",
                             "X=delivery/state.json; cp a $X", "echo x > delivery/evidence/S1/state.json",
                             "python3 - <<EOF\nopen('delivery/evidence/S1/x','w')\nEOF"], "delivery-")
 
@@ -198,9 +244,9 @@ class BashGuard(unittest.TestCase):
         def at(cwd, cmd):
             return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}, cwd).returncode
         for cwd, cmd in [(d / "evidence", "cp /tmp/x ../ledger.md"), (d, "cp /tmp/x ledger.md"), (d, "echo x > board.html"),
-                         (d / "evidence" / "S1", "cp /tmp/x env.png")]:
+                         (d / "evidence" / "S1", "cp /tmp/x ../../ledger.md")]:
             self.assertEqual(at(cwd, cmd), 2, (cwd, cmd))
-        for cwd, cmd in [(d, "cat state.json"), (d, "ls -la"), (d / "evidence", "git log -1"), (d, "turnstile status")]:
+        for cwd, cmd in [(d / "evidence" / "S1", "cp /tmp/x env.png"), (d, "cat state.json"), (d, "ls -la"), (d / "evidence", "git log -1"), (d, "turnstile status")]:
             self.assertEqual(at(cwd, cmd), 0, (cwd, cmd))
         self.assertBlocked(["node -e \"require('fs').writeFileSync(require('path').join('delivery','ledger.md'),'x')\" delivery/evidence/S1/a",
                             "tar -xPf /tmp/evil.tar -C delivery/evidence/S1", "sh delivery/evidence/run.sh", "bash delivery/evidence/S1/x.sh"], "delivery-write")
@@ -286,7 +332,7 @@ class BashGuard(unittest.TestCase):
         # the delivery dir and any rebase stay blocked, a merge at the worktree root stays as it was (allowed)
         subprocess.run(["git", "init", "-q"], cwd=self.ws, check=True)
         self.assertAllowed(["git push -q origin HEAD:refs/heads/epic/myd-1", "git fetch -q origin epic/myd-1", "git merge -q --ff-only origin/epic/myd-1"])
-        self.assertBlocked(["cd delivery && git merge origin/epic/myd-1"], "delivery-write")
+        self.assertAllowed(["cd delivery && git merge origin/epic/myd-1", "git -C delivery merge --no-edit origin/epic/myd-1", "git merge-tree HEAD origin/epic/myd-1"])
         self.assertBlocked(["git rebase origin/epic/myd-1", "git push --force origin epic/myd-1"], "")
 
     def test_round3_computed_subcommands_and_writers(self):
@@ -725,7 +771,7 @@ class ReviewWrites(unittest.TestCase):
                     "gh api -X POST \"$URL\" -f body=x"]:
             r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("computed", r.stderr, cmd)
         d = self.state(); d["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; self.write(d)
-        r = self.bash(self.REPLY % "101"); self.assertEqual(r.returncode, 2); self.assertIn("REWORK", r.stderr)
+        self.assertAllowed([self.REPLY % "101"])
 
     def test_a_reviewer_follow_up_or_github_unavailable_blocks_the_reply(self):
         threads = self.responses["prs"]["jsfiller#1"]["reviewThreads"]["nodes"]
@@ -746,101 +792,32 @@ class ReviewWrites(unittest.TestCase):
     def test_tester_role_still_cannot_reply(self):
         r = self.bash(self.REPLY % "101", agent_type="turnstile:tester"); self.assertEqual(r.returncode, 2); self.assertIn("tester", r.stderr)
 
-class ReRequestGuard(unittest.TestCase):
-    """Lead rule 2026-10-14 (re-request): a `requested_reviewers` POST for humans passes only for a REWORK PR of the epic whose classified
-    threads all have their replies, with Copilot's review of the current head and 0 open Copilot threads (repos without Copilot: the gate
-    check green on the head), and only for exactly the reviewers who commented on the threads in this round. Every other human request
-    (`--add-reviewer`, GraphQL, teams, JSON bodies, computed logins) stays refused."""
-    T1 = "2026-10-13T11:00:00Z"
+class ReviewerRequestGuard(unittest.TestCase):
     REQ = "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=%s'"
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
-        data = json.loads((d / "state.json").read_text()); data["epic"]["roles"]["agent_github"] = "agentlogin"
-        pr = data["prs"]["jsfiller#1"]; pr["state"] = "REWORK"
-        pr["evidence"]["human"] = {"head": "aaaaaaaa11111111", "sent_head": "aaaaaaaa11111111", "sent_at": "2026-10-13T10:02Z", "approved": "ah-1",
-                                   "slack_permalink": "https://x.slack.com/archives/C1/p1"}
-        pr["threads"] = {"PRRT_s": {"class": "self_resolved", "classified_at": "2026-10-13T11:02:00Z", "comment_id": "101", "comment_ids": ["101"],
-                                    "reviewer": "isachivka", "last_reviewer_at": self.T1}}
-        data["awaiting_human"] = [{"id": "ah-1", "owner": "lead", "type": "send", "pr": "jsfiller#1", "approved_at": "2026-10-13T09:30Z",
-                                   "used_at": "2026-10-13T10:00Z", "consumed_at": "2026-10-13T10:01Z"}]
+        data = json.loads((d / "state.json").read_text()); data["epic"]["members"] = {"isachivka": {"name": "I"}}
         self.write(data)
-        payload = json.loads((ROOT / "tests" / "fixtures" / "gh_pr_13222.json").read_text())
-        payload["reviewThreads"] = {"nodes": [gql_thread("PRRT_s", [(101, "isachivka", self.T1), (102, "agentlogin", "2026-10-13T11:05:00Z")]),
-                                              gql_thread("PRRT_cop", [(301, "copilot-pull-request-reviewer", self.T1)], resolved=True)]}
-        self.responses = {"prs": {"jsfiller#1": payload}, "nodes": {}}
-        self.bin = pathlib.Path(tempfile.mkdtemp()); (self.bin / "gh").write_text(CANNED_GH); (self.bin / "gh").chmod(0o755); self.save()
-    def save(self):
-        (self.bin / "responses.json").write_text(json.dumps(self.responses))
-    def state(self):
-        return json.loads((self.ws / "delivery" / "state.json").read_text())
     def write(self, data):
         (self.ws / "delivery" / "state.json").write_text(json.dumps(data))
-    def payload(self):
-        return self.responses["prs"]["jsfiller#1"]
-    def bash(self, cmd, gh=True):
-        path = os.pathsep.join(([str(self.bin)] if gh else []) + ["/usr/bin", "/bin"])
-        return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}, self.ws, env={"PATH": path})
-    def assertBlocked(self, cmds, rule):
-        for cmd in cmds:
+    def bash(self, cmd):
+        return hook("guard_bash.py", {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}, self.ws)
+    def test_members_pass_in_any_pr_state_and_either_method(self):
+        for state in ("REWORK", "ON_HUMAN_REVIEW", "DEV"):
+            data = json.loads((self.ws / "delivery" / "state.json").read_text()); data["prs"]["jsfiller#1"]["state"] = state; self.write(data)
+            for cmd in [self.REQ % "isachivka", self.REQ % "ISACHIVKA", self.REQ % "leadlogin", self.REQ.replace("POST", "DELETE") % "isachivka",
+                        "gh pr edit 1 --add-reviewer isachivka,leadlogin"]:
+                r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + r.stderr)
+    def test_unknown_logins_teams_bots_and_foreign_orgs_are_refused(self):
+        for cmd, rule in [(self.REQ % "lMakDen", "reviewer-not-member"), (self.REQ % "isachivka" + " -f 'reviewers[]=lMakDen'", "reviewer-not-member"),
+                          (self.REQ % "isachivka" + " -f 'team_reviewers[]=front'", "human-reviewer-request"), (self.REQ % "dependabot[bot]", "human-reviewer-request"),
+                          ("gh api -X POST repos/someone/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'", "reviewer-foreign-org"),
+                          (self.REQ % "$WHO", "human-reviewer-request")]:
             r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn(rule, r.stderr, cmd)
-    def assertAllowed(self, cmds):
-        for cmd in cmds:
-            r = self.bash(cmd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)
-    def copilot(self, oid=None, open_thread=False):
-        d = self.state(); d["epic"]["repos"]["jsfiller"]["copilot"] = True; self.write(d)
-        p = self.payload()
-        if oid:
-            p["latestReviews"]["nodes"].append({"author": {"__typename": "Bot", "login": "copilot-pull-request-reviewer"}, "state": "COMMENTED",
-                                                "commit": {"oid": oid}, "submittedAt": "2026-10-13T11:10:00Z"})
-        p["reviewThreads"]["nodes"][1]["isResolved"] = not open_thread; self.save()
-
-    def test_the_thread_authors_are_re_requested_once_replies_and_the_gate_are_clean(self):
-        self.assertAllowed([self.REQ % "isachivka", "gh api --method POST /repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=isachivka",
-                            "gh api repos/pdffiller/jsfiller/pulls/1/requested_reviewers -F 'reviewers[]=ISACHIVKA'"])
-    def test_copilot_only_requests_still_pass_and_reads_are_free(self):
-        self.assertAllowed([self.REQ % COPILOT, "gh api repos/pdffiller/jsfiller/pulls/1/requested_reviewers"])
-    def test_non_authors_teams_bodies_and_computed_logins_are_refused(self):
-        self.assertBlocked([self.REQ % "lMakDen", self.REQ % "isachivka" + " -f 'reviewers[]=lMakDen'", self.REQ % "isachivka" + " -f 'reviewers[]=%s'" % COPILOT],
-                           "rerequest-not-authors")
-        self.assertBlocked([self.REQ % "isachivka" + " -f 'team_reviewers[]=front'", "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'team_reviewers[]=front'",
-                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers --input body.json",
-                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=$WHO"], "human-reviewer-request")
-        self.assertBlocked(["gh api -X POST repos/pdffiller/jsfiller/pulls/$N/requested_reviewers -f 'reviewers[]=isachivka'"], "computed")
-        self.assertBlocked(["gh pr edit 1 --add-reviewer isachivka"], "add-reviewer")
-        self.assertBlocked(["gh api graphql -f query='mutation{requestReviews(input:{pullRequestId:\"x\",userIds:[\"y\"]}){clientMutationId}}'",
-                            "gh api graphql -f query='mutation{requestReviewsByLogin(input:{pullRequestId:\"x\",userLogins:[\"isachivka\"]}){clientMutationId}}'"], "graphql")
-        self.assertBlocked(["gh pr create --title x --body y --reviewer isachivka", "gh pr create -t x -b y -r isachivka", "gh pr create --draft -r=isachivka -t x",
-                            "gh -R pdffiller/jsfiller pr create --reviewer=isachivka,lMakDen -t x", "gh pr edit 1 --add-reviewer=isachivka"], "reviewer")
-        self.assertAllowed(["gh pr create --title x --body y --draft --base epic -R pdffiller/jsfiller", "gh pr create -t 'fix: -r flag' -b y --draft",
-                            "gh pr view 1 --json reviewRequests --jq '.reviewRequests[].login'"])
-    def test_refused_until_every_thread_has_its_reply(self):
-        self.payload()["reviewThreads"]["nodes"][0]["comments"]["nodes"].pop(); self.save()
-        self.assertBlocked([self.REQ % "isachivka"], "rerequest-replies")
-        self.payload()["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
-            {"databaseId": 102, "author": {"__typename": "User", "login": "agentlogin"}, "createdAt": "2026-10-13T11:05:00Z"})
-        self.payload()["reviewThreads"]["nodes"].append(gql_thread("PRRT_n", [(401, "lMakDen", "2026-10-13T11:30:00Z")])); self.save()
-        r = self.bash(self.REQ % "isachivka"); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-replies", r.stderr); self.assertIn("PRRT_n", r.stderr)
-    def test_refused_with_a_red_gate(self):
-        ctx = self.payload()["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"]
-        next(c for c in ctx if c.get("name") == "pdf-review")["conclusion"] = "FAILURE"; self.save()
-        self.assertBlocked([self.REQ % "isachivka"], "rerequest-gate")
-    def test_with_copilot_its_review_of_the_current_head_and_no_open_thread(self):
-        head = self.payload()["headRefOid"]
-        self.copilot(); self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")                       # Copilot never reviewed
-        self.copilot(oid="0000000011111111aaa0288e05b49fa4583d8812"); self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")  # stale head
-        self.payload()["latestReviews"]["nodes"].pop(); self.copilot(oid=head, open_thread=True)
-        self.assertBlocked([self.REQ % "isachivka"], "rerequest-copilot")                                          # an open Copilot thread
-        self.copilot(open_thread=False); self.assertAllowed([self.REQ % "isachivka"])
-    def test_push_only_off_state_foreign_and_unverifiable_requests_are_refused(self):
-        d = self.state(); d["prs"]["jsfiller#1"]["evidence"]["human"]["returned_at"] = "2026-10-13T12:00:00Z"; self.write(d)
-        self.assertBlocked([self.REQ % "isachivka"], "rerequest-push-only")
-        d = self.state(); del d["prs"]["jsfiller#1"]["evidence"]["human"]["returned_at"]; d["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; self.write(d)
-        self.assertBlocked([self.REQ % "isachivka"], "rerequest-not-rework")
-        d["prs"]["jsfiller#1"]["state"] = "REWORK"; self.write(d)
-        self.assertBlocked(["gh api -X POST repos/pdffiller/other/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'",
-                            "gh api -X POST repos/someone/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'"], "human-reviewer-request")
-        r = self.bash(self.REQ % "isachivka", gh=False); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-unverified", r.stderr)
+    def test_unreadable_state_fails_closed(self):
+        (self.ws / "delivery" / "state.json").write_text("{")
+        r = self.bash(self.REQ % "isachivka"); self.assertEqual(r.returncode, 2); self.assertIn("reviewer-unverified", r.stderr)
 
 class ThreadRulesBypasses(unittest.TestCase):
     """2026-10-14 thread rules review: bypasses of the PR-conversation guard found by probing the real hook, each closed."""
@@ -901,7 +878,7 @@ class ThreadRulesBypasses(unittest.TestCase):
                               "cat > notes.txt <<'EOF'\nread the PR with gh and api.github.com\nEOF"])
         self.r.assertAllowed(["gh pr close --help", "gh pr view 1 --comments", "gh alias list", "python3 -c 'print(1)'", "echo $HOME"])
     def test_the_re_request_route_is_the_endpoint_itself(self):
-        q = ReRequestGuard("test_copilot_only_requests_still_pass_and_reads_are_free"); q.setUp()
+        q = ReviewerRequestGuard("test_unreadable_state_fails_closed"); q.setUp()
         for cmd in ["gh api -H 'X: repos/pdffiller/jsfiller/pulls/1/requested_reviewers' -X POST repos/pdffiller/jsfiller/pulls/2/requested_reviewers -f reviewers[]=isachivka",
                     "gh api -X POST repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f reviewers[]=isachivka repos/pdffiller/other/pulls/9/requested_reviewers"]:
             r = q.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("human-reviewer-request", r.stderr, cmd)
@@ -929,7 +906,7 @@ class OutsideWorkspace(unittest.TestCase):
         p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}; p.update(payload)
         return hook("guard_bash.py", p, cwd, env=env)
 
-    GUARDED = ["gh pr ready 13", "gh pr merge 13", "gh pr edit 13 --add-reviewer x", "gh pr comment 13 --body x", "gh pr review 13 --approve",
+    GUARDED = ["gh pr merge 14", "gh pr merge 13", "gh pr edit 13 --add-reviewer x", "gh pr comment 13 --body x", "gh pr review 13 --approve",
                "gh api -X POST repos/pdffiller/jsfiller/pulls/13/comments/201/replies -f body=x",
                "gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t=PRRT_x",
                "gh api -X POST repos/pdffiller/jsfiller/pulls/13/requested_reviewers -f 'reviewers[]=isachivka'",
@@ -952,9 +929,9 @@ class OutsideWorkspace(unittest.TestCase):
     def test_bash_guard_wakes_for_a_workspace_by_cwd_project_dir_or_the_dir_entered(self):
         for cmd in self.GUARDED:
             r = self.bash(cmd, cwd=self.ws / "jsfiller"); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
-        r = self.bash("gh pr ready 13", env={"CLAUDE_PROJECT_DIR": str(self.ws)}); self.assertEqual(r.returncode, 2); self.assertIn("rule ready", r.stderr)
-        for cmd in ["cd %s && gh pr ready 13" % self.ws, "git -C %s push origin x && gh pr merge 13" % self.ws, "(cd %s/jsfiller; gh pr merge 13)" % self.ws,
-                    "GIT_WORK_TREE=%s git status && gh pr ready 13" % self.ws, "git --work-tree=%s status; gh pr merge 13" % self.ws]:
+        r = self.bash("gh pr merge 13", env={"CLAUDE_PROJECT_DIR": str(self.ws)}); self.assertEqual(r.returncode, 2); self.assertIn("rule merge", r.stderr)
+        for cmd in ["cd %s && gh pr merge 15" % self.ws, "git -C %s push origin x && gh pr merge 13" % self.ws, "(cd %s/jsfiller; gh pr merge 13)" % self.ws,
+                    "GIT_WORK_TREE=%s git status && gh pr merge 16" % self.ws, "git --work-tree=%s status; gh pr merge 13" % self.ws]:
             r = self.bash(cmd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("blocked by rule", r.stderr, cmd)
         self.assertEqual(hook("guard_bash.py", "{}", self.ws).returncode, 2)
 

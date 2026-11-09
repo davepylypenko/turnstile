@@ -18,6 +18,7 @@ def build_parser():
                      ("--figma-parity", {"choices": ["pass", "fail", "not_testable_here"]}),
                      ("--cases-not-testable", {"type": int, "help": "cases with verdict not_testable_here in the recorded run (default 0)"}),
                      ("--failed-cases", {"help": "comma-separated ids of the failed cases of the recorded run (bugs are keyed by story + case)"}),
+                     ("--sent-at", {"help": "ISO UTC time of the Slack send; on a PR already in ON_HUMAN_REVIEW alone, corrects evidence.human.sent_at (default: the time in the --slack permalink)"}),
                      ("--rerequested", {"help": "REWORK → ON_HUMAN_REVIEW: comma-separated thread authors re-requested on GitHub after the replies (verified against reviewRequests)"}),
                      ("--arm", {"choices": ["treatment", "control"], "help": "trunk mode: the arm a recorded env run tested (treatment = flag on, control = flag off)"}),
                      ("--base-heads", {"help": "trunk mode, with --build --head: repo=sha pairs when the story spans repos (default: --head for every repo)"}),
@@ -60,6 +61,9 @@ def build_parser():
     for c in (cs, cu):
         c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file"); c.add_argument("--no-commit", action="store_true")
     sub.add_parser("sync", help="fetch origin, fast-forward the epic branch and push it (never rebase or force); refuses diverged histories")
+    rp = sub.add_parser("repo", help="edit an epic repo: repo set <name> key=value … (gate, gate_check, slack, ci_ignore, copilot, branch_prefix, base, epic_branch)")
+    rsub = rp.add_subparsers(dest="repo_cmd"); p.repo_parser = rp
+    rs = rsub.add_parser("set"); rs.add_argument("name"); rs.add_argument("assignments", nargs="+", metavar="key=value"); rs.add_argument("--no-commit", action="store_true"); rs.add_argument("--no-push", action="store_true")
     at = sub.add_parser("attach", help="continue an existing epic from another machine: <clone root>/<key> with the knowledge worktree of origin/epic/<key>, a worktree per repo, .turnstile, workspace CLAUDE.md, status")
     for flag, kw in [("--epic", {"required": True}), ("--knowledge", {"help": "the knowledge clone (default: <clone root>/pdffiller-knowledge)"}),
                      ("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd — the knowledge clone's parent, or the cwd when it holds a named clone)"}),
@@ -98,6 +102,8 @@ def main(argv=None):
         parser.print_help(); return 0
     if a.cmd == "bug" and a.bug_cmd is None:
         parser.bug_parser.print_help(sys.stderr); return 2
+    if a.cmd == "repo" and a.repo_cmd is None:
+        parser.repo_parser.print_help(sys.stderr); return 2
     if a.cmd == "pr" and a.pr_cmd is None:
         parser.pr_parser.print_help(sys.stderr); return 2
     try:
@@ -126,6 +132,9 @@ def main(argv=None):
         if a.cmd == "sync":
             from .sync import run as sync_run
             return sync_run(delivery)
+        if a.cmd == "repo":
+            from .repo_cmd import set_ as repo_set
+            return repo_set(delivery, a.name, a.assignments, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "board-url":
             from . import members
             return members.board_url(delivery, a.url, no_push=a.no_push)

@@ -32,7 +32,22 @@ class Parse(unittest.TestCase):
             {"name": "cancelled", "conclusion": "CANCELLED", "status": "COMPLETED"}, {"context": "snyk", "state": "PENDING"},
             {"name": "skip", "conclusion": "SKIPPED", "status": "COMPLETED"}]
         f = github.parse("jsfiller#1", p)
-        self.assertEqual(f.checks, {"pdf-review": "pending", "ci": "failure", "cancelled": "failure", "snyk": "pending", "skip": "skipped"})
+        self.assertEqual(f.checks, {"pdf-review": "pending", "ci": "failure", "cancelled": "pending", "snyk": "pending", "skip": "skipped"})
+    def test_a_cancelled_duplicate_is_ignored_and_a_lone_cancelled_run_is_pending(self):
+        p = copy.deepcopy(PAYLOAD)
+        roll = p["commits"]["nodes"][0]["commit"]["statusCheckRollup"]; roll["state"] = "FAILURE"
+        url = "https://github.com/pdffiller/jsfiller/actions/runs/%s/job/1"
+        nodes = [{"name": "lint", "conclusion": "CANCELLED", "status": "COMPLETED", "completedAt": "2026-11-09T10:00:00Z", "detailsUrl": url % 11},
+                 {"name": "lint", "conclusion": "SUCCESS", "status": "COMPLETED", "completedAt": "2026-11-09T10:05:00Z", "detailsUrl": url % 12},
+                 {"name": "test", "conclusion": "CANCELLED", "status": "COMPLETED", "completedAt": "2026-11-09T10:00:00Z", "detailsUrl": url % 21}]
+        roll["contexts"] = {"totalCount": 3, "nodes": nodes}
+        f = github.parse("jsfiller#1", p)
+        self.assertEqual(f.checks, {"lint": "success", "test": "pending"}); self.assertEqual(f.cancelled, [{"name": "test", "run": "21"}]); self.assertEqual(f.ci, "pending")
+        roll["contexts"] = {"totalCount": 2, "nodes": nodes[:2]}
+        f = github.parse("jsfiller#1", p)
+        self.assertEqual(f.checks, {"lint": "success"}); self.assertEqual(f.cancelled, []); self.assertEqual(f.ci, "success")
+        nodes[1]["conclusion"] = "FAILURE"; roll["contexts"]["nodes"] = nodes[:2]
+        self.assertEqual(github.parse("jsfiller#1", p).ci, "failure")
     def test_incomplete_contexts_and_unsigned(self):
         p = copy.deepcopy(PAYLOAD)
         p["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["totalCount"] = 150
@@ -147,6 +162,21 @@ class Compare(unittest.TestCase):
             self.assertIn(k, kinds)
         d = self.data("ON_HUMAN_REVIEW", human=HUMAN)
         self.assertIn("draft_mismatch", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0, approvals=[], draft=True))))
+    def test_a_reply_outside_rework_on_an_unclassified_thread_is_recorded_as_a_threads_discrepancy(self):
+        d = self.data("ON_HUMAN_REVIEW", human=HUMAN); d["epic"]["roles"]["agent_github"] = "agentlogin"
+        f = self.facts(); t = f["jsfiller#1"].threads[0]
+        t["comments"] = [{"id": "1", "login": "lMakDen", "at": "2026-10-12T09:00:00Z", "bot": False},
+                         {"id": "2", "login": "agentlogin", "at": "2026-10-12T10:00:00Z", "bot": False}]
+        props = [p for p in reconcile.compare(d, f) if p.kind == "threads"]
+        self.assertEqual(len(props), 1); self.assertIn("not REWORK", props[0].message); self.assertIn("turnstile threads jsfiller#1 --self-resolved", props[0].suggested_cmd)
+        d["prs"]["jsfiller#1"]["threads"] = {t["id"]: {"class": "self_resolved"}}
+        self.assertNotIn("threads", self.kinds(reconcile.compare(d, f)))
+    def test_a_lone_cancelled_run_is_reported_with_its_rerun_not_as_red(self):
+        d = self.data("READY", ci={"head": H, "status": "success"})
+        f = self.facts(human_threads_open=0, ci="pending", cancelled=[{"name": "lint", "run": "21"}])
+        props = reconcile.compare(d, f); kinds = self.kinds(props)
+        self.assertIn("ci_cancelled_dup", kinds); self.assertNotIn("ci_red", kinds)
+        self.assertEqual([p.suggested_cmd for p in props if p.kind == "ci_cancelled_dup"], ["gh run rerun 21"])
     def test_jira_unsynced(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False
         self.assertIn("jira_unsynced", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0))))

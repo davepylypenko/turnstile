@@ -22,10 +22,7 @@ never rebase or force — diverged histories go to the lead). `--no-push` only f
 - Slack sends are gated by the lead's word in chat only (2026-11-05): compose the message through the send skill (`## pass`),
   show it, send it when the lead says so. The plugin records the send (a ledger line from the PostToolUse hook, `send`
   evidence via `pass … --slack`) and never blocks, asks or demands a command before it.
-- A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). So does the GitHub re-request of
-  the thread authors once every thread has its reply and the head is clean (lead rule 2026-10-14). Issue comments, review
-  submissions, resolving a human thread and every other human reviewer request are refused for everyone (the repo gate's marker
-  comments excepted).
+- Two brakes are human, nothing else: `turnstile approve` (the `awaiting_human` entries) and merging a PR. Every other GitHub and terminal command you run yourself, without asking the lead to paste it: `gh pr ready <n>` and `--undo`, review requests and re-requests (`gh api -X POST|DELETE repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'` or `gh pr edit --add-reviewer`, only for logins in `epic.members` or `epic.reviewers`; never teams or bots; `turnstile config set reviewers=a,b [--epic]`, an empty list opens it to any human login), `gh run rerun|watch`, `gh pr checks`, every read-only `gh` call, the epic-branch merge (`turnstile sync`), and the reply on a review thread from any member's login in any PR state (`## REWORK`; the thread must be classified, a `needs_lead` one needs its approved `reply` entry). Still refused for everyone: `turnstile approve` in any spelling, `gh pr merge` / GraphQL merge, force-push, rebase, unsigned commits, bare `git stash`, issue comments and review submissions (the repo gate's `<!-- pdf-review:… -->` marker comments excepted), resolving a human thread, `rm -rf`-class deletions and writes (`>`, `tee`, `sed -i`, `rm`, `mv`, `cp` into it) in `delivery/` outside `evidence/`, `reports/`, `briefs/` and `boards/`. Words such as `gate` or `S10` in a read-only command never trip the guard.
 - A question from the lead is a question: answer and propose, act on a command.
 - Delegate all implementation, review, testing and deployment to the `turnstile:*` agents (`## dispatch`). Never read
   a diff or run a suite yourself; your context is for coordination.
@@ -38,7 +35,7 @@ and after every batch of agent reports; run the proposed `turnstile pass` lines 
 --json` for the raw list). A `WARN: send skill … not found` line means the lead must name the skill that sends PRs to review (`## preferences`).
 `status` prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|none> · board file boards/<login>.html` after `SYNC:` (this machine's developer, from `delivery/.workspace.json` → `epic.members`; `member_unknown` in
 the reconcile list means the login is not in `epic.members`: run the `attach` line it proposes; `owner_unknown` means a PR or story owner is not in `epic.members`: re-own it with `turnstile pr add … --owner <login>` / `turnstile pass story <S> IN_PROGRESS --owner <login>` or record a note).
-`turnstile status --brief` prints only `SYNC:`, `MEMBER:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
+A member whose variant has no record yet (no story `deploy` by them, no `turnstile board-url`) gets `ONBOARD: variant <v> not created — dispatching the deployer is the next step (turnstile brief deployer DEPLOY-env-<login> …)` in `status`: dispatch that deployer **without asking**, then ask the one `## preferences` question. `PLUGIN: <loaded version> (restart the session to load <newer> if `claude plugin list` shows it)` appears only when the hooks of this session (version recorded by the guard in `.workspace.json`) differ from `turnstile --version`: a mid-session plugin update; tell the lead to restart the session. `turnstile repo set <name> key=value …` edits `epic.repos.<name>` (keys `gate, gate_check, slack, ci_ignore, copilot, branch_prefix, base, epic_branch`; `null` clears `gate`, `gate_check`, `branch_prefix`) through the normal writer. `CANCELLED` check runs: one with a newer run of the same check on the head is a superseded duplicate and is ignored; one without is pending, and `status` prints `ci_cancelled_dup` with the exact `gh run rerun <id>` to run. `turnstile status --brief` prints only `SYNC:`, `MEMBER:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
 `delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
 
 ## pass (one transition)
@@ -68,8 +65,8 @@ say so), the templates in `references/slack.md` are the fallback and you ask the
    `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths and `member`; `brief --var repo=<name>` renders them). `--lead-github` becomes `epic.members.<login>` with the
    lead's `--variant`, `--desk` and `--board-url` (also kept in `epic.environment` and `epic.board`, so older readers keep working); every other developer gets an entry at `attach`. Repo JSON keys: `name,
    base, epic_branch, slack, gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix, path`; `--models '{"reviewer":
-   {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in the new folder; this session stays in
-   the root and cannot drive the epic (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run there.
+   {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks load per folder, so start a new Claude session inside the workspace
+   (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run there.
 2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`; write
    `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400 logic lines,
    test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
@@ -91,15 +88,20 @@ runs at its default effort and the `AGENT:` line prints that resolved effort. Ne
 
 ## attach (continue an epic from another machine)
 
-"Continue epic X" → in the person's clone root (or knowledge clone): `turnstile attach --epic <KEY> [--clone-root <dir>] [--knowledge <clone>]
-[--workspace <dir>] [--workitem <name>] [--github <login>] [--name <n>] [--variant <v>] [--desk <d>] [--board-url <url>]`: fetches `origin/epic/<key>`, creates `<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
-worktree per `epic.repos` clone, `.turnstile`, `.workspace.json`, the workspace `CLAUDE.md`, prints `status`. Then `cd <workspace> && claude` (this
-session cannot drive it) and run `## preferences` there (this person's user file may be empty). A worktree behind origin refuses every writer until `turnstile sync`.
-`--github` is this developer's login (default `gh api user`; without either, attach refuses). Attach writes `epic.members.<login>` (variant default `<key lower>-<login lower>`, e.g. `myd-16539-ivanov`; desk
+Onboarding is three lines: `claude plugin install turnstile@turnstile` (or update), `turnstile attach --epic <KEY>`, `cd <workspace> && claude`. "Continue epic X" → `turnstile attach --epic <KEY>` from any folder: it
+walks up from the cwd to the first folder that holds `pdffiller-knowledge/` (or is that clone) and takes it as the clone root; no other flag is needed (`--clone-root`, `--knowledge`, `--workspace`, `--workitem`,
+`--github`, `--name`, `--variant`, `--desk`, `--board-url` override). It fetches `origin/epic/<key>`, creates `<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
+worktree per `epic.repos` clone, `.turnstile`, `.workspace.json`, the workspace `CLAUDE.md`, prints `status` and ends with exactly two lines: `NEXT: cd <workspace> && claude` and `NEXT: in that session say "turnstile status" — the plugin dispatches the deployer to
+create your variant and asks the one preferences question`. The hooks load per folder, so start a new Claude session inside the workspace; there `status` prints `ONBOARD:` and you dispatch the deployer, then run `## preferences`
+(this person's user file may be empty). A worktree behind origin is merged by the next writer or `turnstile sync`.
+`--github` is this developer's login (default `gh api user --jq .login`; when that returns nothing, attach asks for `--github`). Attach writes `epic.members.<login>` (variant default `<key lower>-<login lower>`, e.g. `myd-16539-ivanov`; desk
 and board url optional), commits and pushes it so every machine sees it, and records `member` in `.workspace.json`; attaching again with the same login updates only the flags passed, never duplicates.
-It prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>` and `NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-<login> …) to create it
-through the prometey-variant skill; then turnstile board-url <url> after the first board publish`. Do that dispatch: every developer deploys to their own variant, so deploys never overwrite another one's.
-`turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`). Any member approves from their own terminal.
+It prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>`. The variant is created by the deployer through the prometey-variant skill (`ONBOARD:` in `status`): every developer deploys to their own variant, so deploys never overwrite another one's.
+`turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`) and that the variant exists. Any member approves from their own terminal.
+
+## sync
+
+`turnstile sync` fetches origin and fast-forwards the epic branch; when it diverged it runs `git merge --no-edit origin/<branch>`. A conflict only in `delivery/board.html` or `delivery/boards/*.html` is resolved by re-rendering them from the merged `state.json` (commit, push, ledger line `sync: merged origin/<branch> (<n> theirs, <m> ours)`). A conflict in `state.json`, `ledger.md`, `plan.md` or `decisions.md` aborts the merge and stops with `MISSING histories diverged …` naming the files: the humans merge by hand, then `turnstile sync`. Every writer that finds the branch behind origin runs the same routine before refusing, so the next call sees the merged state. Never rebase, never force.
 
 Boards per member: `turnstile pr add` and `turnstile pass story <S> IN_PROGRESS` record the machine's member as `owner` (override: `--owner <login>`, a known member); bugs follow their story's owner; older state gets the lead as owner on load. Every write renders `delivery/board.html` (everything, with an owner column) and `delivery/boards/<login>.html` for each member (only that member's rows; lead-only entries such as the plan approval show on every board). Publish your own file, never someone else's.
 
@@ -181,10 +183,10 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
 3. Gate and Copilot on the new head (no new deep review); `turnstile status` lists what the threads still need.
 4. Re-request (lead rule 2026-10-14: "replied to all comments and Copilot passed again → ping the reviewer to look again"): once
    every thread has its reply and Copilot reviewed the GitHub head with 0 open threads (repos without Copilot: the gate check
-   green on it), `turnstile status` prints the exact `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f
-   'reviewers[]=<login>'` for the thread authors (the reviewers who commented on the threads in this round). The comments-handler
-   (or you) runs it — no lead approval; the guard allows exactly that request and refuses non-authors, an open Copilot thread, a
-   stale head and any other human request. Slack sends go out on the lead's word in chat only.
+   green on it; without either, the review-request event alone), `turnstile status` prints the exact `gh api -X POST
+   repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'` for the thread authors (the reviewers who commented on the
+   threads in this round). The comments-handler (or you) runs it — no lead approval, and the guard checks only the login (`epic.members`
+   or `epic.reviewers`, no team, no bot), not the PR state; the pass then verifies the rule against GitHub. Slack sends go out on the lead's word in chat only.
 5. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` — no Slack message, no `--slack`: the replies
    and the re-request are the notification; the pass checks GitHub (`reviewRequests`, request newer than the replies). A push-only
    rework (no reviewer comment since the PR last went to humans) takes no `--rerequested`: it records `reviewer_notified: false`,

@@ -2,7 +2,7 @@ import json, os, pathlib, re
 from dataclasses import dataclass
 from typing import Optional
 from . import state as st_mod, sync, workspace, members
-from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md, next_lines
+from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md
 from .errors import TurnstileError
 
 @dataclass
@@ -62,7 +62,7 @@ def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
     try:
         login = (o.github or "").strip() or (getattr(io, "github_login", lambda: "")() or "").strip()
         if not login:
-            raise TurnstileError("--github <login> is required (gh api user did not return a login on this machine)")
+            raise TurnstileError("no GitHub login: `gh api user --jq .login` returned nothing on this machine (run gh auth login, or pass --github <login>)")
         if o.board_url:
             members.check_board_url(o.board_url)
         cwd = pathlib.Path.cwd(); root = workspace.detect_root(cwd, o.clone_root, o.knowledge, [], io)
@@ -110,14 +110,11 @@ def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
             print(line)
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("MEMBER: %s · variant %s · desk %s · board %s" % (login, entry.get("variant"), entry.get("desk") or "none", (entry.get("board") or {}).get("artifact_url") or "new artifact"))
-        print("NEXT: the variant does not exist yet: dispatch the deployer (turnstile brief deployer DEPLOY-env-%s …) to create it through the plugin's prometey-variant skill; "
-              "then turnstile board-url <url> after the first board publish" % login)
-        print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
-              "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
-        for line in next_lines(ws, cwd):
-            print(line)
         print("OK attach %s" % key)
-        return status_cli(delivery, status=True)
+        rc = status_cli(delivery, status=True, onboard=False)
+        print("NEXT: cd %s && claude" % ws)
+        print('NEXT: in that session say "turnstile status" — the plugin dispatches the deployer to create your variant and asks the one preferences question')
+        return rc
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 

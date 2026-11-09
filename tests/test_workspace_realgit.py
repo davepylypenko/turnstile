@@ -63,7 +63,7 @@ class Workspace(unittest.TestCase):
         rc, out = out_of(init_cmd.run, init_opts("MYD-1")); self.assertEqual(rc, 0, out)
         ws = self.root / "myd-1"; d = self.assert_layout(ws, "myd-1")
         for needle in ["WORKSPACE: %s (clone root %s)" % (ws, self.root), "REPO: app → %s (ws/myd-1 from origin/main)" % (ws / "app"),
-                       "REPO: web → %s (ws/myd-1 from origin/develop)" % (ws / "web"), "SYNC: pushed", "NEXT: cd %s && claude" % ws, "this session (in %s)" % self.root]:
+                       "REPO: web → %s (ws/myd-1 from origin/develop)" % (ws / "web"), "SYNC: pushed", "NEXT: cd %s && claude" % ws, "start a new Claude session inside the workspace (this one runs in %s)" % self.root]:
             self.assertIn(needle, out, needle)
         self.assertEqual(self.git(self.bares["pdffiller-knowledge"], "rev-parse", "epic/myd-1"), self.head(ws / "pdffiller-knowledge"))
         self.assertEqual(self.branch(self.root / "app"), "main"); self.assertEqual(self.branch(self.root / "web"), "develop")  # the clones stay on their base
@@ -93,6 +93,11 @@ class Workspace(unittest.TestCase):
         root2 = self.tmp / "root2"; self.clone_all(root2); os.chdir(root2)
         rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-1", github="lg")); self.assertEqual(rc, 0, out); self.assertIn("OK attach MYD-1", out)
         d2 = self.assert_layout(root2 / "myd-1", "myd-1"); self.assertIn("NEXT: cd %s && claude" % (root2 / "myd-1"), out)
+        shutil.rmtree(str(root2 / "myd-1" / "app"), True); self.git(root2 / "app", "worktree", "prune")
+        for nested in (root2 / "app", root2 / "pdffiller-knowledge", root2 / "pdffiller-knowledge" / "docs" if (root2 / "pdffiller-knowledge" / "docs").is_dir() else root2 / "web"):
+            os.chdir(nested)
+            rc, out = out_of(attach_cmd.run, attach_cmd.AttachOptions(epic="MYD-1", github="lg")); self.assertEqual(rc, 0, out)
+            self.assertIn("WORKSPACE: %s (clone root %s)" % (root2 / "myd-1", root2), out)
         self.assertEqual(json.loads((d2 / "state.json").read_text())["epic"]["repos"], json.loads((d / "state.json").read_text())["epic"]["repos"])
         self.assertEqual(json.loads((d2 / ".workspace.json").read_text())["clone_root"], str(root2))
         os.chdir(self.root); shutil.rmtree(ws / "app"); self.git(self.root / "app", "worktree", "prune")

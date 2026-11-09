@@ -147,8 +147,10 @@ class ThreadsCmd(unittest.TestCase):
         for kw, needle in [(dict(self_ids="PRRT_zzz"), "PRRT_zzz"), (dict(self_ids="PRRT_c"), "Copilot"), (dict(self_ids="PRRT_a", lead_ids="PRRT_a"), "both")]:
             rc, out = self.go(**kw); self.assertEqual(rc, 2, kw); self.assertIn(needle, out, kw)
         self.assertEqual(self.replies(), []); self.assertEqual(self.io.commits, [])
-        data = self.data(); data["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; (self.d / "state.json").write_text(state.dumps(data))
-        rc, out = self.go(self_ids="PRRT_a"); self.assertEqual(rc, 2); self.assertIn("REWORK", out)
+        data = self.data(); data["prs"]["jsfiller#1"]["state"] = "MERGED"; (self.d / "state.json").write_text(state.dumps(data))
+        rc, out = self.go(self_ids="PRRT_a"); self.assertEqual(rc, 2); self.assertIn("nothing to classify", out)
+        data["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; (self.d / "state.json").write_text(state.dumps(data))
+        rc, out = self.go(self_ids="PRRT_a"); self.assertEqual(rc, 0, out)
     def test_reclassification_voids_or_renews_the_reply_entry(self):
         self.go(lead_ids="PRRT_b"); first = self.replies()[0]["id"]
         self.go(lead_ids="PRRT_b"); self.assertEqual([a["id"] for a in self.replies()], [first])  # idempotent

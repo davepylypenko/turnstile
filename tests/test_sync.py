@@ -52,7 +52,7 @@ class Writers(unittest.TestCase):
     def test_behind_origin_refuses_before_any_write(self):
         self.io.behind = 2; before = (self.d / "state.json").read_text()
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
-        self.assertEqual(rc, 2); self.assertIn("MISSING epic branch epic/myd-1 behind origin by 2 commit(s) — run: turnstile sync", out)
+        self.assertEqual(rc, 2); self.assertIn("MISSING sync: fast-forwarded epic/myd-1 by 2 commit(s)", out)
         self.assertEqual((self.d / "state.json").read_text(), before); self.assertEqual(self.io.commits, []); self.assertEqual(self.io.pushes, []); self.assertFalse((self.d / "ledger.md").exists())
         self.io.behind, self.io.ahead = 0, 3
         self.assertEqual(run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)[0], 0)
@@ -122,10 +122,20 @@ class SyncCmd(unittest.TestCase):
     def test_behind_fast_forwards_then_pushes(self):
         self.io.behind = 3; rc, out = out_of(sync.run, self.d, self.io)
         self.assertEqual(rc, 0); self.assertIn("fast-forwarded epic/myd-1 by 3 commit(s)", out); self.assertEqual((self.io.ffs, self.io.pushes), (["epic/myd-1"], ["epic/myd-1"]))
-    def test_diverged_refuses_with_both_heads_and_touches_nothing(self):
+    def test_diverged_merges_and_pushes_with_a_ledger_line(self):
         self.io.behind, self.io.ahead = 1, 2; rc, out = out_of(sync.run, self.d, self.io)
-        self.assertEqual(rc, 2); self.assertIn("MISSING histories diverged on epic/myd-1", out); self.assertIn(self.io.head, out); self.assertIn("0r1g1n0000000000", out)
-        self.assertIn("never rebases or forces", out); self.assertEqual((self.io.ffs, self.io.pushes), ([], [])); self.assertFalse((self.d / ".sync.json").exists())
+        self.assertEqual(rc, 0, out); self.assertIn("sync: merged origin/epic/myd-1 (1 theirs, 2 ours)", out)
+        self.assertEqual((self.io.merges, self.io.ffs, self.io.pushes), (["epic/myd-1"], [], ["epic/myd-1"])); self.assertTrue(self.rec()["pushed"])
+        self.assertIn("sync: merged origin/epic/myd-1 (1 theirs, 2 ours)", (self.d / "ledger.md").read_text())
+    def test_generated_board_conflicts_are_resolved_by_rerendering(self):
+        self.io.behind, self.io.ahead = 1, 1; self.io.merge_conflicts = ("board.html", "boards/lg.html")
+        rc, out = out_of(sync.run, self.d, self.io); self.assertEqual(rc, 0, out); self.assertEqual(self.io.finished, ["board.html", "boards/lg.html"])
+        self.assertFalse(getattr(self.io, "aborted", False))
+    def test_a_conflict_outside_the_generated_files_stops_and_aborts(self):
+        self.io.behind, self.io.ahead = 1, 2; self.io.merge_conflicts = ("board.html", "state.json")
+        rc, out = out_of(sync.run, self.d, self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING histories diverged on epic/myd-1", out); self.assertIn("state.json", out); self.assertIn("0r1g1n0000000000", out)
+        self.assertIn("never rebases or forces", out); self.assertTrue(self.io.aborted); self.assertEqual(self.io.pushes, []); self.assertFalse((self.d / ".sync.json").exists())
     def test_fetch_and_push_failures(self):
         self.io.fail_fetch = "offline"; rc, out = out_of(sync.run, self.d, self.io); self.assertEqual(rc, 2); self.assertIn("MISSING fetch origin epic/myd-1 failed: offline", out)
         self.io.fail_fetch = None; self.io.fail_push = "rejected"; rc, out = out_of(sync.run, self.d, self.io)
@@ -178,7 +188,8 @@ class Attach(unittest.TestCase):
         self.assertEqual((self.ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo/delivery")
         text = (self.ws / "CLAUDE.md").read_text(); self.assertIn("MYD-1", text); self.assertIn("Chat with the lead in Ukrainian", text); self.assertIn("turnstile config", text)
         self.assertEqual(json.loads((d / ".sync.json").read_text())["pushed"], True)
-        for needle in ["WORKTREE: %s (epic/myd-1)" % wt, "DELIVERY: %s" % d, "CLAUDE_MD: %s" % (self.ws / "CLAUDE.md"), "NEXT: ask the lead once (skill § preferences)",
+        for needle in ["WORKTREE: %s (epic/myd-1)" % wt, "DELIVERY: %s" % d, "CLAUDE_MD: %s" % (self.ws / "CLAUDE.md"), "NEXT: cd %s && claude" % self.ws,
+                       'NEXT: in that session say "turnstile status"',
                        "OK attach MYD-1", "SYNC: pushed abc123", "== MYD-1", "config: models", "WARN jsfiller#1"]:
             self.assertIn(needle, out, needle)
         self.assertFalse((self.tmp / "none.json").exists())

@@ -26,6 +26,17 @@ command, role-scoped agents and hooks that physically block forbidden actions.
   `ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`).
   The plugin holds only its name (`send_skill`); `init` and `status` say when it is not found.
 
+## Join an epic in three lines
+
+```
+claude plugin install turnstile@turnstile      # or: claude plugin update turnstile@turnstile
+turnstile attach --epic <KEY>                  # from any folder under your clone root
+cd <workspace> && claude                       # then say "turnstile status"
+```
+
+`attach` finds the clone root by walking up from the cwd to the folder that holds `pdffiller-knowledge/`, takes your GitHub login from `gh api user --jq .login` and your variant as `<key-lower>-<login>`; it ends with exactly two `NEXT:` lines.
+In the new session `turnstile status` prints `ONBOARD:` and the plugin dispatches the deployer to create your variant, then asks the one preferences question. The hooks load per folder, so start a new Claude session inside the workspace.
+
 ## Install
 
 ```
@@ -79,8 +90,8 @@ Without the shim the CLI is
    `delivery/.workspace.json` (this machine's absolute paths; `state.json` keeps only the relative names, `epic.repos.<r>.path`) and
    commits the `delivery/` skeleton. A workspace folder that exists and is not empty is refused, unless it already is this epic's
    workspace (then `init` attaches); a repo without a clone is refused with the expected path before anything is created.
-   Then open the workspace: `cd ~/Desktop/pdffiller/myd-1 && claude` — the hooks and `.turnstile` live there; the terminal or
-   Claude Code session in the clone root cannot drive the epic. Agents cut ticket branches inside `<workspace>/<repo>` from
+   Then open the workspace: `cd ~/Desktop/pdffiller/myd-1 && claude` — the hooks load per folder, so start a new Claude session inside
+   the workspace. Agents cut ticket branches inside `<workspace>/<repo>` from
    `origin/<base>` (or the story branch), never from `ws/*`; `turnstile brief … --var repo=<name>` renders that worktree's path.
 3. Write `delivery/plan.md` (`skills/turnstile/references/kickoff.md`; in Claude Code the orchestrator does this from the
    decomposition). The `turnstile-stories` JSON block needs at least `title`, `tickets`, `repos` and `branch` per story.
@@ -117,15 +128,15 @@ epics — stack mode behaves exactly as before) and `"control_cases"`. The teste
 
 ## Continuing someone else's epic
 
-`turnstile attach --epic MYD-1 [--clone-root <dir>] [--knowledge <clone>] [--workspace <dir>] [--workitem my-epic]`, run in your
-own clone root (or inside your knowledge clone), creates `<root>/<key>` the same way: it fetches `origin/epic/<key>`, adds the
+`turnstile attach --epic MYD-1`, run from any folder under your clone root (it walks up to the folder holding `pdffiller-knowledge/`; `--clone-root`, `--knowledge`, `--workspace`, `--workitem`,
+`--github`, `--variant` override), creates `<root>/<key>` the same way: it fetches `origin/epic/<key>`, adds the
 knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, adds a `ws/<key>` worktree of your
 `<root>/<name>` clone for every `epic.repos` entry (a missing clone is refused with its expected path), writes `.turnstile`,
 `delivery/.workspace.json` and the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and
-prints `status`; then `cd <workspace> && claude`, where the skill's `## preferences` step asks for this person's own
-review skill, send skill and models. Every writer first fetches: a worktree
-behind origin is refused (`MISSING: epic branch behind origin by N commits — run: turnstile sync`). `turnstile sync` fetches,
-fast-forwards and pushes — never rebase, never force; diverged histories print both heads and wait for the lead to merge.
+prints `status`; then `cd <workspace> && claude`, where `turnstile status` prints `ONBOARD:` (the deployer creates the variant) and the skill's `## preferences` step asks for this person's own
+review skill, send skill and models. Every writer first fetches: a worktree behind origin is merged by the same routine as `turnstile sync`, which fetches, fast-forwards or merges `origin/<branch>`
+(a conflict only in `board.html` / `boards/*.html` is re-rendered from the merged `state.json`; one in `state.json`, `ledger.md`, `plan.md` or `decisions.md` stops with the files named and the humans merge by hand) and pushes — never rebase, never force.
+`status` also prints `PLUGIN: <loaded> (restart the session to load <newer> …)` when a mid-session update left the hooks of this session on an older version.
 
 ## Several developers on one epic
 
@@ -288,7 +299,7 @@ reviewer's last comment; a newer one needs a new classification (which voids a `
 
 "If you replied to all comments on a PR and Copilot passed again, ping the reviewer to look again" (lead rule 2026-10-14, the
 re-request): once every human thread in scope has our latest reply and Copilot reviewed the current head with 0 open threads (repos
-without Copilot: the gate check green on the head), the agents re-request review on GitHub from the reviewers who commented on the
+without Copilot: the gate check green on the head; without either, the review-request event alone), the agents re-request review on GitHub from the reviewers who commented on the
 threads in this round — `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'`, no lead
 approval; Slack sends are gated by the lead's word in chat only. `turnstile status` prints that exact command while it has not happened for the head, then the
 `--rerequested` pass. A push-only rework (no reviewer comment since the PR last went to humans) pings nobody: the return records
@@ -368,10 +379,8 @@ session's project dir (`CLAUDE_PROJECT_DIR`), the cwd or a directory the command
 inert — exit 0, nothing checked — except the Bash guard's universal safety rules, which stay on everywhere: force-push, `git rebase` /
 `pull --rebase` / `pull.rebase true`, `--no-gpg-sign` / `commit.gpgsign=false`. The hook list below describes a workspace session:
 
-- `guard_bash.py` blocks `gh pr merge|ready`, `--add-reviewer`, `gh pr create --reviewer|-r`, human `requested_reviewers`
-  requests (the Copilot bot may be requested; `--input` bodies, team reviewers and computed logins or routes are refused; the
-  one human exception is below), REST `pulls/N/merge` writes, GraphQL
-  `mergePullRequest|markPullRequestReadyForReview|requestReviews*`, `ready_for_review`, `git push --force*`/`-f`/`+ref`,
+- `guard_bash.py` also records its plugin version in `delivery/.workspace.json` (`hooks_version`, for the `PLUGIN:` line of `status`); it has two human brakes, `turnstile approve` and merging, and refuses `gh pr merge`, `gh pr create --reviewer|-r`, REST `pulls/N/merge` writes, GraphQL
+  `mergePullRequest|enablePullRequestAutoMerge|requestReviews*`, `git push --force*`/`-f`/`+ref`,
   `git rebase`, `--no-gpg-sign`, `-c commit.gpgsign=false`, an empty Prometey `service_github_tag=`, a
   `Co-Authored-By` trailer or the "Generated with [Claude Code]" footer in a `git commit` / `gh pr create|edit` /
   `gh api` call — also when they sit in a file given with `-F`/`--file`/`--body-file`/`--input` (the hook reads it) —
@@ -399,15 +408,16 @@ inert — exit 0, nothing checked — except the Bash guard's universal safety r
   `updateIssueComment` and the like (`graphql-review-write`), `resolveReviewThread`/`unresolveReviewThread` unless every
   literal `PRRT_…` id is a thread GitHub says a bot opened (`resolve-thread`, `resolve-human-thread`), and a REST write to a
   computed endpoint (`rest-computed-route`). `POST repos/<org>/<repo>/pulls/<n>/comments/<id>/replies` (literal) passes only
-  for a PR of the epic in REWORK (`reply-unknown-pr`, `reply-not-rework`), a thread classified in `state.json`
+  for a PR of the epic in any state (`reply-unknown-pr`), a thread classified in `state.json`
   (`reply-unclassified`), with the lead's approved `reply` entry for a `needs_lead` thread (`reply-needs-lead`), and while
   GitHub shows no reviewer comment newer than the classification (`reply-reclassify`; `gh` failing → `reply-unverified`).
-  **Re-request (lead rule 2026-10-14):** `gh api` POST to the literal `repos/<org>/<repo>/pulls/<n>/requested_reviewers` with
-  literal `-f|-F 'reviewers[]=<login>'` fields passes for humans only for a PR of the epic (`human-reviewer-request` otherwise) in
-  REWORK (`rerequest-not-rework`) whose threads all have their replies as the pass requires (`rerequest-replies`), in a round with
-  thread authors (`rerequest-push-only`), for exactly those authors (`rerequest-not-authors`), with Copilot's latest review on
-  the GitHub head and 0 open Copilot threads (`rerequest-copilot`) or, without Copilot, the gate check green on the head
-  (`rerequest-gate`); `gh` failing → `rerequest-unverified`.
+  **Allowed from 0.5.3 (the model runs the GitHub plumbing itself):** `gh pr ready <n>` / `--undo` and the GraphQL `markPullRequestReadyForReview` / `convertPullRequestToDraft`; `gh api -X POST|DELETE`
+  on the literal `repos/<org>/<repo>/pulls/<n>/requested_reviewers` with literal `-f|-F 'reviewers[]=<login>'` fields and `gh pr edit --add-reviewer`, for logins in `epic.members` or `epic.reviewers`
+  (`turnstile config set reviewers=a,b [--epic]`; an empty list means any human login) in any PR state — never teams, bots (the Copilot bot excepted), `--input` bodies or computed logins or routes
+  (`human-reviewer-request`, `reviewer-not-member`, `reviewer-foreign-org`; `gh` or state failing → `reviewer-unverified`); `gh run rerun|watch`, `gh pr checks` and every read-only `gh` call;
+  a GraphQL read whose query is literal or merely carries computed values (`graphql-computed` only for mutations); and `git merge` of the epic branch. The `delivery-write` rule fires only on real write
+  operators aimed at the delivery dir (a redirect, `tee`, `sed -i`, `rm`, `mv`, `cp`/`install` to a destination, `dd of=`, `curl -o`, an interpreter opening a file for writing, `git checkout|restore|reset|stash` on a delivery path),
+  never on words like `gate` or `S10`; `evidence/`, `reports/`, `briefs/` and `boards/` stay writable.
 - `guard_role.py` (PreToolUse, matcher `mcp__.*(transitionJiraIssue|editJiraIssue|createJiraIssue|addCommentToJiraIssue)`)
   refuses Jira writes under any MCP prefix when the caller is any subagent (payload `agent_id`) or a turnstile role; the
   main-thread orchestrator (no `agent_id`) passes and records with `jira-synced` (`editJiraIssue` is how it sets the assignee

@@ -69,11 +69,17 @@ class SkillFiles(unittest.TestCase):
         for doc in (text, readme):
             for needle in ["turnstile attach --epic", "--clone-root", "origin/epic/<key>", "behind origin", "--no-push", "preferences", "pushed",
                            ".workspace.json", "cd <workspace> && claude", "ws/<key"]: self.assertIn(needle, doc, needle)
+    def test_onboarding_is_three_lines_everywhere(self):
+        text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
+        self.assertTrue(readme.index("## Join an epic in three lines") < readme.index("## Install"))
+        for needle in ["claude plugin install turnstile@turnstile", "turnstile attach --epic <KEY>", "cd <workspace> && claude"]: self.assertIn(needle, readme.split("## Install")[0], needle)
+        for needle in ["ONBOARD:", "PLUGIN:", "without asking", "exactly two lines"]: self.assertIn(needle, text, needle)
     def test_init_from_the_clone_root_is_documented(self):
         # 2026-11-03: init runs in the clone root, creates <root>/<key> with a worktree per repo; the lead opens that folder
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text(); ws = (ROOT / "templates" / "CLAUDE.md.workspace").read_text()
         for doc in (text, readme):
-            for needle in ["clone root", "--clone-root", "ws/<key", "origin/<base>", "cd <workspace> && claude", "cannot drive the epic", ".workspace.json", "--var repo=<name>"]:
+            self.assertIn("start a new Claude session inside the workspace", doc); self.assertNotIn("cannot drive", doc)
+            for needle in ["clone root", "--clone-root", "ws/<key", "origin/<base>", "cd <workspace> && claude", ".workspace.json", "--var repo=<name>"]:
                 self.assertIn(needle, doc, needle)
         for needle in ["← clone root", "← created by init", "worktree ws/myd-1 from origin/develop", "epic.repos.<r>.path", "never from `ws/*`"]: self.assertIn(needle, readme, needle)
         for needle in ["{{repos}}", "{{ws_branch}}", "never from", "--var repo=<name>"]: self.assertIn(needle, ws, needle)
@@ -113,7 +119,7 @@ class SkillFiles(unittest.TestCase):
         # lead rule 2026-10-14 (re-request): documented wherever the REWORK return is
         for name, doc in [("lifecycle", text), ("SKILL", skill), ("spec", spec), ("README", readme)]:
             for k in ["requested_reviewers", "--rerequested", "reviewer_notified", "push-only"]: self.assertIn(k, doc, "%s lacks %s" % (name, k))
-        for k in ["rerequest-not-authors", "rerequest-copilot", "rerequest-replies"]: self.assertIn(k, readme, k)
+        for k in ["reviewer-not-member", "human-reviewer-request", "reviewer-unverified"]: self.assertIn(k, readme, k)
         self.assertIn("2026-10-14 (lead, re-request)", spec)
         for s in ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED", "PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]:
             self.assertIn("**" + s + "**", text)

@@ -14,10 +14,11 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ p
   timelineItems(last:50, itemTypes:[REVIEW_REQUESTED_EVENT]){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login}}}}}
   reviewThreads(first:100){nodes{id isResolved comments(first:100){totalCount nodes{databaseId author{__typename login} createdAt}}}}
   commits(last:1){nodes{commit{oid signature{isValid} statusCheckRollup{state contexts(first:100){totalCount nodes{
-    ... on CheckRun{name conclusion status completedAt} ... on StatusContext{context state createdAt}}}}}}} } } }"""
+    ... on CheckRun{name conclusion status completedAt detailsUrl} ... on StatusContext{context state createdAt}}}}}}} } } }"""
 TRAILER_RX = re.compile(r"Co-Authored-By|Generated with \[Claude Code\]", re.I)
 FOOTER_RX = re.compile(r"Generated with \[Claude Code\]", re.I)
 
+RUN_RX = re.compile(r"/actions/runs/(\d+)")
 FAILURE = {"failure", "cancelled", "timed_out", "action_required", "error", "startup_failure", "stale"}
 PENDING = {"pending", "in_progress", "queued", "expected", "waiting", "requested", "none"}
 RANK = {"failure": 3, "pending": 2, "success": 1, "skipped": 0}
@@ -54,6 +55,7 @@ class PrFacts:
     copilot_review_head: Optional[str] = None
     copilot_review_at: Optional[str] = None
     check_times: Dict[str, str] = field(default_factory=dict)
+    cancelled: List[dict] = field(default_factory=list)  # [{name, run}]: CANCELLED runs with no newer run on the head (to re-run)
 
     def ci_without(self, names) -> str:
         """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
@@ -100,20 +102,38 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
     check_times: Dict[str, str] = {}
     contexts = rollup.get("contexts") or {}
     nodes = contexts.get("nodes") or []
+    runs: Dict[str, List[dict]] = {}
     for c in nodes:
         if "name" in c:
             name, value, at = c["name"], c.get("conclusion") or c.get("status"), c.get("completedAt")
+            m = RUN_RX.search(c.get("detailsUrl") or "")
+            runs.setdefault(name, []).append({"raw": _low(value), "at": at, "run": m.group(1) if m else None})
         elif "context" in c:
             name, value, at = c["context"], c.get("state"), c.get("createdAt")
+            runs.setdefault(name, []).append({"raw": _low(value), "at": at, "run": None})
         else:
             continue
-        v = _norm(value)
-        if RANK[v] >= RANK.get(checks.get(name, "skipped"), 0):
-            checks[name] = v
         if at and (ts(at) or datetime.datetime.min) > (ts(check_times.get(name)) or datetime.datetime.min):
             check_times[name] = at
+    cancelled: List[dict] = []
+    saw_cancelled = False
+    for name, entries in runs.items():
+        for e in entries:
+            if e["raw"] == "cancelled":
+                saw_cancelled = True
+                newer = [o for o in entries if o["raw"] != "cancelled" and (not o["at"] or not e["at"] or (ts(o["at"]) or datetime.datetime.min) >= (ts(e["at"]) or datetime.datetime.min))]
+                if newer:
+                    continue
+                cancelled.append({"name": name, "run": e["run"]})
+                v = "pending"
+            else:
+                v = _norm(e["raw"])
+            if RANK[v] >= RANK.get(checks.get(name, "skipped"), 0):
+                checks[name] = v
     total = contexts.get("totalCount")
     checks_complete = total is None or total <= len(nodes)
+    if saw_cancelled and checks_complete and checks and ci == "failure" and "failure" not in checks.values():
+        ci = "pending" if "pending" in checks.values() else "success"
     head = pr.get("headRefOid") or ""
     approvals, changes, changes_heads, review_heads = [], [], {}, {}
     copilot_head = copilot_at = None
@@ -162,7 +182,7 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
         if who.get("__typename") == "User" and who.get("login") and (ts(n.get("createdAt")) or datetime.datetime.min) > (ts(requested_at.get(who["login"])) or datetime.datetime.min):
             requested_at[who["login"]] = n.get("createdAt")
     return PrFacts(review_requests=requests, review_requested_at=requested_at, review_heads=review_heads, copilot_review_head=copilot_head,
-                   copilot_review_at=copilot_at, check_times=check_times, threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
+                   copilot_review_at=copilot_at, check_times=check_times, cancelled=cancelled, threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
                    base=pr.get("baseRefName"), branch=pr.get("headRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
                    checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes), changes_requested_heads=changes_heads,

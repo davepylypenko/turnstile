@@ -308,7 +308,7 @@ class Config(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": ""}), mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
             rc, out = out_of(reconcile.cli, self.d, status=True)
             self.assertTrue(out.startswith("SYNC:"), out[:40]); self.assertEqual(out.count("WARN: send skill"), 1)
-            self.assertIn("WARN: send skill /send-pr-review not found on this machine (config set send_skill=… or install it)", out.splitlines()[2])
+            self.assertIn("WARN: send skill /send-pr-review not found on this machine (config set send_skill=… or install it)", out.splitlines())
             rc, out = out_of(reconcile.cli, self.d); self.assertNotIn("send skill", out)  # reconcile alone stays quiet
             skill = home / ".claude" / "skills" / "my-send" / "SKILL.md"; skill.parent.mkdir(parents=True); skill.write_text("x")
             out_of(config_cmd.set_, self.d, "send_skill=/my-send", io=self.io)

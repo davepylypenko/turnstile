@@ -117,7 +117,7 @@ def classification_for_comment(pr: dict, comment_id: str) -> Tuple[Optional[str]
 
 def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str, live_threads: Callable[[str], List[dict]]) -> Optional[str]:
     """The Bash guard's verdict on `POST repos/<org>/<repo>/pulls/<n>/comments/<id>/replies`: None to allow, else the refusal.
-    State first (the PR is the epic's and in REWORK; the thread is classified; a needs_lead thread has the lead's approved entry),
+    State first (the PR is the epic's, in any state; the thread is classified; a needs_lead thread has the lead's approved entry),
     then GitHub (no reviewer comment newer than the classification). `live_threads(pid)` returns the facts' threads."""
     epic = data.get("epic") or {}
     pid = "%s#%s" % (repo, number)
@@ -125,9 +125,6 @@ def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str,
     if (org or "").lower() != (epic.get("github_org") or "").lower() or pr is None:
         return ("blocked by rule reply-unknown-pr. %s/%s#%s is not a PR of this epic (state.json); replies go only to the epic's review threads."
                 % (org, repo, number))
-    if pr.get("state") != "REWORK":
-        return ("blocked by rule reply-not-rework. %s is %s: thread replies are posted while the PR is in REWORK (turnstile status proposes the "
-                "REWORK pass for a new human thread)." % (pid, pr.get("state")))
     tid, rec = classification_for_comment(pr, comment_id)
     if rec is None:
         return ("blocked by rule reply-unclassified. Comment %s is not in a classified thread of %s: record it first with turnstile threads %s "
@@ -199,11 +196,14 @@ def gate_context(repo_cfg: dict) -> Optional[str]:
     return repo_cfg["gate_check"] if "gate_check" in repo_cfg else repo_cfg.get("gate")
 
 def signal(repo_cfg: dict) -> str:
-    return "Copilot reviewed it with 0 open threads" if repo_cfg.get("copilot") else "the gate check %s is green" % (gate_context(repo_cfg) or "<none>")
+    if repo_cfg.get("copilot"):
+        return "Copilot reviewed it with 0 open threads"
+    gc = gate_context(repo_cfg)
+    return "the gate check %s is green" % gc if gc else "the review request on GitHub is newer than the replies"
 
 def clean_on_head(f, repo_cfg: dict) -> Tuple[Optional[str], Optional[datetime.datetime]]:
     """(why not, when it became clean): Copilot's latest review is on the GitHub head and no Copilot thread is open (repos with
-    Copilot), else the repo gate's check context is green on the head. A repo with neither cannot be verified (the lead re-requests)."""
+    Copilot), else the repo gate's check context is green on the head. A repo with neither takes the GitHub review-request event alone."""
     if repo_cfg.get("copilot"):
         if not rules.same_head(f.copilot_review_head, f.head):
             return ("Copilot has not reviewed the current head %s (its latest review is on %s): re-request Copilot and close its threads first"
@@ -213,7 +213,7 @@ def clean_on_head(f, repo_cfg: dict) -> Tuple[Optional[str], Optional[datetime.d
         return None, github.ts(f.copilot_review_at)
     gc = gate_context(repo_cfg)
     if not gc:
-        return "the repo has no Copilot and no gate check on GitHub, so a clean head cannot be verified (the lead re-requests)", None
+        return None, None
     if f.checks.get(gc) != "success":
         return "the gate check %s is %s on head %s" % (gc, f.checks.get(gc) or "absent", f.head[:12]), None
     return None, github.ts(f.check_times.get(gc))
@@ -263,40 +263,6 @@ def rerequest_missing(pr: dict, pid: str, f, epic: dict, awaiting: Optional[List
         return ["MISSING --rerequested to be exactly the thread authors %s (has %s): %s" % (", ".join(authors), ", ".join(rr.get("logins") or []), hint)]
     return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, epic, awaiting, repo_cfg, authors)]
 
-def rerequest_refusal(data: dict, org: str, repo: str, number: str, people: List[str], live_facts: Callable[[str], object]) -> Optional[str]:
-    """The Bash guard's verdict on a `requested_reviewers` POST that names humans: None to allow, else the refusal. State first (an
-    epic PR in REWORK), then GitHub (every thread answered, a review round with thread authors, exactly those logins, a clean head)."""
-    epic = data.get("epic") or {}
-    pid = "%s#%s" % (repo, number)
-    pr = (data.get("prs") or {}).get(pid)
-    if (org or "").lower() != (epic.get("github_org") or "").lower() or pr is None:
-        return ("blocked by rule human-reviewer-request. %s/%s#%s is not a PR of this epic: human reviewers are requested by the lead (only "
-                "the re-request of a REWORK PR's thread authors passes here)." % (org, repo, number))
-    if pr.get("state") != "REWORK":
-        return ("blocked by rule rerequest-not-rework. %s is %s: the agents re-request the thread authors only for a REWORK PR, after the "
-                "replies; any other review request is the lead's." % (pid, pr.get("state")))
-    try:
-        f = live_facts(pid)
-    except Exception as e:
-        return "blocked by rule rerequest-unverified. Cannot read %s on GitHub (%s); failing closed." % (pid, e)
-    awaiting = data.get("awaiting_human")
-    miss = replies_missing(dict(pr, _id=pid), pid, f.threads, epic, awaiting, org)
-    if miss:
-        return ("blocked by rule rerequest-replies. Every reviewer thread needs its reply before the reviewers are pinged: %s"
-                % "; ".join(m[len("MISSING "):] if m.startswith("MISSING ") else m for m in miss))
-    authors = round_authors(pr, f.threads, epic, awaiting)
-    if not authors:
-        return ("blocked by rule rerequest-push-only. No reviewer commented on %s's threads since it last went to humans: a push-only rework "
-                "pings nobody (the return records reviewer_notified false); the lead decides." % pid)
-    if sorted({p.lower() for p in people}) != sorted({a.lower() for a in authors}):
-        return ("blocked by rule rerequest-not-authors. Re-request exactly the thread authors of this round, %s (asked: %s): %s"
-                % (", ".join(authors), ", ".join(people), request_route(org, pid, authors)))
-    why, _ = clean_on_head(f, (epic.get("repos") or {}).get(repo) or {})
-    if why:
-        rule = "rerequest-copilot" if ((epic.get("repos") or {}).get(repo) or {}).get("copilot") else "rerequest-gate"
-        return "blocked by rule %s. %s; the reviewers are re-requested on a clean head only." % (rule, why)
-    return None
-
 def _ids(text: Optional[str]) -> List[str]:
     return [x.strip() for x in (text or "").split(",") if x.strip()]
 
@@ -333,8 +299,8 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                     print("%s %s · %s · comment %s · last reviewer comment %s" % (t.get("id"), (rec or {}).get("class", "unclassified")
                           + (" (stale: re-classify)" if stale else ""), t.get("author"), t.get("comment_id"), last_reviewer_at(t, ours)))
                 print("OK threads %s: listed, nothing written" % pid); return 0
-            if pr.get("state") != "REWORK":
-                raise TurnstileError("threads are classified while the PR is in REWORK (%s is %s); pass REWORK first" % (pid, pr.get("state")))
+            if pr.get("state") in ("MERGED", "CLOSED"):
+                raise TurnstileError("%s is %s: nothing to classify" % (pid, pr.get("state")))
             if report and not (delivery / report).is_file():
                 raise TurnstileError("report file %s not found under %s" % (report, delivery))
             both = sorted(set(sids) & set(lids))

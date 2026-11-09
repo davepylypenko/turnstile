@@ -40,6 +40,7 @@ class Options:
     arm: Optional[str] = None
     base_heads: Optional[str] = None
     owner: Optional[str] = None
+    sent_at: Optional[str] = None
 
 class IO:
     """Everything that touches the world; injectable so tests stay offline."""
@@ -72,6 +73,24 @@ class IO:
         self._git(delivery, ["push", "-q", "origin", "HEAD:refs/heads/" + branch])
     def git_ff(self, delivery: pathlib.Path, branch: str) -> None:
         self._git(delivery, ["merge", "-q", "--ff-only", "origin/" + branch])
+    def git_merge(self, delivery: pathlib.Path, branch: str) -> List[str]:
+        r = subprocess.run(["git", "merge", "--no-edit", "origin/" + branch], cwd=str(delivery), capture_output=True, text=True)
+        if r.returncode == 0:
+            return []
+        u = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U", "--relative"], cwd=str(delivery), capture_output=True, text=True)
+        files = u.stdout.split()
+        if not files:
+            raise TurnstileError("git merge origin/%s: %s" % (branch, (r.stderr or r.stdout).strip()[:200]))
+        return files
+    def git_merge_abort(self, delivery: pathlib.Path) -> None:
+        subprocess.run(["git", "merge", "--abort"], cwd=str(delivery), capture_output=True, text=True)
+    def git_finish_generated(self, delivery: pathlib.Path, files: List[str]) -> None:
+        from . import board
+        for f in files:
+            subprocess.run(["git", "checkout", "--ours", "--", f], cwd=str(delivery), capture_output=True, text=True)
+        board.write_files(delivery, board.render_files(st_mod.load(pathlib.Path(delivery) / "state.json").data))
+        self._git(delivery, ["add", "-A", "."])
+        self._git(delivery, ["commit", "-q", "--no-edit"])
     def render_board(self, data: dict) -> Optional[str]:
         try:
             from . import board
@@ -102,6 +121,12 @@ def _check_report(delivery: pathlib.Path, rel: Optional[str]) -> None:
     if rel and not (pathlib.Path(delivery) / rel).is_file():
         raise TurnstileError("report file %s not found under %s" % (rel, delivery))
 
+def _check_sent_at(value: str) -> str:
+    from . import github
+    if not github.ts(value):
+        raise TurnstileError("--sent-at must be an ISO UTC time like 2026-11-09T14:05:27Z (got %r)" % value)
+    return value
+
 def _apply_pr_evidence(pr: dict, o: Options) -> None:
     if o.head:
         if not rules.valid_head(o.head):
@@ -121,7 +146,10 @@ def _apply_pr_evidence(pr: dict, o: Options) -> None:
         ev["copilot"] = {"head": h, "open_threads": o.copilot}
     if o.slack:
         ev["human"] = {"head": h, "slack_permalink": o.slack, "reviewers": o.reviewers.split(",") if o.reviewers else [],
-                       "sent_head": h, "approved": o.approved, "open_threads": 0, "approvals": [], "sent_at": _now()}
+                       "sent_head": h, "approved": o.approved, "open_threads": 0, "approvals": [],
+                       "sent_at": rules.slack_sent_at(o.slack) or _now_s()}
+    if o.sent_at:
+        ev.setdefault("human", {"head": h, "sent_head": h, "approvals": [], "open_threads": 0})["sent_at"] = _check_sent_at(o.sent_at)
     if o.approvals is not None or o.open_threads is not None:
         human = ev.setdefault("human", {"head": h, "sent_head": h, "approvals": [], "open_threads": 0})
         if o.approvals is not None:
@@ -451,6 +479,14 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 pr = st_mod.pr(st, ident)
                 repo = st_mod.repo_cfg(st, ident)
                 back = target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK"
+                if o.sent_at and target == "ON_HUMAN_REVIEW" and pr.get("state") == target and not (o.slack or o.head or o.rerequested):
+                    human = (pr.get("evidence") or {}).get("human")
+                    if not human:
+                        raise TurnstileError("%s has no evidence.human to correct" % ident)
+                    was = human.get("sent_at"); human["sent_at"] = _check_sent_at(o.sent_at)
+                    summary = "pass pr %s: evidence.human.sent_at corrected %s → %s" % (ident, was, human["sent_at"])
+                    _side_effects(delivery, st, [summary], io, o.no_commit, o.no_push)
+                    print("OK " + summary); return 0
                 if back and (o.slack or o.approved or o.reviewers):
                     raise TurnstileError("REWORK → ON_HUMAN_REVIEW takes no --slack/--approved/--reviewers: the replies on the reviewers' threads and "
                                          "the GitHub re-request of the thread authors are the notification, and only a needs_lead thread waits for "

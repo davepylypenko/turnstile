@@ -148,7 +148,7 @@ def _same_epic(ws: pathlib.Path, key: str) -> bool:
         return False
 
 def next_lines(ws: pathlib.Path, cwd: pathlib.Path) -> List[str]:
-    return ["NEXT: cd %s && claude — the hooks and .turnstile live in that folder; this session (in %s) cannot drive the epic" % (ws, cwd)]
+    return ["NEXT: cd %s && claude — the hooks load per folder, so start a new Claude session inside the workspace (this one runs in %s)" % (ws, cwd)]
 
 def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
     from .pass_cmd import _ensure_repo_files

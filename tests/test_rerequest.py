@@ -87,6 +87,21 @@ class Back(unittest.TestCase):
         self.assertEqual((h["rerequested"]["logins"], h["rerequested"]["head"], h["reviewer_notified"]), (["isachivka"], H2, True))
         self.assertTrue(h["rerequested"]["at"]); self.assertEqual(h["sent_head"], H2)
         self.assertIn("re-requested review from isachivka", (self.d / "ledger.md").read_text())
+    def test_without_a_gate_check_or_copilot_the_review_request_event_alone_is_enough(self):
+        data = self.t.data(); data["epic"]["repos"]["jsfiller"]["gate_check"] = None; self.write(data)
+        self.replied(); self.requested(at="2026-10-13T12:59:00Z")
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 2); self.assertIn("predates", out); self.assertIn("our last reply", out)
+        self.requested(at="2026-10-13T13:05:00Z")
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.human()["rerequested"]["logins"], ["isachivka"])
+    def test_a_gate_check_must_be_green_on_the_head(self):
+        data = self.t.data(); data["epic"]["repos"]["jsfiller"]["gate_check"] = "gate / gate"; self.write(data)
+        self.replied(); self.requested()
+        self.io.facts["jsfiller#1"]["checks"] = {"gate / gate": "failure", "pdf-review": "success"}
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 2); self.assertIn("gate / gate", out)
+        self.io.facts["jsfiller#1"]["checks"] = {"gate / gate": "success", "pdf-review": "success"}
+        self.io.facts["jsfiller#1"]["check_times"] = {"gate / gate": "2026-10-13T13:00:00Z"}
+        rc, out = self.back(gate="pdf-review:pass", rerequested="isachivka"); self.assertEqual(rc, 0, out)
     def test_the_re_request_is_verified_against_github(self):
         self.replied()
         rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 2); self.assertIn("isachivka", out); self.assertIn(CMD, out)

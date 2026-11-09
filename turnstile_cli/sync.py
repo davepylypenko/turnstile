@@ -1,4 +1,4 @@
-import datetime, json, pathlib
+import datetime, json, pathlib, re
 from typing import Optional
 from . import state as st_mod
 from .errors import TurnstileError
@@ -50,6 +50,22 @@ def _head(io, delivery) -> Optional[str]:
     except Exception:
         return None
 
+GENERATED = re.compile(r"^(?:board\.html|boards/[^/]+\.html)$")
+
+def bring_up_to_date(io, delivery, br: str, behind: int, ahead: int) -> str:
+    if not ahead:
+        io.git_ff(delivery, br)
+        return "sync: fast-forwarded %s by %d commit(s)" % (br, behind)
+    conflicts = io.git_merge(delivery, br)
+    hard = [c for c in conflicts if not GENERATED.match(c)]
+    if hard:
+        io.git_merge_abort(delivery)
+        raise TurnstileError("histories diverged on %s: local %s ahead by %d, origin %s ahead by %d, and the merge conflicts in %s; turnstile never "
+                             "rebases or forces — merge origin/%s by hand, then: turnstile sync" % (br, _head(io, delivery), ahead, io.sha(delivery, "origin/" + br), behind, ", ".join(hard), br))
+    if conflicts:
+        io.git_finish_generated(delivery, conflicts)
+    return "sync: merged origin/%s (%d theirs, %d ours)" % (br, behind, ahead)
+
 def guard_behind(io, delivery, br: str, strict: bool = False) -> None:
     try:
         io.git_fetch(delivery, br)
@@ -59,7 +75,11 @@ def guard_behind(io, delivery, br: str, strict: bool = False) -> None:
         print("WARN fetch origin %s failed (%s): proceeding on local facts" % (br, str(e)[:120])); return
     behind, ahead = io.behind_ahead(delivery, br)
     if behind:
-        raise TurnstileError("epic branch %s behind origin by %d commit(s)%s — run: turnstile sync" % (br, behind, " (and ahead by %d)" % ahead if ahead else ""))
+        try:
+            entry = bring_up_to_date(io, delivery, br, behind, ahead)
+        except TurnstileError as e:
+            raise TurnstileError("epic branch %s behind origin by %d commit(s)%s and the merge failed: %s" % (br, behind, " (and ahead by %d)" % ahead if ahead else "", e))
+        raise TurnstileError("%s; the delivery changed under this command, so nothing was written — run it again" % entry)
 
 def push(io, delivery, br: str, no_push: bool = False) -> dict:
     head = _head(io, delivery)
@@ -85,12 +105,16 @@ def run(delivery, io=None) -> int:
             except Exception as e:
                 raise TurnstileError("fetch origin %s failed: %s" % (br, str(e)[:200]))
             behind, ahead = io.behind_ahead(delivery, br)
-            if behind and ahead:
-                raise TurnstileError("histories diverged on %s: local %s ahead by %d, origin %s ahead by %d; turnstile never rebases or forces — "
-                                     "merge origin/%s by hand (the lead), then: turnstile sync" % (br, _head(io, delivery), ahead, io.sha(delivery, "origin/" + br), behind, br))
+            merged = False
             if behind:
-                io.git_ff(delivery, br); print("fast-forwarded %s by %d commit(s) from origin" % (br, behind))
-            rec = push(io, delivery, br)
+                entry = bring_up_to_date(io, delivery, br, behind, ahead)
+                if ahead:
+                    from . import pass_cmd
+                    pass_cmd._side_effects(delivery, st_mod.load(delivery / "state.json"), [entry], io, False, False)
+                    print(entry); merged = True
+                else:
+                    print("fast-forwarded %s by %d commit(s) from origin" % (br, behind))
+            rec = (load(delivery) if merged else None) or push(io, delivery, br)
         if not rec["pushed"]:
             print("MISSING " + line(rec)); return 2
         print("OK sync %s → origin/%s" % (rec["head"], br)); return 0

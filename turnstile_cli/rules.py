@@ -20,6 +20,14 @@ PR_FROM = {
 }
 HEAD_RX = re.compile(r"^[0-9a-f]{8,40}$")
 SLACK_PERMALINK_RX = re.compile(r"^https://[\w-]+\.slack\.com/archives/")
+SLACK_TS_RX = re.compile(r"/p(\d{10})(\d{6})(?:[/?#]|$)")
+
+def slack_sent_at(permalink: Optional[str]) -> Optional[str]:
+    m = SLACK_TS_RX.search(permalink or "")
+    if not m:
+        return None
+    import datetime
+    return datetime.datetime.fromtimestamp(int(m.group(1)), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def valid_head(h: Optional[str]) -> bool:
     return bool(h) and bool(HEAD_RX.match(h.lower()))
