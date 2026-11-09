@@ -243,6 +243,11 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
     st = st_mod.load(pathlib.Path(delivery) / "state.json")
     if not as_json:
         print(sync.line(sync.load(delivery)))
+    if status:
+        from . import config
+        warn = config.send_skill_warning(*config.send_skill(st.data, pathlib.Path(delivery)))
+        if warn:
+            print(warn)
     ledger_path = pathlib.Path(delivery) / "ledger.md"
     org = rules.require_org(st.data)
     facts = {}

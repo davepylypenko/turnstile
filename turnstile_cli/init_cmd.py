@@ -213,7 +213,8 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target); print(sync.line(rec))
         print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
         print("CONFIG: " + config.one_line(config.effective(data)))
-        print("NEXT: ask the lead once (skill § preferences): own review skill? other model/effort per agent? Record with "
+        print(config.send_skill_line(*config.send_skill(data, delivery)))
+        print("NEXT: ask the lead once (skill § preferences): own review skill? send skill? other model/effort per agent? Record with "
               "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
         for line in next_lines(ws, cwd):
             print(line)

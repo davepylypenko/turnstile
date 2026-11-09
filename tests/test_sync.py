@@ -159,7 +159,6 @@ class Attach(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp()).resolve(); self.ws = self.tmp / "ws"; self.ws.mkdir()
         self.knowledge = self.tmp / "pdffiller-knowledge"; (self.knowledge / ".git").mkdir(parents=True)
         for repo in ("jsfiller", "docs-platform"): (self.tmp / repo / ".git").mkdir(parents=True)
-        self.env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": str(self.tmp / "none.json")}); self.env.start(); self.addCleanup(self.env.stop)
         self.gh = mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")); self.gh.start(); self.addCleanup(self.gh.stop)
     def attach(self, git, **kw):
         o = attach_cmd.AttachOptions(**dict(dict(knowledge=str(self.knowledge), epic="MYD-1", workspace=str(self.ws)), **kw))

@@ -71,9 +71,10 @@ class Config(unittest.TestCase):
             config.save_user({"review_skill": "/x"}); self.assertTrue((self.tmp / "dot" / "turnstile" / "config.json").exists())
 
     def test_skill_values_must_be_slash_commands(self):
-        for bad in ["pdf-review", "/pdf review", "/x;rm", "http://x", "/"]:
+        for bad in ["pdf-review", "/pdf review", "/x;rm", "http://x", "/", "/..", "/.", "/:", "/a:", "/:b", "/a:b:c", "/-x", "/.hidden"]:
             with self.assertRaises(TurnstileError, msg=bad): config.parse_value("review_skill", bad)
-        for ok in ["/code-review", "/pdf-review:run", "/my.review_2"]: self.assertEqual(config.parse_value("story_review_skill", ok), ok)
+        for ok in ["/code-review", "/pdf-review:run", "/my-review", "/my.review_2", "/kn:qa-test_v2"]: self.assertEqual(config.parse_value("story_review_skill", ok), ok)
+        self.assertEqual(config.SKILL_RX.pattern, r"^/(?:[\w][\w.-]*:)?[\w][\w.-]*$")
     def test_keys_and_values_are_validated(self):
         for key in ["model", "models.", "models.nobody", "gate", "review", ""]:
             with self.assertRaises(TurnstileError, msg=key): config.parse_key(key)
@@ -211,7 +212,138 @@ class Config(unittest.TestCase):
         rc, out = out_of(config_cmd.list_, None)
         self.assertEqual(rc, 0); self.assertIn("EPIC: none", out); self.assertIn("(absent)", out)
         for a, d in models.DEFAULTS.items(): self.assertIn("models.%s = %s (default)" % (a, config.fmt_model(d)), out)
-        self.assertIn("story_review_skill = /code-review (default)", out); self.assertIn("OK config list", out)
+        self.assertIn("story_review_skill = /code-review (default)", out); self.assertIn("send_skill = /send-pr-review (default)", out); self.assertIn("OK config list", out)
+
+    def test_send_skill_is_a_third_skill_key_in_every_layer(self):
+        # 2026-11-06: the send skill is a name the plugin resolves on the developer's machine, never a copy in the repo
+        self.assertEqual(config.SKILL_KEYS, ("review_skill", "story_review_skill", "send_skill")); self.assertIn("send_skill", config.KEYS_HELP)
+        self.assertEqual(config.effective(None, {})["send_skill"], {"value": "/send-pr-review", "source": "default"})
+        self.assertEqual(config.effective({"epic": {"send_skill": "/team-send"}}, {})["send_skill"], {"value": "/team-send", "source": "epic"})
+        self.assertEqual(config.effective({"epic": {"send_skill": "/team-send"}}, {"send_skill": "/my-send"})["send_skill"], {"value": "/my-send", "source": "user"})
+        self.assertEqual(config.effective({"epic": {"key": "OLD"}}, {})["send_skill"]["value"], "/send-pr-review")  # a state file from before the key
+        self.assertIsNone(json.loads((init_cmd.TEMPLATES / "state.json").read_text())["epic"]["send_skill"])
+        for bad in ["send-pr-review", "/a b", ""]:
+            with self.assertRaises(TurnstileError, msg=bad): config.parse_value("send_skill", bad)
+        self.user.write_text('{"send_skill": "nope"}')
+        with self.assertRaises(TurnstileError): config.load_user()
+        self.user.unlink()
+        rc, out = out_of(config_cmd.set_, self.d, "send_skill=/my-send", io=self.io)
+        self.assertEqual(rc, 0, out); self.assertIn("send_skill = /my-send (user)", out); self.assertEqual(json.loads(self.user.read_text()), {"send_skill": "/my-send"})
+        rc, out = out_of(config_cmd.list_, self.d); self.assertIn("send_skill = /my-send (user)", out)
+        self.assertIn("send_skill=/my-send", config.one_line(config.effective(self.data()))); self.assertIn("user send_skill", config.one_line(config.effective(self.data())))
+        rc, out = out_of(config_cmd.set_, self.d, "send_skill=/team-send", epic=True, io=self.io); self.assertEqual(rc, 0, out); self.approve("ah-1")
+        rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 0, out); self.assertEqual(self.data()["epic"]["send_skill"], "/team-send")
+        self.assertIn("send_skill = /my-send (user)", out)  # the user layer still wins
+        rc, out = out_of(config_cmd.unset, self.d, "send_skill", io=self.io); self.assertEqual(rc, 0); self.assertIn("send_skill = /team-send (epic)", out)
+        self.assertIn("config set send_skill=/team-send (epic, approved ah-1)", (self.d / "ledger.md").read_text())
+
+    def test_skill_path_looks_in_home_cwd_roots_and_the_plugin_cache(self):
+        home = self.tmp / "fakehome"; (home / ".claude" / "skills").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": ""}):
+            self.assertIsNone(config.skill_path("/send-pr-review")); self.assertIsNone(config.skill_path("/pdf-review:run"))
+            plain = home / ".claude" / "skills" / "send-pr-review" / "SKILL.md"; plain.parent.mkdir(); plain.write_text("---\nname: send-pr-review\n---\n")
+            self.assertEqual(config.skill_path("/send-pr-review"), plain)
+            (home / ".claude" / "skills" / "empty").mkdir(); self.assertIsNone(config.skill_path("/empty"))  # a folder without SKILL.md is not a skill
+            plugin = home / ".claude" / "plugins" / "cache" / "pdffiller-knowledge" / "pdf-review" / "1.2.3" / "skills" / "run" / "SKILL.md"
+            plugin.parent.mkdir(parents=True); plugin.write_text("x")
+            self.assertEqual(config.skill_path("/pdf-review:run"), plugin); self.assertEqual(config.skill_path("/run"), plugin)
+            self.assertIsNone(config.skill_path("/other-plugin:run")); self.assertIsNone(config.skill_path("/pdf-review:init"))
+            root = self.tmp / "root"; local = root / ".claude" / "skills" / "team-send" / "SKILL.md"; local.parent.mkdir(parents=True); local.write_text("y")
+            self.assertIsNone(config.skill_path("/team-send")); self.assertEqual(config.skill_path("/team-send", [root]), local)
+            self.assertEqual(config.skill_path("/team-send", [None, root]), local)
+            from turnstile_cli import workspace
+            workspace.record(self.d, self.tmp / "ws", root, self.tmp / "ws" / "kn", {})
+            self.assertEqual([str(r) for r in config.skill_roots(self.d)][1:], [str(self.tmp / "ws"), str(root)])
+            self.assertEqual(config.skill_roots(None), [pathlib.Path.cwd()])
+            gone = self.tmp / "gone"; gone.mkdir(); before = os.getcwd(); os.chdir(gone); self.addCleanup(os.chdir, before); gone.rmdir()
+            self.assertEqual(config.skill_roots(None), []); self.assertEqual(config.skill_path("/send-pr-review", config.skill_roots(self.d)), plain); os.chdir(before)
+            self.assertEqual(config.send_skill(self.data(), self.d), ("/send-pr-review", plain))
+            self.user.write_text('{"send_skill": "/team-send"}'); self.assertEqual(config.send_skill(self.data(), self.d), ("/team-send", local))
+            self.user.write_text('{"send_skill": "/ghost"}'); self.assertEqual(config.send_skill(self.data(), self.d), ("/ghost", None))
+        self.assertEqual(config.send_skill_line("/send-pr-review", plain), "SEND_SKILL: /send-pr-review (found: %s)" % plain)
+        self.assertEqual(config.send_skill_line("/send-pr-review", None), "SEND_SKILL: /send-pr-review not found on this machine — NEXT: ask the lead which skill "
+                         "sends PRs to review (then turnstile config set send_skill=/<name>) or install the default: ln -s <pdffiller-knowledge clone>/playground/"
+                         "zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review")
+        self.assertTrue(config.send_skill_line("/ghost", None).endswith("or install it")); self.assertNotIn("ln -s", config.send_skill_line("/ghost", None))
+        self.assertIsNone(config.send_skill_warning("/x", plain))
+        self.assertEqual(config.send_skill_warning("/x", None), "WARN: send skill /x not found on this machine (config set send_skill=… or install it)")
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads every directory")
+    def test_skill_path_never_raises_on_unreadable_directories(self):
+        home = self.tmp / "fakehome"; skills = home / ".claude" / "skills"; locked = skills / "send-pr-review"; locked.mkdir(parents=True); (locked / "SKILL.md").write_text("x")
+        locked.chmod(0); self.addCleanup(locked.chmod, 0o755)
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": ""}):
+            self.assertIsNone(config.skill_path("/send-pr-review"))
+            skills.chmod(0); self.addCleanup(skills.chmod, 0o755)
+            self.assertIsNone(config.skill_path("/send-pr-review")); self.assertIsNone(config.skill_path("/pdf-review:run"))
+            self.assertEqual(config.send_skill(self.data(), self.d), ("/send-pr-review", None))
+            cache = home / ".claude" / "plugins" / "cache"; cache.mkdir(parents=True); cache.chmod(0); self.addCleanup(cache.chmod, 0o755)
+            self.assertIsNone(config.skill_path("/pdf-review:run")); self.assertIsNone(config.skill_path("/run"))
+
+    def test_skill_path_covers_commands_and_plugin_layouts(self):
+        home = self.tmp / "fakehome"; cfg = home / ".claude"; (cfg / "commands").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": ""}):
+            cmd = cfg / "commands" / "my-send.md"; cmd.write_text("x"); self.assertEqual(config.skill_path("/my-send"), cmd)
+            root = self.tmp / "root"; rcmd = root / ".claude" / "commands" / "team-send.md"; rcmd.parent.mkdir(parents=True); rcmd.write_text("x")
+            self.assertIsNone(config.skill_path("/team-send")); self.assertEqual(config.skill_path("/team-send", [root]), rcmd)
+            cache = cfg / "plugins" / "cache"; version = cache / "marketplace" / "kn" / "1.0.0"
+            deep = version / "skills" / "qa" / "test-feature" / "SKILL.md"; deep.parent.mkdir(parents=True); deep.write_text("x")
+            self.assertEqual(config.skill_path("/kn:test-feature"), deep); self.assertIsNone(config.skill_path("/other:test-feature"))
+            pcmd = version / "commands" / "run.md"; pcmd.parent.mkdir(parents=True); pcmd.write_text("x")
+            self.assertEqual(config.skill_path("/kn:run"), pcmd); self.assertEqual(config.skill_path("/run"), pcmd)
+            skill = version / "skills" / "run" / "SKILL.md"; skill.parent.mkdir(parents=True); skill.write_text("x")
+            self.assertEqual(config.skill_path("/kn:run"), skill); self.assertEqual(config.skill_path("/run"), skill)
+            self.assertIsNone(config.skill_path("/kn:nope")); self.assertIsNone(config.skill_path("/nope"))
+            flat = cache / "marketplace" / "solo" / "2.0.0" / "solo" / "SKILL.md"; flat.parent.mkdir(parents=True); flat.write_text("x")
+            self.assertEqual(config.skill_path("/solo:solo"), flat)
+        other = self.tmp / "cfgdir"; (other / "skills" / "x-send").mkdir(parents=True); (other / "skills" / "x-send" / "SKILL.md").write_text("x")
+        (other / "commands").mkdir(); (other / "commands" / "x-cmd.md").write_text("x")
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": str(other)}):
+            self.assertEqual(config.claude_dir(), other)
+            self.assertEqual(config.skill_path("/x-send"), other / "skills" / "x-send" / "SKILL.md"); self.assertEqual(config.skill_path("/x-cmd"), other / "commands" / "x-cmd.md")
+            self.assertIsNone(config.skill_path("/my-send")); self.assertIsNone(config.skill_path("/kn:run"))
+
+    def test_status_warns_once_when_the_send_skill_is_missing_and_the_hint_names_it(self):
+        home = self.tmp / "fakehome"; home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CLAUDE_CONFIG_DIR": ""}), mock.patch.object(reconcile.github, "fetch", side_effect=Exception("offline")):
+            rc, out = out_of(reconcile.cli, self.d, status=True)
+            self.assertTrue(out.startswith("SYNC:"), out[:40]); self.assertEqual(out.count("WARN: send skill"), 1)
+            self.assertIn("WARN: send skill /send-pr-review not found on this machine (config set send_skill=… or install it)", out.splitlines()[1])
+            rc, out = out_of(reconcile.cli, self.d); self.assertNotIn("send skill", out)  # reconcile alone stays quiet
+            skill = home / ".claude" / "skills" / "my-send" / "SKILL.md"; skill.parent.mkdir(parents=True); skill.write_text("x")
+            out_of(config_cmd.set_, self.d, "send_skill=/my-send", io=self.io)
+            rc, out = out_of(reconcile.cli, self.d, status=True); self.assertNotIn("WARN: send skill", out); self.assertIn("send_skill=/my-send", out)
+            d = self.data(); d["stories"]["S1"]["state"] = "DONE"; (self.d / "state.json").write_text(state.dumps(d)); self.io.heads = {"docs-platform#2": "bbbbbbbb22222222"}
+            rc, out = out_of(pass_cmd.run, self.d, "pr", "docs-platform#2", "AI_REVIEW", pass_cmd.Options(head="bbbbbbbb22222222", ci="success"), self.io)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("send the story's units with /send-pr-review <pr urls> on the lead's word in chat", self.data()["stories"]["S1"]["next_action"])
+            self.assertNotIn("/my-send", (self.d / "state.json").read_text())
+            rc, out = out_of(reconcile.cli, self.d, status=True); self.assertIn("send_skill=/my-send", out); self.assertIn("with /send-pr-review <pr urls>", out)
+            out_of(config_cmd.set_, self.d, "send_skill=/team-send", epic=True, io=self.io); self.approve("ah-1")
+            rc, out = out_of(config_cmd.apply, self.d, "ah-1", io=self.io); self.assertEqual(rc, 0, out)
+            self.assertIn("with /team-send <pr urls>", self.data()["stories"]["S1"]["next_action"]); self.assertNotIn("/my-send", (self.d / "state.json").read_text())
+            rc, out = out_of(reconcile.cli, self.d, status=True); self.assertIn("send_skill=/my-send", out); self.assertIn("with /team-send <pr urls>", out)
+            out_of(config_cmd.unset, self.d, "send_skill", epic=True, io=self.io); self.approve("ah-2")
+            rc, out = out_of(config_cmd.apply, self.d, "ah-2", io=self.io); self.assertEqual(rc, 0, out)
+            self.assertIn("with /send-pr-review <pr urls>", self.data()["stories"]["S1"]["next_action"])
+
+    def test_persisted_hints_ignore_the_user_file_and_a_broken_one_never_blocks_writers(self):
+        from turnstile_cli import bug_cmd, plan_cmd, pr_cmd
+        from tests.test_plan_cmd import PLAN
+        self.user.write_text('{"send_skill": "nope"}')
+        with self.assertRaises(TurnstileError): config.load_user()
+        (self.d / "plan.md").write_text(PLAN); rc, out = out_of(plan_cmd.run, self.d, self.io); self.assertEqual(rc, 0, out); self.approve("ah-1")
+        d = self.data(); d["stories"]["S1"]["state"] = "DONE"; (self.d / "state.json").write_text(state.dumps(d))
+        self.io.heads = {"docs-platform#2": "bbbbbbbb22222222", "jsfiller#7": "cccccccc33333333"}; self.io.facts["jsfiller#7"] = {"base": "epic_myd-1", "branch": "feature/MYD-11"}
+        (self.d / "briefs").mkdir(); (self.d / "briefs" / "MYD-11.md").write_text("brief\n")
+        rc, out = out_of(pass_cmd.run, self.d, "pr", "docs-platform#2", "AI_REVIEW", pass_cmd.Options(head="bbbbbbbb22222222", ci="success"), self.io); self.assertEqual(rc, 0, out)
+        rc, out = out_of(pr_cmd.add, self.d, "jsfiller#7", "S1", "MYD-11", io=self.io); self.assertEqual(rc, 0, out)
+        rc, out = out_of(bug_cmd.add, self.d, "S1", "x", "tester", io=self.io); self.assertEqual(rc, 0, out)
+        (self.d / "plan.md").write_text(PLAN + "\nmore\n"); rc, out = out_of(plan_cmd.run, self.d, self.io); self.assertEqual(rc, 0, out)
+        text = (self.d / "state.json").read_text(); self.assertNotIn("nope", text); self.assertIn("with /send-pr-review <pr urls>", self.data()["stories"]["S1"]["next_action"])
+        self.user.write_text('{"send_skill": "/my-send"}')
+        rc, out = out_of(pass_cmd.run, self.d, "pr", "jsfiller#7", "AI_REVIEW", pass_cmd.Options(head="cccccccc33333333", ci="success"), self.io); self.assertEqual(rc, 0, out)
+        self.assertNotIn("/my-send", (self.d / "state.json").read_text()); self.assertIn("with /send-pr-review <pr urls>", self.data()["stories"]["S1"]["next_action"])
 
     def test_status_prints_the_effective_line(self):
         out_of(config_cmd.set_, self.d, "models.reviewer=sonnet", io=self.io)

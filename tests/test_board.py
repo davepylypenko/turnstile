@@ -37,6 +37,23 @@ class Board(unittest.TestCase):
         self.assertIn("""'<p class="filter">Showing open bugs only · <a href="#" id="show-all-bugs">show all</a></p>'""", html)
         self.assertIn("""view.open = false; show(); writeHash(); document.querySelector('.tabs button[data-tab="bugs"]').focus();""", html)
         self.assertIn("<button role=\"tab\" aria-selected=\"true\" data-tab=\"prs\" class=\"on\">PRs</button><button role=\"tab\" aria-selected=\"false\" data-tab=\"stories\">", html)
+    def test_progress_tab_is_a_snapshot_of_completion_story_bars_and_ageing(self):
+        # 2026-11-06: a Progress tab after Awaiting humans — completion, per-story bars by PR state, gates, days in state; no history, no burn-up
+        d = pathlib.Path(tempfile.mkdtemp()); html = board.render(FIX, d).read_text()
+        self.assertIn('<button role="tab" aria-selected="false" data-tab="awaiting">Awaiting humans</button><button role="tab" aria-selected="false" data-tab="progress">Progress</button>', html)
+        self.assertIn('<div id="progress" class="hidden" role="tabpanel"></div>', html); self.assertIn("const TABS = ['prs', 'stories', 'bugs', 'awaiting', 'progress']", html)
+        for s in ("Stories DONE", "PRs MERGED", "Bugs open", "Days in state", "days in state", "state_since", "rework_since", "sent_at", "head_verified", "Date.now()",
+                  "AGE_STATES = ['REWORK', 'ON_HUMAN_REVIEW', 'READY']", "r.days >= 3", "class=\"aged\"", "--aged:", "<title>", "data-state=", "segmentClick(r.dataset.state)",
+                  "Math.max(0, Math.floor((Date.now() - t) / 86400000))", "(e.human || {}).returned_at, (e.human || {}).sent_at", "' (all ' + esc(k) + ' PRs)'",
+                  "const segmentClick = k => { tileClick(k); document.querySelector('.tabs button[data-tab=\"prs\"]').focus(); };",
+                  "e.key === 'Enter' || e.key === ' '", "stackBar(c, PR_STATES, 8, true)", "stackBar(counts, order, 16, false)", "function gateMarks(s)", "esc(gateMarks(s))",
+                  "esc(UPDATED)", "no stories yet", "no open PRs", "progress(); legend();", "bugs(); progress();", "stroke:var(--card); stroke-width:2", "Progress:</b>"):
+            self.assertIn(s, html, s)
+        self.assertNotIn("burn", html.lower()); self.assertEqual(html.count('<button type="button" class="tile" data-tile="'), 10)
+        empty = {"epic": {"key": "E", "github_org": "o"}, "stories": {}, "prs": {}, "bugs": [], "awaiting_human": []}
+        self.assertIn('"key": "E"', board.render(empty, d).read_text())
+        data = json.loads(json.dumps(FIX)); data["prs"]["jsfiller#1"]["state_since"] = "2026-11-01T10:00Z"; data["stories"]["S1"]["state_since"] = "2026-10-30T09:00Z"
+        self.assertIn('"state_since": "2026-11-01T10:00Z"', board.render(data, d).read_text())
     def test_json_is_script_safe(self):
         d = pathlib.Path(tempfile.mkdtemp())
         data = json.loads(json.dumps(FIX)); data["bugs"] = [{"id": "b1", "title": "</script><b>x", "state": "todo", "story": "S1", "source": "", "pr": "", "note": ""}]

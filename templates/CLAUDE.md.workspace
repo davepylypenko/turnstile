@@ -14,8 +14,9 @@ knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first i
   awaits the lead and ask; you never run that line, and no agent does. A thread the agents resolved themselves
   (`self_resolved`, recorded with `turnstile threads`) is answered on GitHub at once, without asking; once every thread has its
   reply and Copilot (or the gate) is clean on the head, the thread authors are re-requested on GitHub without asking too.
-- Slack sends are gated by the lead's word in chat only: compose, show, send when the lead says so. The plugin records them
-  (ledger line, `send` evidence via `pass … --slack`) and never blocks.
+- Slack sends are gated by the lead's word in chat only: compose through the send skill (`send_skill` in `turnstile config list`,
+  default `/send-pr-review`), show, send when the lead says so. The plugin records them (ledger line, `send` evidence via
+  `pass … --slack`) and never blocks.
 - All implementation, review, testing and deployment is delegated to the `turnstile:*` agents; the orchestrator never
   reads diffs or runs suites itself.
 - Every `turnstile` write commits and pushes the epic branch; `status` opens with `SYNC:`. On `NOT PUSHED` or "behind

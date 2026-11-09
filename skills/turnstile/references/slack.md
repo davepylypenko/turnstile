@@ -1,11 +1,20 @@
 # Slack messages
 
-Channels come from `state.json` (`epic.repos.<repo>.slack`). Reviewer logins come from the PR (`gh pr view <n> --repo
-<org>/<repo> --json reviewRequests --jq '.reviewRequests[].login'`, people only — skip team entries); resolve a login to a
-Slack user through the Slack MCP user search by name/email; never guess. Every message is composed, shown to the lead, and
+A review request goes out through the **send skill** on the developer's machine: `<send_skill> <pr url> …` (`send_skill` in
+`turnstile config list`, default `/send-pr-review`; the plugin holds only the name and resolves it under `~/.claude/skills`,
+the workspace, the clone root and the plugin cache — `init` and `status` say when it is missing). The skill picks the channel
+and copies the format already used there and shows the draft; when `state.json` sets `epic.repos.<repo>.slack`, tell the skill
+that channel explicitly — the explicit channel wins over the skill's routing. Every message is composed, shown to the lead, and
 sent only on the lead's word in chat — that word is the only gate (2026-11-05). The plugin records the send (a ledger line
 from the PostToolUse hook, `evidence.human` via `pass pr … ON_HUMAN_REVIEW --slack <permalink> --reviewers …`); it never blocks,
-asks or demands a command before it.
+asks or demands a command before it. Reviewer logins come from the PR (`gh pr view <n> --repo <org>/<repo> --json reviewRequests
+--jq '.reviewRequests[].login'`, people only — skip team entries); resolve a login to a Slack user through the Slack MCP user
+search by name/email; never guess.
+
+**Fallback when no send skill is installed:** ask the lead which skill to install or use (`turnstile config set send_skill=/<name>`;
+the default is installed with
+`ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`)
+and, until then, compose the message by hand from the templates below.
 
 ## Review request (front repos)
 

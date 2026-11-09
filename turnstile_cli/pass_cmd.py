@@ -338,11 +338,13 @@ def _reopen_bugs_for_run(data: dict, sid: str, run: dict, extra: List[str]) -> N
                     extra.append("bug %s reopened (case %s failed again on build %s, head %s)" % (b.get("id"), case, run.get("build"), run.get("head")))
 
 def _recompute_next_actions(data: dict) -> None:
+    from . import config
+    send_skill = config.effective(data, {})["send_skill"]["value"]
     for pid, pr in data["prs"].items():
         repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
-        pr["next_action"] = rules.next_action_pr(pr, repo, data["stories"].get(pr.get("story")))
+        pr["next_action"] = rules.next_action_pr(pr, repo, data["stories"].get(pr.get("story")), send_skill)
     for sid, s in data["stories"].items():
-        s["next_action"] = rules.next_action_story(s, data["prs"])
+        s["next_action"] = rules.next_action_story(s, data["prs"], send_skill)
 
 def _next_ah_id(data: dict) -> str:
     nums = []
@@ -457,6 +459,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 del trial["_id"]
                 data["prs"][ident] = pr = trial
                 pr["state"] = target
+                if src != target:
+                    pr["state_since"] = _now()
                 if o.reason:
                     pr["last_reason"] = o.reason
                 jira_target = rules.JIRA_FOR_PR_STATE[target]
@@ -547,6 +551,8 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 del trial["_id"]
                 data["stories"][ident] = story = trial
                 story["state"] = target
+                if src != target:
+                    story["state_since"] = _now()
                 if o.reason:
                     story["last_reason"] = o.reason
                 jira_line = None

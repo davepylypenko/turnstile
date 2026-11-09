@@ -13,6 +13,7 @@
     "repos": {},
     "review_skill": null,
     "roles": { "agent_github": null, "design": null, "lead": null, "lead_github": null, "pm": null },
+    "send_skill": null,
     "story_mode": "stack",
     "story_review_skill": null,
     "workitem": null

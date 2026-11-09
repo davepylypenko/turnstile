@@ -3,10 +3,6 @@ from unittest import mock
 from turnstile_cli import init_cmd
 from turnstile_cli.errors import TurnstileError
 
-_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
-def setUpModule(): _env.start()
-def tearDownModule(): _env.stop()
-
 JS = '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-1","slack":"C1","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}'
 MONO = '{"name":"pdffiller","base":"master","epic_branch":"l2f","slack":"G1","gate":"run-lint","gate_check":null,"copilot":true,"branch_prefix":"l2f-myd-"}'
 
@@ -140,6 +136,7 @@ class Init(unittest.TestCase):
         self.assertEqual(rc, 0); out = buf.getvalue()
         self.assertIn("CONFIG: models implementer=sonnet", out); self.assertIn("reviewer=opus:high", out); self.assertIn("review_skill=/my-review", out)
         self.assertIn("overrides: epic models.reviewer, user review_skill", out); self.assertIn("NEXT: ask the lead once (skill § preferences)", out); self.assertIn("turnstile config set", out)
+        self.assertIn("send skill?", out)
         d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"; data = json.loads((d / "state.json").read_text())
         self.assertIsNone(data["epic"]["review_skill"]); self.assertIsNone(data["epic"]["story_review_skill"])  # the user's skill never lands in git
         self.assertIn("turnstile config", (self.ws / "CLAUDE.md").read_text())
@@ -268,3 +265,20 @@ class Init(unittest.TestCase):
         (self.ws / ".turnstile").write_text("other/delivery\n")
         self.assertEqual(init_cmd.run(opts(self.ws, self.knowledge), FakeGit()), 2)
         self.assertEqual((self.ws / ".turnstile").read_text(), "other/delivery\n")
+
+    def test_init_reports_whether_the_send_skill_is_installed_and_never_fails_over_it(self):
+        # 2026-11-06: the send skill is a reference to a skill on the developer's machine; init says where it is or how to get one
+        import contextlib, io as _io
+        home = self.tmp / "fakehome"; home.mkdir(); buf = _io.StringIO()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}), contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(self.ws, self.knowledge), FakeGit())
+        self.assertEqual(rc, 0); out = buf.getvalue()
+        line = next(l for l in out.splitlines() if l.startswith("SEND_SKILL:"))
+        self.assertEqual(line, "SEND_SKILL: /send-pr-review not found on this machine — NEXT: ask the lead which skill sends PRs to review (then turnstile config set "
+                         "send_skill=/<name>) or install the default: ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review")
+        self.assertLess(out.index("CONFIG: "), out.index("SEND_SKILL:")); self.assertIn("OK init MYD-1", out)
+        d = self.ws / "pdffiller-knowledge" / "context" / "workitems" / "demo" / "delivery"
+        self.assertIsNone(json.loads((d / "state.json").read_text())["epic"]["send_skill"])
+        skill = home / ".claude" / "skills" / "send-pr-review" / "SKILL.md"; skill.parent.mkdir(parents=True); skill.write_text("x")
+        ws2 = self.tmp / "ws2"; buf = _io.StringIO()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}), contextlib.redirect_stdout(buf): rc = init_cmd.run(opts(ws2, self.knowledge), FakeGit())
+        self.assertEqual(rc, 0); self.assertIn("SEND_SKILL: /send-pr-review (found: %s)" % skill, buf.getvalue())

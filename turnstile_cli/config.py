@@ -1,12 +1,15 @@
 import json, os, pathlib, re
-from typing import Optional, Tuple
-from . import models
+from typing import Iterable, List, Optional, Tuple
+from . import models, workspace
 from .errors import TurnstileError
+from .rules import DEFAULT_SEND_SKILL
 
 DEFAULT_REVIEW_SKILL = "/code-review"
-SKILL_KEYS = ("review_skill", "story_review_skill")
-SKILL_RX = re.compile(r"^/[\w:.-]+$")
-KEYS_HELP = "models.<agent>, review_skill, story_review_skill, flag (epic only)"
+SKILL_KEYS = ("review_skill", "story_review_skill", "send_skill")
+SKILL_DEFAULTS = {"review_skill": DEFAULT_REVIEW_SKILL, "story_review_skill": DEFAULT_REVIEW_SKILL, "send_skill": DEFAULT_SEND_SKILL}
+SKILL_RX = re.compile(r"^/(?:[\w][\w.-]*:)?[\w][\w.-]*$")
+KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, flag (epic only)"
+SEND_SKILL_INSTALL = "ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review"
 
 def default_user_dir() -> pathlib.Path:
     return pathlib.Path(os.path.expanduser("~")) / ".config" / "turnstile"
@@ -122,7 +125,7 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
         elif epic.get(key):
             out[key] = {"value": str(epic[key]), "source": "epic"}
         else:
-            out[key] = {"value": DEFAULT_REVIEW_SKILL, "source": "default"}
+            out[key] = {"value": SKILL_DEFAULTS[key], "source": "default"}
     out["flag"] = {"value": epic.get("flag") or None, "source": "epic" if epic.get("flag") else "default"}
     return out
 
@@ -146,3 +149,57 @@ def one_line(eff: dict) -> str:
     return "models %s · %s · flag=%s (%s)" % (" ".join("%s=%s" % (a, fmt_resolved(a, m)) for a, m in eff["models"].items()),
                                              " · ".join("%s=%s" % (k, eff[k]["value"]) for k in SKILL_KEYS), eff["flag"]["value"] or "none",
                                              "overrides: " + ", ".join(overrides) if overrides else "all defaults")
+
+def claude_dir() -> pathlib.Path:
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    return pathlib.Path(override).expanduser() if override else pathlib.Path(os.path.expanduser("~")) / ".claude"
+
+def _glob(base: pathlib.Path, pattern: str) -> List[pathlib.Path]:
+    try:
+        return sorted(base.glob(pattern))
+    except OSError:
+        return []
+
+PLUGIN_SKILL_DEPTHS = ("*/%s/*/%s/SKILL.md", "*/%s/*/*/%s/SKILL.md", "*/%s/*/*/*/%s/SKILL.md", "*/%s/*/*/*/*/%s/SKILL.md")
+
+def skill_path(name: str, roots: Iterable[pathlib.Path] = ()) -> Optional[pathlib.Path]:
+    home = claude_dir()
+    cache = home / "plugins" / "cache"
+    plugin, _, skill = name.lstrip("/").rpartition(":")
+    if plugin:
+        candidates = [c for pattern in PLUGIN_SKILL_DEPTHS for c in _glob(cache, pattern % (plugin, skill))]
+        candidates += _glob(cache, "*/%s/*/commands/%s.md" % (plugin, skill))
+    else:
+        dirs = [home] + [pathlib.Path(r) / ".claude" for r in roots if r]
+        candidates = [d / "skills" / skill / "SKILL.md" for d in dirs] + [d / "commands" / (skill + ".md") for d in dirs]
+        candidates += _glob(cache, "*/*/*/skills/%s/SKILL.md" % skill) + _glob(cache, "*/*/*/commands/%s.md" % skill)
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+def skill_roots(delivery: Optional[pathlib.Path] = None) -> List[pathlib.Path]:
+    roots = []
+    try:
+        roots.append(pathlib.Path.cwd())
+    except OSError:
+        pass
+    rec = workspace.load(delivery) if delivery else None
+    for key in ("workspace", "clone_root"):
+        if rec and rec.get(key):
+            roots.append(pathlib.Path(rec[key]))
+    return roots
+
+def send_skill(data: Optional[dict], delivery: Optional[pathlib.Path] = None, user: Optional[dict] = None) -> Tuple[str, Optional[pathlib.Path]]:
+    name = effective(data, user)["send_skill"]["value"]
+    return name, skill_path(name, skill_roots(delivery))
+
+def send_skill_line(name: str, found: Optional[pathlib.Path]) -> str:
+    if found:
+        return "SEND_SKILL: %s (found: %s)" % (name, found)
+    install = "install the default: " + SEND_SKILL_INSTALL if name == DEFAULT_SEND_SKILL else "install it"
+    return ("SEND_SKILL: %s not found on this machine — NEXT: ask the lead which skill sends PRs to review (then turnstile config set "
+            "send_skill=/<name>) or %s" % (name, install))
+
+def send_skill_warning(name: str, found: Optional[pathlib.Path]) -> Optional[str]:
+    return None if found else "WARN: send skill %s not found on this machine (config set send_skill=… or install it)" % name

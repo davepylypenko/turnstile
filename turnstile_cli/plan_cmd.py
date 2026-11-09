@@ -8,7 +8,7 @@ ID_RX = re.compile(r"^S\d+$")
 REQUIRED = ("title", "tickets", "repos", "branch")
 DEFAULTS = {"after": [], "parallel_with": [], "test_cases": [], "control_cases": [], "figma": [], "env_slot": {}, "human_review_units": []}
 MODES = ("stack", "trunk")
-KEEP = ("state", "evidence", "next_action", "last_reason")
+KEEP = ("state", "evidence", "next_action", "last_reason", "state_since")
 
 def stories_from_plan(text: str, default_mode: str = "stack", flag: Optional[str] = None) -> dict:
     if default_mode not in MODES:
@@ -99,6 +99,8 @@ def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> in
             _ensure_start_story_entries(data)
             _recompute_next_actions(data)
             new = sorted(set(planned) - before)
+            for sid in new:
+                data["stories"][sid]["state_since"] = _now()
             summary = "plan submitted: %d stories (%d new%s), approval %s" % (len(planned), len(new), ": " + ", ".join(new) if new else "", entry["id"])
             _side_effects(delivery, st, [summary] + extra + warnings, io, no_commit, no_push)
         for w in warnings:

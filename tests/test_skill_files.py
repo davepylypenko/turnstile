@@ -134,6 +134,28 @@ class SkillFiles(unittest.TestCase):
             self.assertIn("--slack <permalink> --reviewers", docs[name], name)
         for path in (ROOT / "agents").glob("*.md"):
             self.assertNotIn("Slack stays lead-approved", path.read_text(), path.name)
+    def test_send_skill_is_a_reference_to_a_local_skill(self):
+        # 2026-11-06 (lead's decision): the send skill lives on the developer's machine; the plugin names it, never copies it
+        docs = {name: path.read_text() for name, path in [("README", ROOT / "README.md"), ("SKILL", SKILL / "SKILL.md"), ("slack", REFS / "slack.md"),
+                                                          ("lifecycle", REFS / "lifecycle.md"), ("workspace", ROOT / "templates" / "CLAUDE.md.workspace")]}
+        for name, doc in docs.items():
+            self.assertIn("send_skill", doc, name); self.assertIn("/send-pr-review", doc, name); self.assertIn("lead's word in chat", doc, name)
+        for name in ("README", "SKILL", "slack", "lifecycle"):
+            self.assertIn("explicit channel wins", docs[name], name)
+        for name in ("README", "SKILL", "slack"):
+            self.assertIn("which skill to install or use", docs[name], name)
+        for name in ("README", "slack"):
+            self.assertIn("ln -s <", docs[name], name); self.assertIn("playground/zolotukhin-ivan/skills/send-pr-review", docs[name], name); self.assertIn("~/.claude/skills/send-pr-review", docs[name], name)
+        self.assertIn("config set send_skill=/my-send", docs["SKILL"]); self.assertIn("SEND_SKILL:", docs["SKILL"]); self.assertIn("WARN: send skill", docs["SKILL"])
+        self.assertIn("turnstile config set send_skill=/my-send", docs["README"]); self.assertIn("`send_skill`", docs["README"])
+        self.assertFalse(any((ROOT / "skills").rglob("send-pr-review*")), "Ivan's skill must not be copied into the plugin")
+        self.assertNotIn("CODEOWNERS", docs["slack"])
+        for name, doc in docs.items():
+            self.assertNotIn("ln -s <clone>", doc, name)
+        self.assertRegex(docs["README"], r"`ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`")
+        self.assertIn("review skill, send skill and models", docs["README"])
+        for layout in ["~/.claude/commands/<name>.md", "commands/<name>.md", "CLAUDE_CONFIG_DIR", "epic or default"]:
+            self.assertIn(layout, docs["README"], layout)
     def test_reports_has_a_template_per_agent(self):
         text = (REFS / "reports.md").read_text()
         for h in ["## Ticket", "## Review", "## Story review", "## Stack", "## Comments", "## Investigation", "## Env test", "## Deploy"]: self.assertIn(h, text)

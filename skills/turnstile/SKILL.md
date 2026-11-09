@@ -5,15 +5,12 @@ description: Run or resume the delivery of a multi-repo epic through turnstile's
 
 # Turnstile
 
-The state is `delivery/state.json` in the knowledge worktree (found through `.turnstile` in the workspace). Only
-`turnstile` commands write it. You sequence; the CLI enforces. Every state change is one command whose side effects
-(ledger, board, commit, Jira instruction) happen inside it — never "later". Read once per session:
-`references/lifecycle.md` (DoR/DoD per state with the exact `turnstile pass` call). Templates: `references/pr-body.md`,
-`references/slack.md`, `references/reports.md`, `references/evidence.md`; env recipes in `references/env/`.
-The CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`; `turnstile …` below means that path, or the bare name when the lead
-installed the PATH shim (`scripts/install-cli.sh`). The Bash guard treats both spellings alike. Every write is committed to
-the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHED` or "behind origin" run `turnstile sync`
-(fetch, fast-forward, push; never rebase or force — diverged histories go to the lead). `--no-push` only for offline work.
+The state is `delivery/state.json` in the knowledge worktree (found through `.turnstile` in the workspace). Only `turnstile` commands write it. You sequence; the CLI enforces. Every state change is
+one command whose side effects (ledger, board, commit, Jira instruction) happen inside it — never "later". Read once per session: `references/lifecycle.md` (DoR/DoD per state with the exact
+`turnstile pass` call). Templates: `references/pr-body.md`, `references/slack.md`, `references/reports.md`, `references/evidence.md`; env recipes in `references/env/`. The CLI is
+`${CLAUDE_PLUGIN_ROOT}/scripts/turnstile`; `turnstile …` below means that path, or the bare name when the lead installed the PATH shim (`scripts/install-cli.sh`). The Bash guard treats both
+spellings alike. Every write is committed to the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHED` or "behind origin" run `turnstile sync` (fetch, fast-forward, push;
+never rebase or force — diverged histories go to the lead). `--no-push` only for offline work.
 
 ## Rules that never bend
 
@@ -21,9 +18,9 @@ the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHE
   in the Claude Code prompt (the `!` runs outside the model). You report the pending ids (`turnstile status`) and ask
   for that line; you never run it, no agent runs it, and the Bash guard refuses any spelling of it.
 - A reply on a `needs_lead` thread, merge, story start, story completion, plan approval: all go through such an entry.
-- Slack sends are gated by the lead's word in chat only (2026-11-05): compose the message, show it, send it when the lead
-  says so. The plugin records the send (a ledger line from the PostToolUse hook, `send` evidence via `pass … --slack`) and
-  never blocks, asks or demands a command before it.
+- Slack sends are gated by the lead's word in chat only (2026-11-05): compose the message through the send skill (`## pass`),
+  show it, send it when the lead says so. The plugin records the send (a ledger line from the PostToolUse hook, `send`
+  evidence via `pass … --slack`) and never blocks, asks or demands a command before it.
 - A reply on a `self_resolved` review thread needs no entry: it goes out at once (`## REWORK`). So does the GitHub re-request of
   the thread authors once every thread has its reply and the head is clean (lead rule 2026-10-14). Issue comments, review
   submissions, resolving a human thread and every other human reviewer request are refused for everyone (the repo gate's marker
@@ -35,22 +32,27 @@ the epic branch and pushed to origin; `status` opens with `SYNC:`. On `NOT PUSHE
 
 ## status
 
-`turnstile status` → reconcile against GitHub + plan state + next actions + what awaits the lead (exit 1 when `gh`
-facts are missing). Run it first in every session and after every batch of agent reports. Run the proposed
-`turnstile pass` lines it prints (they are dry-run checked); show the lead the anomalies. `turnstile reconcile --json`
-for the raw list. `turnstile status --brief` prints only `SYNC:`, the PRs and stories whose state or head changed since the previous `status`
-(snapshot in `delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
+`turnstile status` → reconcile against GitHub + plan state + next actions + what awaits the lead (exit 1 when `gh` facts are missing). Run it first in every session
+and after every batch of agent reports; run the proposed `turnstile pass` lines it prints (dry-run checked); show the lead the anomalies (`turnstile reconcile
+--json` for the raw list). A `WARN: send skill … not found` line means the lead must name the skill that sends PRs to review (`## preferences`).
+`turnstile status --brief` prints only `SYNC:`, the PRs and stories whose state or head changed since the previous `status` (snapshot in
+`delivery/.status-cache.json`, not in `state.json`), the awaiting list and the anomalies: use it for every call after the first of a session.
 
 ## pass (one transition)
 
-`turnstile pass pr <repo#n> <STATE> --head <sha> [evidence flags]` / `turnstile pass story <S> <STATE> [flags]`; flags per
-`references/lifecycle.md`. Every PR pass verifies the head and the evidence against GitHub; `--offline` only records.
-On `OK` it prints `JIRA: <ticket> → <status>[ · assignee: you]`: perform the transition through the Atlassian MCP `transitionJiraIssue`. When the line says `assignee: you` (or `status` lists `jira_unassigned`), first read the issue's current assignee (`getJiraIssue` with `fields: ["assignee"]`):
-empty → read your own account with `atlassianUserInfo` (no arguments; `account_id`, `name`), set it with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`) and run `turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → do not touch Jira, record that person with the same flags (their `accountId`, their name).
-Plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded. The ticket belongs to the person whose session took it into work; the plugin never moves a ticket away from its holder, and the line is plain on MERGED and when any PR of the ticket already carries an assignee. It also prints `BOARD: publish <path> → <url>` (publish the file with the Artifact tool and that `url`; a first publish loads the
-`artifact-capabilities` skill, declares `db` + `user`, and the url is recorded at `init --board-url` or by the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate.
-A PR the implementer opened enters the state as `DEV` with `turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch
-and base from GitHub; refused when the base is not the story branch or another PR of the story, or the brief is missing).
+`turnstile pass pr <repo#n> <STATE> --head <sha> [evidence flags]` / `turnstile pass story <S> <STATE> [flags]`; flags per `references/lifecycle.md`. Every PR pass verifies the head
+and the evidence against GitHub; `--offline` only records. On `OK` it prints `JIRA: <ticket> → <status>[ · assignee: you]`: transition through the Atlassian MCP `transitionJiraIssue`.
+When the line says `assignee: you` (or `status` lists `jira_unassigned`), first read the issue's assignee (`getJiraIssue`, `fields: ["assignee"]`): empty → read your own account
+with `atlassianUserInfo` (no arguments; `account_id`, `name`), set it with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`) and run
+`turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → leave Jira alone, record that person with the same flags.
+Plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded. The ticket stays with whoever took it into work; the line is plain on MERGED and when a PR of the ticket already
+carries an assignee. It also prints `BOARD: publish <path> → <url>` (Artifact tool, that `url`; a first publish loads `artifact-capabilities` and declares `db` + `user`; the url comes
+from `init --board-url` or the migration). On `MISSING …` nothing was written: get the evidence, do not argue with the gate. A PR the implementer opened enters the state as `DEV` with
+`turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch, base from GitHub; refused without the brief or when the base is neither the story branch nor another PR of the story).
+**Sending a READY PR to humans:** invoke the configured send skill — `<send_skill> <pr url> …` (`send_skill` in `turnstile config list`, default `/send-pr-review`); it picks the channel
+and the format and shows the draft; when the epic sets `epic.repos.<repo>.slack`, tell it that channel explicitly (the explicit channel wins over the skill's own routing). The lead's word
+in chat is still the only gate. Then `turnstile pass pr <repo#n> ON_HUMAN_REVIEW --head <sha> --slack <permalink> --reviewers a,b`. When the skill is not installed (`init`/`status`
+say so), the templates in `references/slack.md` are the fallback and you ask the lead which skill to install or use.
 
 ## init (once per epic)
 
@@ -61,26 +63,26 @@ and base from GitHub; refused when the base is not the story branch or another P
    worktree of every `--repo` clone on `ws/<key-lower>` (from `origin/<base>`; a missing clone is refused with its expected path), `delivery/`,
    `.turnstile`, `CLAUDE.md`, `delivery/.workspace.json` (this machine's paths; `brief --var repo=<name>` renders them). Repo JSON keys: `name,
    base, epic_branch, slack, gate, gate_check (null for a skill gate), ci_ignore, copilot, branch_prefix, path`; `--models '{"reviewer":
-   {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in
-   the new folder; this session stays in the root and cannot drive the epic (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run from the new session.
+   {"effort":"high"}}'` seeds `epic.models`. Then tell the lead, explicitly: `cd <workspace> && claude` — the hooks and `.turnstile` live in the new folder; this session stays in
+   the root and cannot drive the epic (outside a workspace the hooks are inert; only force-push, rebase and unsigned commits stay refused). Steps 2–4 and `## preferences` run there.
 2. Kick-off analysis per `references/kickoff.md`: read decomposition, PRD, design, test plan, every repo's `CLAUDE.md`; write
    `delivery/plan.md` from its template (stories with a story branch each, merge order, human-review units ≈ 400 logic lines,
    test-case map, Figma frames, human inputs, env slots) including the `turnstile-stories` JSON block.
-3. `turnstile plan-submitted` → stories enter `PLANNED`, a `plan` entry opens; show the lead the plan summary and the approve line; wait. Without the approval no story leaves `PLANNED` (no `--reason` override).
+3. `turnstile plan-submitted` → stories enter `PLANNED` and a `plan` entry opens; show the lead the summary and the approve line; wait. No story leaves `PLANNED` unapproved (no `--reason`).
 4. After the lead approved the plan and the first `start_story` entry: `turnstile pass story S1 IN_PROGRESS --approved <ah-id>`, then dispatch implementers per the merge order.
 
 ## preferences (right after init, and whenever the lead asks)
 
-Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` or `$TURNSTILE_USER_CONFIG`, never in git) >
-epic state (`epic.models`, `epic.review_skill`, `epic.story_review_skill`) > plugin defaults. Ask the lead **one** batched
-question — "Do you use your own review skill (name it), and do you want a different model/effort for any agent? Current
-effective values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`,
-`config set review_skill=/my-review`, `config set story_review_skill=…` (user layer: at once; `--epic`, only when the lead says it is
-for the whole epic or team, opens a `config` entry — the lead approves it with the usual line, then `turnstile config apply <ah-id>`;
-`=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions ("use my /x-review skill",
-"reviewer on sonnet") map to the same commands; never ask what the user file already answers; `turnstile status` prints the effective line.
-`review_skill` is what the `reviewer` runs for the deep review (`--deep-review` report), `story_review_skill` the story-reviewer's; the brief
-prints the exact invocation (`/code-review` takes the agent's effort as its level, `/code-review xhigh` by default; any other skill runs bare); an agent set without an effort (`models.reviewer=sonnet`) runs at its default effort and the `AGENT:` line prints that resolved effort. Neither replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
+Layers, highest first: the lead's user file (`~/.config/turnstile/config.json` or `$TURNSTILE_USER_CONFIG`, never in git) > epic state (`epic.models`, `epic.review_skill`,
+`epic.story_review_skill`, `epic.send_skill`) > plugin defaults. Ask the lead **one** batched question — "Do you use your own review skill (name it), which skill sends PRs to Slack
+review (`init` printed `SEND_SKILL:`; if it is not found on this machine, which one to install or use), and do you want a different model/effort for any agent? Current effective
+values:" + the output of `turnstile config list` — then record: `turnstile config set models.<agent>=<model>[:<effort>]`, `config set review_skill=/my-review`,
+`config set story_review_skill=…`, `config set send_skill=/my-send` (user layer, at once; `--epic` — only when the lead says it is for the whole epic or team — opens a `config` entry
+the lead approves with the usual line, then `turnstile config apply <ah-id>`; `=default` / `config unset` resets) and show `turnstile config list` again. Later chat instructions
+("use my /x-review skill", "reviewer on sonnet", "send with /x") map to the same commands; never ask what the user file already answers; `turnstile status` prints the effective line.
+`review_skill` is the `reviewer`'s deep-review skill (`--deep-review` report), `story_review_skill` the story-reviewer's, `send_skill` what posts a PR for review (`## pass`); the brief
+prints the exact invocation (`/code-review` takes the agent's effort as its level, `/code-review xhigh` by default; other skills run bare); an agent set without an effort (`models.reviewer=sonnet`)
+runs at its default effort and the `AGENT:` line prints that resolved effort. Neither review skill replaces the repo gate (`epic.repos.<r>.gate` / `gate_check` stay the READY evidence).
 
 ## attach (continue an epic from another machine)
 
@@ -137,8 +139,7 @@ is deployed to the story's slot (dispatch `deployer`).
    and 5 ask GitHub for the head of every PR in `deploy.heads` and refuse on any drift (never `--offline` at DONE).
 6. Report to the lead per `references/slack.md` § Story report and **stop**: the next story waits for the lead's
    `start_story` entry (there is no `--reason` way to start a story, and a parallel start needs `parallel_with` in the
-   approved plan); the sends of this story's units go out on the lead's word in chat, then `pass pr … ON_HUMAN_REVIEW
-   --head … --slack <permalink> --reviewers a,b` records each one.
+   approved plan); the sends of this story's units go out through the send skill on the lead's word in chat (`## pass`).
 
 ## trunk mode (`stories.<S>.mode: trunk`, `epic.flag`)
 
@@ -193,6 +194,6 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
 
 ## Bugs on the board
 
-Viewers with write access change a bug's status in the board's dropdown; it lands in the artifact db (`bugs/<id>`),
-not in `state.json`. At `status` time read the `bugs` collection with `ArtifactData` and fold changes back with
-`turnstile bug set <id> --state <s>` so git stays the source of truth.
+Viewers with write access change a bug's status in the board's dropdown; it lands in the artifact db (`bugs/<id>`), not in
+`state.json`. At `status` time read the `bugs` collection with `ArtifactData` and fold changes back with `turnstile bug set <id>
+--state <s>` so git stays the source of truth. The board's Progress tab is a snapshot of `state.json` (completion, per-story bars, ageing).

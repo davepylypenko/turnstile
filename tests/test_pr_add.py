@@ -30,6 +30,7 @@ class PrAdd(unittest.TestCase):
         self.assertIn("JIRA: MYD-11 → In progress · assignee: you\n", out); self.assertIn("OK pr jsfiller#7 added (S1, MYD-11) DEV head cccccccc", out)
         pr = self.data()["prs"]["jsfiller#7"]
         self.assertEqual((pr["state"], pr["head"], pr["base"], pr["branch"], pr["story"], pr["ticket"]), ("DEV", "cccccccc33333333", "epic_myd-1", "feature/MYD-11", "S1", "MYD-11"))
+        self.assertRegex(pr["state_since"], r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$")  # 2026-11-06: the ageing table counts from the DEV entry
         self.assertEqual(pr["jira"], {"status": "In progress", "synced": False}); self.assertEqual(self.io.commits[-1], "turnstile: pr jsfiller#7 added (S1, MYD-11) DEV head cccccccc")
         self.assertIn("pr jsfiller#7 added", (self.d / "ledger.md").read_text())
         buf = io.StringIO()

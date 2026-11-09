@@ -1,11 +1,6 @@
-import contextlib, io, json, os, pathlib, re, shutil, tempfile, unittest
-from unittest import mock
+import contextlib, io, json, pathlib, re, shutil, tempfile, unittest
 from turnstile_cli import brief_cmd
 from tests.test_pass import FakeIO
-
-_env = mock.patch.dict(os.environ, {"TURNSTILE_USER_CONFIG": os.path.join(tempfile.mkdtemp(), "none.json")})
-def setUpModule(): _env.start()
-def tearDownModule(): _env.stop()
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "state_min.json"

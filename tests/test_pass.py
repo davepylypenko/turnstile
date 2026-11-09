@@ -1,4 +1,5 @@
 import contextlib, io as _io, json, os, pathlib, shutil, tempfile, unittest
+from unittest import mock
 from turnstile_cli import pass_cmd, state
 from turnstile_cli import sync
 from turnstile_cli.errors import TurnstileError
@@ -8,7 +9,6 @@ FIX = pathlib.Path(__file__).parent / "fixtures" / "state_min.json"
 H = "aaaaaaaa11111111"
 H2 = "eeeeeeee55555555"
 LINK = "https://pdffiller.slack.com/archives/C1/p1760000000123456"
-
 class FakeIO:
     """GitHub facts per PR: `heads` gives the head, `facts` per-PR overrides of the canned green PrFacts."""
     def __init__(self, heads=None):
@@ -108,7 +108,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pr["evidence"]["gate"], {"name": "pdf-review", "head": H, "result": "pass", "run": "https://r/1"})
         self.assertEqual(pr["evidence"]["head_verified"]["verified"], True)
         self.assertEqual(pr["evidence"]["head_verified"]["head"], H)
-        self.assertEqual(pr["next_action"], "once story S1 is DONE (or `human_review: per_pr`), send on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
+        self.assertEqual(pr["next_action"], "once story S1 is DONE (or `human_review: per_pr`), send with /send-pr-review <pr url> on the lead's word in chat, then pass ON_HUMAN_REVIEW --head --slack <permalink> --reviewers")
         self.assertEqual(data["awaiting_human"], [])  # 2026-11-05: no send entry; the lead's word in chat is the only gate on Slack
         self.assertIn("READY", (self.d / "ledger.md").read_text())
         self.assertEqual((self.d / "board.html").read_text(), "<html>0</html>")
@@ -118,6 +118,26 @@ class PassCmd(unittest.TestCase):
         self.assertEqual((self.d / ".gitignore").read_text().splitlines(), [".*.tmp", ".sync.json", ".workspace.json", ".status-cache.json"])
         self.assertTrue((self.d / ".state.lock").exists())  # tracked, empty; init creates it, pass repairs it
 
+    def test_state_since_is_stamped_on_every_state_change_only(self):
+        # 2026-11-06: the board's ageing table reads pr.state_since / story.state_since; a re-entry into the same state keeps the stamp
+        self.assertNotIn("state_since", self.data()["prs"]["jsfiller#1"])
+        self.to_ready(); since = self.data()["prs"]["jsfiller#1"]["state_since"]
+        self.assertRegex(since, r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$")
+        self.story(state="DONE")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, slack=LINK, reviewers="isachivka"), self.io); self.assertEqual(rc, 0, out)
+        self.assertRegex(self.data()["prs"]["jsfiller#1"]["state_since"], r"^\d{4}-\d\d-\d\dT\d\d:\d\dZ$")
+        with mock.patch.object(pass_cmd, "_now", return_value="2026-11-06T12:00Z"):
+            rc, out = run_capture(self.d, "pr", "jsfiller#1", "REWORK", opts(reason="push"), self.io); self.assertEqual(rc, 0, out)
+            self.assertEqual(self.data()["prs"]["jsfiller#1"]["state_since"], "2026-11-06T12:00Z")
+            rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io); self.assertEqual(rc, 0, out)
+            self.assertEqual(self.data()["prs"]["docs-platform#2"]["state_since"], "2026-11-06T12:00Z")
+        self.io.heads["docs-platform#2"] = H2
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head=H2, ci="success"), self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["prs"]["docs-platform#2"]["state_since"], "2026-11-06T12:00Z")  # AI_REVIEW → AI_REVIEW after a push: same state, same stamp
+        self.assertNotIn("state_since", self.data()["stories"]["S1"])
+        with mock.patch.object(pass_cmd, "_now", return_value="2026-11-06T13:00Z"):
+            rc, out = run_capture(self.d, "story", "S1", "IN_PROGRESS", opts(reason="reopen"), self.io); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.data()["stories"]["S1"]["state_since"], "2026-11-06T13:00Z")
     def test_head_change_voids_old_evidence_and_an_old_open_send(self):
         self.to_ready(); self.old_send_entry()
         self.io.heads["jsfiller#1"] = H2
