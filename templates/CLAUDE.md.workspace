@@ -7,7 +7,10 @@ knowledge worktree. Plugin: `turnstile` — invoke the `turnstile` skill first i
 
 - Repo worktrees in this folder: {{repos}} — each a git worktree of your clone on the per-workspace branch `{{ws_branch}}`.
   Agents cut ticket branches inside them from `origin/<base>` (or the story branch), never from `{{ws_branch}}`; `turnstile
-  brief … --var repo=<name>` renders the worktree path into the brief (paths per machine: `delivery/.workspace.json`).
+  brief … --var repo=<name>` renders the worktree path into the brief (paths per machine: `delivery/.workspace.json`); a repo
+  the plan needs and this folder lacks is added with `turnstile repo add '<json>'`.
+- This workspace is registered in `~/.config/turnstile/workspaces.json` (`turnstile start {{epic_key}}`), so a session opened in
+  the clone root or in any clone under it drives the same epic; this folder stays for people who open Claude here.
 - `state.json` and `ledger.md` are written only by `turnstile` commands; briefs and reports go through the Write tool.
 - The lead approves every merge, story start, story completion and every reply on a review thread that needs the
   lead (`needs_lead`) by typing `! TURNSTILE_LEAD=1 turnstile approve <ah-id>` in the Claude Code prompt. You report what

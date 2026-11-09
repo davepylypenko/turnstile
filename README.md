@@ -26,23 +26,27 @@ command, role-scoped agents and hooks that physically block forbidden actions.
   `ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review`).
   The plugin holds only its name (`send_skill`); `init` and `status` say when it is not found.
 
-## Join an epic in three lines
+## Start or join an epic in three lines
 
 ```
 claude plugin install turnstile@turnstile      # or: claude plugin update turnstile@turnstile
-turnstile attach --epic <KEY>                  # from any folder under your clone root
-cd <workspace> && claude                       # then say "turnstile status"
+cd ~/Desktop/pdffiller && claude               # the folder with your clones (or inside pdffiller-knowledge)
+"Start epic MYD-X"  /  "Continue epic MYD-X"   # the orchestrator runs `turnstile start MYD-X` and drives the epic from here
 ```
 
-`attach` finds the clone root by walking up from the cwd to the folder that holds `pdffiller-knowledge/`, takes your GitHub login from `gh api user --jq .login` and your variant as `<key-lower>-<login>`; it ends with exactly two `NEXT:` lines.
-In the new session `turnstile status` prints `ONBOARD:` and the plugin dispatches the deployer to create your variant, then asks the one preferences question. The hooks load per folder, so start a new Claude session inside the workspace.
+`turnstile start <KEY>` finds the clone root by walking up from the cwd to the folder that holds `pdffiller-knowledge/`, takes your GitHub login and name from `gh api user`
+and your variant as `<key-lower>-<login>`. When `origin/epic/<key>` exists it attaches (`<root>/<key-lower>` with the worktrees, your `epic.members` entry, `status`); when it does
+not it creates the epic from the clone alone — the workitem folder under `context/workitems` that mentions the key, the org from the clone's origin, no repos yet (`turnstile repo add`
+adds them during the kickoff) — and the same session goes straight into the kickoff: plan, approve line and the one preferences question in one message. Nothing to `cd` into: the
+workspace is registered in `~/.config/turnstile/workspaces.json`, so the hooks and every `turnstile` command resolve it from the clone root and from inside any clone
+(`skills/turnstile/references/workspace.md`). For an existing epic, `status` prints `ONBOARD:` and the plugin dispatches the deployer to create your variant, then asks the one preferences question.
 
 ## Install
 
 ```
 claude plugin install turnstile --marketplace davepylypenko/turnstile       # adds the marketplace and installs the plugin
 sh ~/.claude/plugins/marketplaces/turnstile/scripts/install-cli.sh          # writes the `turnstile` shim into ~/.local/bin
-turnstile --version                                                         # turnstile 0.5.2 (add ~/.local/bin to PATH if the script says so)
+turnstile --version                                                         # turnstile 0.6.0 (add ~/.local/bin to PATH if the script says so)
 claude plugin validate ~/.claude/plugins/marketplaces/turnstile             # optional: ✔ Validation passed
 ```
 
@@ -59,43 +63,38 @@ Without the shim the CLI is
 
 1. Install (above). Keep your clones side by side in one folder, the **clone root** (e.g. `~/Desktop/pdffiller/` holding
    `pdffiller-knowledge/`, `jsfiller/`, `docs-platform/`, …).
-2. Create the epic from a terminal **in the clone root** (or inside the knowledge clone). `init` detects the root, creates the
-   workspace folder `<root>/<epic key, lower case>` and fills it: a worktree of the knowledge clone on `epic/<key>` (cut from
-   `origin/main`) and, for every `--repo`, a worktree of `<root>/<name>` on the per-workspace branch `ws/<key>`, cut from
-   `origin/<base>` after a fetch (the shared base is never checked out, so the main clone may hold it). `--knowledge <clone>` is
-   needed only when the clone is not `<root>/pdffiller-knowledge`, `--clone-root <dir>` when you run it elsewhere, `"path"` in a
-   `--repo` JSON when a clone is not `<root>/<name>`:
+2. Open Claude Code **in the clone root** (or inside the knowledge clone) and say "Start epic MYD-1". The orchestrator runs
+   `turnstile start MYD-1`: it detects the root, finds the workitem folder under `context/workitems/` on `origin/main` that mentions the
+   key (`--workitem <name>` when none or several do), reads your login and name from `gh api user` and the org from the clone's origin,
+   creates the workspace folder `<root>/<epic key, lower case>` with a worktree of the knowledge clone on `epic/<key>` (cut from
+   `origin/main`) and the `delivery/` skeleton, registers the workspace in `~/.config/turnstile/workspaces.json` and goes on with the
+   kickoff in the same session. Repos join during the kickoff: `turnstile repo add '{"name":"jsfiller","base":"develop","slack":"C0123456789",
+   "gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}'` clones `<org>/<name>` into `<root>/<name>` when it is missing and adds a
+   worktree of it on the per-workspace branch `ws/<key>`, cut from `origin/<base>` after a fetch (the shared base is never checked out, so
+   the main clone may hold it; `"path"` when a clone is not `<root>/<name>`). The flag-level `turnstile init … --repo '<json>'` and
+   `turnstile attach --epic <KEY>` still exist (`skills/turnstile/references/workspace.md`).
 
    ```
-   cd ~/Desktop/pdffiller
-   turnstile init --epic MYD-1 --workitem my-epic \
-     --lead you@example.com --lead-github <your login> --github-org <org> \
-     --repo '{"name":"jsfiller","base":"develop","slack":"C0123456789","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
-     --chat-language English
-   ```
-
-   ```
-   ~/Desktop/pdffiller/                ← clone root (run `turnstile init` here)
-     pdffiller-knowledge/  jsfiller/  docs-platform/ …   ← your clones
-     myd-1/                            ← created by init: the workspace you open in Claude Code
+   ~/Desktop/pdffiller/                ← clone root: open Claude here and say "Start epic MYD-1"
+     pdffiller-knowledge/  jsfiller/  docs-platform/ …   ← your clones (a missing one is cloned by `repo add`)
+     myd-1/                            ← created by start: the workspace (hooks and commands find it from the root too)
        .turnstile  CLAUDE.md
        pdffiller-knowledge/            ← worktree epic/myd-1 → context/workitems/my-epic/delivery/
-       jsfiller/                       ← worktree ws/myd-1 from origin/develop
+       jsfiller/                       ← worktree ws/myd-1 from origin/develop (added by `turnstile repo add`)
        docs-platform/                  ← …
    ```
 
-   It prints `WORKSPACE`, `WORKTREE`, one `REPO:` line per repo, `DELIVERY`, `CLAUDE_MD`, `CONFIG`, `SEND_SKILL` (where the send skill
-   was found, or the install line and a `NEXT` to ask the lead which skill to use) and `NEXT`, writes `.turnstile`
-   (workspace → delivery dir), a workspace `CLAUDE.md` for the orchestrator (the CLI path and the repo worktrees), the git-ignored
-   `delivery/.workspace.json` (this machine's absolute paths; `state.json` keeps only the relative names, `epic.repos.<r>.path`) and
-   commits the `delivery/` skeleton. A workspace folder that exists and is not empty is refused, unless it already is this epic's
-   workspace (then `init` attaches); a repo without a clone is refused with the expected path before anything is created.
-   Then open the workspace: `cd ~/Desktop/pdffiller/myd-1 && claude` — the hooks load per folder, so start a new Claude session inside
-   the workspace. Agents cut ticket branches inside `<workspace>/<repo>` from
+   `start` prints `WORKSPACE`, `WORKTREE`, `DELIVERY`, `CLAUDE_MD`, `SYNC`, `CONFIG`, `SEND_SKILL` (where the send skill was found, or the
+   install line), `OK start MYD-1` and one `NEXT:` line (`kickoff …` for a new epic, `turnstile status` for an existing one); `repo add`
+   prints a `REPO:` line per repo. `start` writes `.turnstile` (workspace → delivery dir), a workspace `CLAUDE.md` for the orchestrator (the
+   CLI path and the repo worktrees), the git-ignored `delivery/.workspace.json` (this machine's absolute paths; `state.json` keeps only the
+   relative names, `epic.repos.<r>.path`) and commits the `delivery/` skeleton. A workspace folder that exists and is not empty is refused,
+   unless it already is this epic's workspace (then `start` attaches). Agents cut ticket branches inside `<workspace>/<repo>` from
    `origin/<base>` (or the story branch), never from `ws/*`; `turnstile brief … --var repo=<name>` renders that worktree's path.
-3. Write `delivery/plan.md` (`skills/turnstile/references/kickoff.md`; in Claude Code the orchestrator does this from the
-   decomposition). The `turnstile-stories` JSON block needs at least `title`, `tickets`, `repos` and `branch` per story.
-   Then `turnstile plan-submitted` → `APPROVAL: a member types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`.
+3. The orchestrator writes `delivery/plan.md` (`skills/turnstile/references/kickoff.md`) from the decomposition. The `turnstile-stories`
+   JSON block needs at least `title`, `tickets`, `repos` (each one added with `repo add`) and `branch` per story.
+   Then `turnstile plan-submitted` → `APPROVAL: a member types: ! TURNSTILE_LEAD=1 turnstile approve ah-1`; the orchestrator shows the plan
+   summary, that line and the one preferences question in one message.
 4. Approve it by typing `! TURNSTILE_LEAD=1 turnstile approve ah-1` in the Claude Code prompt (never through the model).
    `turnstile status` now lists `ah-2 lead start_story S1`; approve that the same way when the story may start, then
    the orchestrator records `turnstile pass story S1 IN_PROGRESS --approved ah-2`.
@@ -128,19 +127,19 @@ epics — stack mode behaves exactly as before) and `"control_cases"`. The teste
 
 ## Continuing someone else's epic
 
-`turnstile attach --epic MYD-1`, run from any folder under your clone root (it walks up to the folder holding `pdffiller-knowledge/`; `--clone-root`, `--knowledge`, `--workspace`, `--workitem`,
-`--github`, `--variant` override), creates `<root>/<key>` the same way: it fetches `origin/epic/<key>`, adds the
+Open Claude in your clone root (or in any clone under it) and say "Continue epic MYD-1": `turnstile start MYD-1` sees `origin/epic/myd-1` and attaches (`turnstile attach --epic MYD-1` is the
+flag-level command underneath; `--clone-root`, `--knowledge`, `--workitem`, `--github`, `--variant`, `--desk`, `--board-url` override). It creates `<root>/<key>` the same way: it fetches `origin/epic/<key>`, adds the
 knowledge worktree inside the workspace (fast-forwarded to origin), finds the delivery dir, adds a `ws/<key>` worktree of your
 `<root>/<name>` clone for every `epic.repos` entry (a missing clone is refused with its expected path), writes `.turnstile`,
-`delivery/.workspace.json` and the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead) and
-prints `status`; then `cd <workspace> && claude`, where `turnstile status` prints `ONBOARD:` (the deployer creates the variant) and the skill's `## preferences` step asks for this person's own
-review skill, send skill and models. Every writer first fetches: a worktree behind origin is merged by the same routine as `turnstile sync`, which fetches, fast-forwards or merges `origin/<branch>`
+`delivery/.workspace.json` and the workspace `CLAUDE.md` (an existing one is kept; `CLAUDE.md.turnstile` is written instead), registers the workspace and
+prints `status`, which prints `ONBOARD:` (the deployer creates the variant); the skill's `## preferences` step then asks for this person's own
+review skill, send skill and models — all in the session that said "Continue epic". Every writer first fetches: a worktree behind origin is merged by the same routine as `turnstile sync`, which fetches, fast-forwards or merges `origin/<branch>`
 (a conflict only in `board.html` / `boards/*.html` is re-rendered from the merged `state.json`; one in `state.json`, `ledger.md`, `plan.md` or `decisions.md` stops with the files named and the humans merge by hand) and pushes — never rebase, never force.
 `status` also prints `PLUGIN: <loaded> (restart the session to load <newer> …)` when a mid-session update left the hooks of this session on an older version.
 
 ## Several developers on one epic
 
-The delivery state lives on the epic branch, so every developer drives the same epic from their own machine: one `turnstile attach --epic MYD-1 --github <login>` each. `epic.members.<login>` holds a developer's
+The delivery state lives on the epic branch, so every developer drives the same epic from their own machine: one `turnstile start MYD-1` each ("Continue epic MYD-1" in Claude; `turnstile attach --epic MYD-1 --github <login>` underneath). `epic.members.<login>` holds a developer's
 Prometey variant (default `<key>-<login>`), desk and board artifact, so one developer's deploys never overwrite another's variant and `BOARD: publish` points at an artifact that developer can update. The
 member of a machine is the `member` in its untracked `delivery/.workspace.json`; `status` prints it, `turnstile board-url <url>` records the board artifact. Every writer fetches first and a worktree behind origin is
 refused until `turnstile sync` (never rebase, never force). `turnstile pr add` and `turnstile pass story … IN_PROGRESS` record the member as the `owner` of the PR or story (`--owner <login>` overrides); every write renders `delivery/board.html` (everything) and `delivery/boards/<login>.html` per member, with only that member's stories, PRs, bugs and awaiting entries. Every developer publishes their own file to their own artifact. Any member approves (`turnstile approve`, from their own terminal; the ledger records who). Replies posted from any member's login (`epic.members`), the lead's or the agent login count as ours when threads are checked, and the plugin ships the `prometey-variant` skill the deployer uses (a user copy of the same name takes precedence).
@@ -209,8 +208,8 @@ use; `status` prints one `WARN: send skill … not found` line while it is missi
 and the format and shows the draft; when the epic
 sets `epic.repos.<repo>.slack`, the orchestrator passes that channel explicitly (the explicit channel wins); the lead's word in
 chat stays the only gate, then `pass … --slack <permalink> --reviewers …` records the send. Without an installed skill the
-templates in `skills/turnstile/references/slack.md` are the fallback and the orchestrator asks the lead which skill to install or use. `repos.<repo>.slack` stays required at `init`.
-The skill's `## preferences` step asks the lead once, right after `init`, and maps later chat instructions to these commands.
+templates in `skills/turnstile/references/slack.md` are the fallback and the orchestrator asks the lead which skill to install or use. `repos.<repo>.slack` stays required at `repo add` / `init --repo`.
+The skill's `## preferences` step asks the lead once, in the plan message right after `start`, and maps later chat instructions to these commands.
 
 ```
 turnstile config set review_skill=/my-review
@@ -221,13 +220,10 @@ turnstile config set models.reviewer=sonnet:medium
 ## Usage
 
 ```
-cd ~/Desktop/pdffiller                                     # the clone root: pdffiller-knowledge/, jsfiller/, front-link2fill-app/ … side by side
-turnstile init --epic MYD-16538 --workitem pdfd-429-l2f-editor-funnel \
-  --lead davyd.pylypenko --lead-github <login> [--agent-github <login the agents' gh posts as>] --github-org pdffiller \
-  --repo '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}' \
-  --repo '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}' \
-  --variant l2f-funnel --desk desk05 --chat-language Ukrainian          # creates ~/Desktop/pdffiller/myd-16538/ with a worktree per repo (ws/myd-16538 from origin/<base>)
-cd ~/Desktop/pdffiller/myd-16538 && claude                 # the workspace: hooks, .turnstile and the orchestrator CLAUDE.md live here
+cd ~/Desktop/pdffiller && claude                           # the clone root: pdffiller-knowledge/, jsfiller/, front-link2fill-app/ … side by side; say "Start epic MYD-16538"
+turnstile start MYD-16538 [--workitem pdfd-429-l2f-editor-funnel] [--variant l2f-funnel --desk desk05 --chat-language Ukrainian]   # what the orchestrator runs: creates ~/Desktop/pdffiller/myd-16538/ (knowledge worktree only) or attaches
+turnstile repo add '{"name":"jsfiller","base":"develop","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CCGLRULNR","gate":"pdf-review","ci_ignore":["pdf-review","gate / gate"]}'
+turnstile repo add '{"name":"front-link2fill-app","base":"master","epic_branch":"epic_myd-16538_l2f-funnel","slack":"CFZ7EC5BN","gate":"pr-review","gate_check":null,"copilot":true}'   # clones a missing repo, adds ws/myd-16538 from origin/<base>
 # write delivery/plan.md (skill: references/kickoff.md), then
 turnstile plan-submitted                                   # the lead: ! TURNSTILE_LEAD=1 turnstile approve ah-1
 turnstile brief implementer MYD-18075 --var ticket_key=MYD-18075 --var ...   # then Agent(turnstile:implementer, PROMPT line)
@@ -359,7 +355,7 @@ never runs it.
 
 ### Commands
 
-`init`, `plan-submitted`, `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models, review skills and the send skill; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`start <KEY>` (one command for a new or an existing epic, from the clone root or any clone under it; registers the workspace), `init`, `attach`, `repo add '<json>'` / `repo set <name> key=value …`, `plan-submitted` (refuses a story whose repo is not in `epic.repos`), `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models, review skills and the send skill; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state; `--assignee <accountId> [--assignee-name "<name>"]` records who holds the ticket — the take-up, or a hand-over made by hand; the plugin never moves a ticket away from its holder), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
@@ -375,9 +371,13 @@ relative to `delivery/` and must exist.
 
 `hooks/hooks.json`, PreToolUse plus one PostToolUse, apply to subagents too, and fail closed (a crash, a malformed payload or a missing
 `python3` blocks the call). **They guard a turnstile workspace (2026-11-04):** when no `.turnstile` marker is found upward from the
-session's project dir (`CLAUDE_PROJECT_DIR`), the cwd or a directory the command enters (`cd`, `git -C`, `--work-tree`), every hook is
+session's project dir (`CLAUDE_PROJECT_DIR`), the cwd or a directory the command enters (`cd`, `git -C`, `--work-tree`), and the registry
+`~/.config/turnstile/workspaces.json` (written by `turnstile start`) resolves no workspace for them (an entry whose `clone_root` is the dir or an
+ancestor of it; several → the root's `active` epic; `$TURNSTILE_EPIC=<KEY>` also counts), every hook is
 inert — exit 0, nothing checked — except the Bash guard's universal safety rules, which stay on everywhere: force-push, `git rebase` /
-`pull --rebase` / `pull.rebase true`, `--no-gpg-sign` / `commit.gpgsign=false`. The hook list below describes a workspace session:
+`pull --rebase` / `pull.rebase true`, `--no-gpg-sign` / `commit.gpgsign=false`, and shell writes under `~/.config/turnstile/` (`user-config-write`:
+a redirect, `tee`, `sed -i`, `rm`, `mv`, `cp`, an interpreter opening a file there — only `turnstile` commands write the config and the registry).
+The hook list below describes a workspace session:
 
 - `guard_bash.py` also records its plugin version in `delivery/.workspace.json` (`hooks_version`, for the `PLUGIN:` line of `status`); it has two human brakes, `turnstile approve` and merging, and refuses `gh pr merge`, `gh pr create --reviewer|-r`, REST `pulls/N/merge` writes, GraphQL
   `mergePullRequest|enablePullRequestAutoMerge|requestReviews*`, `git push --force*`/`-f`/`+ref`,

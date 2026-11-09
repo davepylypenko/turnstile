@@ -66,7 +66,9 @@ class Init(unittest.TestCase):
         rec = json.loads((d / ".workspace.json").read_text())
         self.assertEqual(rec["repos"], {"jsfiller": str(self.ws / "jsfiller"), "pdffiller": str(self.ws / "pdffiller")})
         self.assertEqual((rec["workspace"], rec["clone_root"], rec["knowledge"]), (str(self.ws), str(self.tmp), str(wt)))
-        self.assertIn("WORKSPACE: %s (clone root %s)" % (self.ws, self.tmp), buf.getvalue()); self.assertIn("NEXT: cd %s && claude" % self.ws, buf.getvalue())
+        self.assertIn("WORKSPACE: %s (clone root %s)" % (self.ws, self.tmp), buf.getvalue()); self.assertNotIn("&& claude", buf.getvalue())
+        from turnstile_cli import paths
+        self.assertEqual(paths.load_registry()["epics"]["MYD-1"], {"workspace": str(self.ws), "clone_root": str(self.tmp), "delivery": str(d)})
         data = json.loads((d / "state.json").read_text())
         self.assertEqual(data["epic"]["repos"]["jsfiller"]["path"], "jsfiller"); self.assertNotIn("workspace", data["epic"])
         self.assertIn("`jsfiller/` (ws/myd-1 from `origin/develop`)", (self.ws / "CLAUDE.md").read_text()); self.assertIn(".workspace.json", (d / ".gitignore").read_text())

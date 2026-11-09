@@ -2,7 +2,7 @@ import json, os, pathlib, re
 from dataclasses import dataclass
 from typing import Optional
 from . import state as st_mod, sync, workspace, members
-from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md
+from .init_cmd import InitIO, epic_branch_name, write_workspace_claude_md, register_workspace
 from .errors import TurnstileError
 
 @dataclass
@@ -18,6 +18,7 @@ class AttachOptions:
     variant: Optional[str] = None
     desk: Optional[str] = None
     board_url: Optional[str] = None
+    no_push: bool = False
 
 NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -52,7 +53,7 @@ def _write_member(delivery: pathlib.Path, login: str, o: AttachOptions, writer) 
         if (epic.get("roles") or {}).get("lead_github") == login and o.board_url:
             epic.setdefault("board", {"capabilities": list(members.CAPABILITIES)})["artifact_url"] = o.board_url
         if json.dumps(table[login], sort_keys=True) != before:
-            _side_effects(delivery, st, ["attach member %s (variant %s)" % (login, entry.get("variant"))], writer, False, False)
+            _side_effects(delivery, st, ["attach member %s (variant %s)" % (login, entry.get("variant"))], writer, False, o.no_push)
         return entry
 
 def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
@@ -102,6 +103,7 @@ def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
         target = write_workspace_claude_md(ws, key, rel, o.chat_language or data["epic"].get("chat_language") or "English",
                                            workspace.claude_md_repos(repos, repo_wts, key))
         workspace.record(delivery, ws, root, wt, repo_wts, member=login)
+        register_workspace(key, ws, root, delivery)
         head = io.git(["rev-parse", "HEAD"], wt).strip() or None
         sync.record(delivery, synced, head, None if synced else "not fast-forwarded to origin/%s" % branch)
         entry = _write_member(delivery, login, o, writer)
@@ -111,10 +113,7 @@ def run(o: AttachOptions, io: Optional[InitIO] = None, writer=None) -> int:
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target)
         print("MEMBER: %s · variant %s · desk %s · board %s" % (login, entry.get("variant"), entry.get("desk") or "none", (entry.get("board") or {}).get("artifact_url") or "new artifact"))
         print("OK attach %s" % key)
-        rc = status_cli(delivery, status=True, onboard=False)
-        print("NEXT: cd %s && claude" % ws)
-        print('NEXT: in that session say "turnstile status" — the plugin dispatches the deployer to create your variant and asks the one preferences question')
-        return rc
+        return status_cli(delivery, status=True, onboard=False)
     except TurnstileError as e:
         print("MISSING %s" % e); return 2
 

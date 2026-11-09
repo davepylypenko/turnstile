@@ -51,6 +51,18 @@ def _is_knowledge_clone(cwd: pathlib.Path, knowledge: Optional[pathlib.Path], io
         return bool(a) and a == b
     return cwd.name == DEFAULT_KNOWLEDGE or _repo_basename(_origin(io, cwd)) == DEFAULT_KNOWLEDGE
 
+def _recorded_root(d: pathlib.Path) -> Optional[pathlib.Path]:
+    marker = d / ".turnstile"
+    if not marker.exists():
+        return None
+    try:
+        target = (marker.read_text().splitlines() or [""])[0].strip()
+        rec = load(d / target) if target else None
+    except OSError:
+        return None
+    root = pathlib.Path(rec["clone_root"]) if rec and rec.get("clone_root") else None
+    return root.resolve() if root and root.is_dir() else None
+
 def detect_root(cwd: pathlib.Path, clone_root: Optional[str], knowledge: Optional[str], repo_names: List[str], io) -> pathlib.Path:
     """The folder that holds the clones: --clone-root, else walking up from the cwd the first folder that is the knowledge clone's
     parent or holds a named clone, else the parent of an explicit --knowledge."""
@@ -63,6 +75,9 @@ def detect_root(cwd: pathlib.Path, clone_root: Optional[str], knowledge: Optiona
     kn = pathlib.Path(knowledge).expanduser().resolve() if knowledge else None
     names = [kn.name if kn else DEFAULT_KNOWLEDGE] + list(repo_names)
     for d in ([cwd] + list(cwd.parents)) if kn is None else []:
+        recorded = _recorded_root(d)
+        if recorded is not None:
+            return recorded
         if (d / ".git").is_dir() and _is_knowledge_clone(d, kn, io):
             return d.parent
         if any((d / n / ".git").is_dir() for n in names):

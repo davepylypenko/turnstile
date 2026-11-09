@@ -85,6 +85,21 @@ class Config(unittest.TestCase):
             with self.assertRaises(TurnstileError, msg=key + "=" + value): config.parse_value(key, value)
         with self.assertRaises(TurnstileError): config.effective({"epic": {}}, {"models": {"reviewer": {"model": "gpt"}}})
 
+    def test_chat_language_is_a_user_key_read_by_start(self):
+        self.assertEqual(config.parse_key("chat_language"), ("chat_language", None)); self.assertEqual(config.parse_value("chat_language", " uk "), "uk")
+        for bad in ["", "   ", "a\nb", "x" * 41]:
+            with self.assertRaises(TurnstileError, msg=bad): config.parse_value("chat_language", bad)
+        self.assertEqual(config.effective({"epic": {}}, {})["chat_language"], {"value": "English", "source": "default"})
+        self.assertEqual(config.effective({"epic": {"chat_language": "Ukrainian"}}, {})["chat_language"], {"value": "Ukrainian", "source": "epic"})
+        self.assertEqual(config.effective({"epic": {"chat_language": "Ukrainian"}}, {"chat_language": "uk"})["chat_language"], {"value": "uk", "source": "user"})
+        self.assertEqual(config.chat_language({}), "English"); self.assertEqual(config.chat_language({"chat_language": "uk"}), "uk")
+        rc, out = out_of(config_cmd.set_, self.d, "chat_language=uk", io=self.io); self.assertEqual(rc, 0, out)
+        self.assertIn("chat_language = uk (user)", out); self.assertEqual(json.loads(self.user.read_text()), {"chat_language": "uk"}); self.assertEqual(config.chat_language(), "uk")
+        rc, out = out_of(config_cmd.list_, self.d); self.assertIn("chat_language = uk (user)", out)
+        self.user.write_text('{"chat_language": 3}')
+        with self.assertRaises(TurnstileError): config.load_user()
+        self.assertEqual(config.chat_language(), "English")
+
     def test_set_refuses_bad_input_and_writes_nothing(self):
         before = (self.d / "state.json").read_text()
         for assignment in ["models.reviewer", "models.reviewer=gpt", "models.nobody=opus", "gate=x", "review_skill=", "models.reviewer=opus:max"]:

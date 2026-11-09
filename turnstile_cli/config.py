@@ -9,7 +9,8 @@ DEFAULT_REVIEW_SKILL = "/code-review"
 SKILL_KEYS = ("review_skill", "story_review_skill", "send_skill")
 SKILL_DEFAULTS = {"review_skill": DEFAULT_REVIEW_SKILL, "story_review_skill": DEFAULT_REVIEW_SKILL, "send_skill": DEFAULT_SEND_SKILL}
 SKILL_RX = re.compile(r"^/(?:[\w][\w.-]*:)?[\w][\w.-]*$")
-KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, reviewers (comma-separated logins; empty = any human), jira_base_url, flag (epic only)"
+KEYS_HELP = "models.<agent>, review_skill, story_review_skill, send_skill, reviewers (comma-separated logins; empty = any human), jira_base_url, chat_language, flag (epic only)"
+DEFAULT_CHAT_LANGUAGE = "English"
 JIRA_BASE_RX = re.compile(r"^https://[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?(/[\w./-]*)?$")
 LOGIN_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 SEND_SKILL_INSTALL = "ln -s <pdffiller-knowledge clone>/playground/zolotukhin-ivan/skills/send-pr-review ~/.claude/skills/send-pr-review"
@@ -47,6 +48,9 @@ def _check_user_shape(data, p: pathlib.Path) -> dict:
     rv = data.get("reviewers")
     if rv is not None and not (isinstance(rv, list) and all(isinstance(x, str) and LOGIN_RX.match(x) for x in rv)):
         raise TurnstileError("user config %s: reviewers must be a list of GitHub logins (is %r)" % (p, rv))
+    cl = data.get("chat_language")
+    if cl is not None and not (isinstance(cl, str) and cl.strip() and "\n" not in cl):
+        raise TurnstileError("user config %s: chat_language must be a language name like uk or English (is %r)" % (p, cl))
     return data
 
 def load_user() -> dict:
@@ -73,7 +77,7 @@ def parse_key(key: str) -> Tuple[str, Optional[str]]:
         if agent not in models.DEFAULTS:
             raise TurnstileError("unknown agent %r in %s (known: %s)" % (agent, key, ", ".join(sorted(models.DEFAULTS))))
         return "models", agent
-    if key in SKILL_KEYS or key in ("flag", "reviewers", "jira_base_url"):
+    if key in SKILL_KEYS or key in ("flag", "reviewers", "jira_base_url", "chat_language"):
         return key, None
     raise TurnstileError("unknown config key %r (allowed: %s)" % (key, KEYS_HELP))
 
@@ -97,6 +101,11 @@ def parse_value(key: str, value: str):
         if not JIRA_BASE_RX.match(url):
             raise TurnstileError("jira_base_url must look like https://pdffiller.atlassian.net (got %r)" % value)
         return url
+    if key == "chat_language":
+        lang = value.strip()
+        if not lang or "\n" in lang or len(lang) > 40:
+            raise TurnstileError("chat_language takes a language name like uk or English (got %r)" % value)
+        return lang
     if not value or not value.strip():
         raise TurnstileError("%s needs a non-empty %s" % (key, "flag name" if key == "flag" else "skill name (e.g. /pdf-review:run)"))
     if key != "flag" and not SKILL_RX.match(value.strip()):
@@ -159,7 +168,19 @@ def effective(data: Optional[dict] = None, user: Optional[dict] = None) -> dict:
     else:
         out["jira_base_url"] = {"value": DEFAULT_JIRA_BASE_URL, "source": "default"}
     out["flag"] = {"value": epic.get("flag") or None, "source": "epic" if epic.get("flag") else "default"}
+    if user.get("chat_language"):
+        out["chat_language"] = {"value": str(user["chat_language"]), "source": "user"}
+    elif epic.get("chat_language"):
+        out["chat_language"] = {"value": str(epic["chat_language"]), "source": "epic"}
+    else:
+        out["chat_language"] = {"value": DEFAULT_CHAT_LANGUAGE, "source": "default"}
     return out
+
+def chat_language(user: Optional[dict] = None) -> str:
+    try:
+        return effective(None, user)["chat_language"]["value"]
+    except TurnstileError:
+        return DEFAULT_CHAT_LANGUAGE
 
 def jira_base_url(data: Optional[dict] = None) -> str:
     try:
@@ -187,7 +208,7 @@ def _source_note(agent: str, entry: dict) -> str:
 
 def lines(eff: dict) -> list:
     out = ["models.%s = %s (%s)" % (a, fmt_resolved(a, m), _source_note(a, m)) for a, m in eff["models"].items()]
-    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["reviewers = %s (%s)" % (fmt_reviewers(eff), eff["reviewers"]["source"]), "jira_base_url = %s (%s)" % (eff["jira_base_url"]["value"], eff["jira_base_url"]["source"]), "flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
+    return out + ["%s = %s (%s)" % (k, eff[k]["value"], eff[k]["source"]) for k in SKILL_KEYS] + ["reviewers = %s (%s)" % (fmt_reviewers(eff), eff["reviewers"]["source"]), "jira_base_url = %s (%s)" % (eff["jira_base_url"]["value"], eff["jira_base_url"]["source"]), "chat_language = %s (%s)" % (eff["chat_language"]["value"], eff["chat_language"]["source"]), "flag = %s (%s)" % (eff["flag"]["value"] or "none", eff["flag"]["source"])]
 
 def one_line(eff: dict) -> str:
     overrides = ["%s models.%s" % (m["source"], a) for a, m in eff["models"].items() if m["source"] != "default"]

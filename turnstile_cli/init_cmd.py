@@ -1,7 +1,7 @@
 import json, os, pathlib, shutil, subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from . import state as st_mod, ledger, models, config, sync, workspace, members
+from . import state as st_mod, ledger, models, config, sync, workspace, members, paths
 from .errors import TurnstileError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -34,14 +34,24 @@ class InitOptions:
     flag: Optional[str] = None
     story_mode: str = "stack"
     jira_base_url: Optional[str] = None
+    no_push: bool = False
 
 class InitIO:
-    def github_login(self) -> str:
+    def _gh_user(self, field: str) -> str:
         try:
-            out = subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True, timeout=20)
+            out = subprocess.run(["gh", "api", "user", "--jq", "." + field], capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.SubprocessError):
             return ""
         return out.stdout.strip() if out.returncode == 0 else ""
+    def github_login(self) -> str:
+        return self._gh_user("login")
+    def github_name(self) -> str:
+        name = self._gh_user("name")
+        return "" if name in ("", "null") else name
+    def gh_clone(self, org: str, name: str, dest: pathlib.Path) -> None:
+        out = subprocess.run(["gh", "repo", "clone", "%s/%s" % (org, name), str(dest)], capture_output=True, text=True)
+        if out.returncode != 0:
+            raise TurnstileError("gh repo clone %s/%s failed: %s" % (org, name, out.stderr.strip()[:200]))
     def git(self, args: List[str], cwd: pathlib.Path) -> str:
         out = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
         if out.returncode != 0:
@@ -149,15 +159,16 @@ def _same_epic(ws: pathlib.Path, key: str) -> bool:
     except Exception:
         return False
 
-def next_lines(ws: pathlib.Path, cwd: pathlib.Path) -> List[str]:
-    return ["NEXT: cd %s && claude — the hooks load per folder, so start a new Claude session inside the workspace (this one runs in %s)" % (ws, cwd)]
+def register_workspace(key: str, ws: pathlib.Path, root: pathlib.Path, delivery: pathlib.Path) -> None:
+    try:
+        paths.register(key, ws, root, delivery)
+    except OSError as e:
+        print("WARN: workspace not registered in %s: %s" % (paths.registry_path(), e))
 
-def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
+def run(o: InitOptions, io: Optional[InitIO] = None, nexts: bool = True) -> int:
     from .pass_cmd import _ensure_repo_files
     io = io or InitIO()
     try:
-        if not o.repos:
-            raise TurnstileError("at least one --repo is required")
         data = build_state(o)  # validates every --repo before anything is created
         repos = data["epic"]["repos"]; cwd = pathlib.Path.cwd()
         root = workspace.detect_root(cwd, o.clone_root, o.knowledge, list(repos), io)
@@ -168,7 +179,7 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
             from .attach_cmd import run as attach_run, AttachOptions
             print("WORKSPACE: %s already holds epic %s; attaching" % (ws, o.epic))
             return attach_run(AttachOptions(epic=o.epic, knowledge=str(knowledge), clone_root=str(root), workspace=str(ws), workitem=o.workitem,
-                                            chat_language=o.chat_language, github=o.lead_github), io)
+                                            chat_language=o.chat_language, github=o.lead_github, no_push=o.no_push), io)
         foreign = workspace.foreign_entries(ws, [knowledge.name] + list(repos))
         if foreign:
             raise TurnstileError("%s exists and is not empty (%s) and is not a turnstile workspace of %s; pass another --workspace"
@@ -211,22 +222,26 @@ def run(o: InitOptions, io: Optional[InitIO] = None) -> int:
             raise TurnstileError("%s — init rolled back (%s removed; the worktree %s stays); fix the cause and re-run the same init command"
                                  % (e, ", ".join(str(c) for c in created) or "nothing", wt))
         workspace.record(delivery, ws, root, wt, repo_wts, member=o.lead_github)
+        register_workspace(o.epic, ws, root, delivery)
         head = io.git(["rev-parse", "HEAD"], delivery).strip() or None
-        try:
-            io.git(["push", "-q", "origin", "HEAD:refs/heads/" + branch], delivery); rec = sync.record(delivery, True, head)
-        except TurnstileError as e:
-            rec = sync.record(delivery, False, head, str(e)[:200]); print("WARN: not pushed: %s" % str(e)[:200])
+        if o.no_push:
+            rec = sync.record(delivery, False, head, "--no-push")
+        else:
+            try:
+                io.git(["push", "-q", "origin", "HEAD:refs/heads/" + branch], delivery); rec = sync.record(delivery, True, head)
+            except TurnstileError as e:
+                rec = sync.record(delivery, False, head, str(e)[:200]); print("WARN: not pushed: %s" % str(e)[:200])
         print("WORKSPACE: %s (clone root %s)" % (ws, root)); print("WORKTREE: %s (%s)" % (wt, branch))
         for line in workspace.repo_lines(repos, repo_wts, o.epic):
             print(line)
         print("DELIVERY: %s" % delivery); print("CLAUDE_MD: %s" % target); print(sync.line(rec))
-        print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
+        if nexts:
+            print("NEXT: write %s per references/kickoff.md, then: turnstile plan-submitted" % (delivery / "plan.md"))
         print("CONFIG: " + config.one_line(config.effective(data)))
         print(config.send_skill_line(*config.send_skill(data, delivery)))
-        print("NEXT: ask the lead once (skill § preferences): own review skill? send skill? other model/effort per agent? Record with "
-              "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
-        for line in next_lines(ws, cwd):
-            print(line)
+        if nexts:
+            print("NEXT: ask the lead once (skill § preferences): own review skill? send skill? other model/effort per agent? Record with "
+                  "turnstile config set <key>=<value> [--epic]; confirm with turnstile config list")
         print("OK init %s" % o.epic)
         return 0
     except TurnstileError as e:

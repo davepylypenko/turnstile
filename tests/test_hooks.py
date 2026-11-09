@@ -965,3 +965,67 @@ class OutsideWorkspace(unittest.TestCase):
         self.assertEqual(edit(str(self.ws / "delivery" / "state.json"), self.plain).returncode, 2)  # the target lies in a workspace
         self.assertEqual(edit(str(self.ws / "delivery" / "reports" / "R.md"), self.plain).returncode, 0)
         self.assertEqual(edit(str(self.plain / "state.json"), self.ws / "jsfiller").returncode, 2)  # a workspace session keeps the name rule
+
+class RegistryAndUserDir(unittest.TestCase):
+    """0.6.0: a session in the clone root drives the epic; the hooks resolve its workspace through the user's registry
+    (`~/.config/turnstile/workspaces.json`, written by `turnstile start`), and shell writes under that dir are refused everywhere."""
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp()).resolve(); (self.root / "jsfiller").mkdir(); (self.root / "pdffiller-knowledge").mkdir()
+        self.ws = self.root / "myd-1"; d = self.ws / "delivery"; d.mkdir(parents=True); shutil.copy(FIX, d / "state.json")
+        self.reg = pathlib.Path(os.environ["TURNSTILE_USER_CONFIG"]).parent / "workspaces.json"
+        self.before = self.reg.read_text() if self.reg.exists() else None
+        self.reg.parent.mkdir(parents=True, exist_ok=True)
+        self.write_registry({"MYD-1": self.entry()}, {})
+        self.addCleanup(self.restore)
+    def entry(self):
+        return {"workspace": str(self.ws), "clone_root": str(self.root), "delivery": str(self.ws / "delivery")}
+    def write_registry(self, epics, active):
+        self.reg.write_text(json.dumps({"epics": epics, "active": active}))
+    def restore(self):
+        if self.before is None:
+            if self.reg.exists():
+                self.reg.unlink()
+        else:
+            self.reg.write_text(self.before)
+    def bash(self, cmd, cwd, env=None, **payload):
+        p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}; p.update(payload)
+        return hook("guard_bash.py", p, cwd, env=env)
+
+    def test_the_registry_makes_the_clone_root_and_its_clones_managed_without_a_marker(self):
+        self.assertFalse(any((d / ".turnstile").exists() for d in (self.root, self.ws)))
+        for cwd in (self.root, self.root / "jsfiller", self.root / "pdffiller-knowledge", self.ws):
+            r = self.bash("gh pr merge 13", cwd); self.assertEqual(r.returncode, 2, str(cwd)); self.assertIn("rule merge", r.stderr)
+            r = self.bash("echo x > %s/delivery/ledger.md" % self.ws, cwd); self.assertEqual(r.returncode, 2, str(cwd)); self.assertIn("delivery-write", r.stderr)
+            r = self.bash("gh pr view 13", cwd); self.assertEqual(r.returncode, 0, r.stderr)
+        plain = pathlib.Path(tempfile.mkdtemp())
+        self.assertEqual(self.bash("gh pr merge 13", plain).returncode, 0)
+        r = self.bash("gh pr merge 13", plain, env={"CLAUDE_PROJECT_DIR": str(self.root / "jsfiller")}); self.assertEqual(r.returncode, 2); self.assertIn("rule merge", r.stderr)
+        r = self.bash("gh pr merge 13", plain, env={"TURNSTILE_EPIC": "MYD-1"}); self.assertEqual(r.returncode, 2)
+        self.assertEqual(self.bash("gh pr merge 13", plain, env={"TURNSTILE_EPIC": "MYD-9"}).returncode, 0)
+        self.write_registry({"MYD-1": self.entry(), "MYD-2": self.entry()}, {})
+        self.assertEqual(self.bash("gh pr merge 13", self.root / "jsfiller").returncode, 0)  # two epics, no active pointer: nothing resolves
+        self.write_registry({"MYD-1": self.entry(), "MYD-2": self.entry()}, {str(self.root): "MYD-2"})
+        self.assertEqual(self.bash("gh pr merge 13", self.root / "jsfiller").returncode, 2)
+        self.reg.write_text("{not json"); self.assertEqual(self.bash("gh pr merge 13", self.root / "jsfiller").returncode, 0)
+        p = {"tool_name": "mcp__claude_ai_Atlassian__transitionJiraIssue", "tool_input": {"issueIdOrKey": "MYD-1"}, "cwd": str(self.root / "jsfiller"), "agent_id": "a1", "agent_type": "turnstile:tester"}
+        self.assertEqual(hook("guard_role.py", p, self.root, env={"TURNSTILE_ROLE": "tester"}).returncode, 0)
+        self.write_registry({"MYD-1": self.entry()}, {})
+        r = hook("guard_role.py", p, self.root, env={"TURNSTILE_ROLE": "tester"}); self.assertEqual(r.returncode, 2); self.assertIn("role-jira", r.stderr)
+        r = hook("guard_state_edit.py", {"tool_name": "Write", "tool_input": {"file_path": str(self.ws / "delivery" / "state.json")}, "cwd": str(self.root / "jsfiller")}, self.root)
+        self.assertEqual(r.returncode, 2); self.assertIn("turnstile pass", r.stderr)
+
+    def test_shell_writes_under_the_user_turnstile_dir_are_refused_everywhere(self):
+        home = os.path.expanduser("~")
+        plain = pathlib.Path(tempfile.mkdtemp())
+        for cwd in (plain, self.root / "jsfiller"):
+            for cmd in ["echo '{}' > ~/.config/turnstile/workspaces.json", "cat x >> $HOME/.config/turnstile/config.json", "sed -i '' s/a/b/ ~/.config/turnstile/workspaces.json",
+                        "sed --in-place s/a/b/ ${HOME}/.config/turnstile/workspaces.json", "rm ~/.config/turnstile/workspaces.json", "rm -rf ~/.config/turnstile",
+                        "mv /tmp/w.json ~/.config/turnstile/workspaces.json", "cp /tmp/w.json %s/.config/turnstile/workspaces.json" % home,
+                        "jq '.active={}' ~/.config/turnstile/workspaces.json | tee ~/.config/turnstile/workspaces.json",
+                        "python3 -c \"open('%s/.config/turnstile/workspaces.json','w').write('{}')\"" % home, "truncate -s 0 ~/.config/turnstile/workspaces.json",
+                        "cd ~ && echo x > ~/.config/turnstile/config.json", "perl -pi -e 's/a/b/' ~/.config/turnstile/config.json", "sort -o ~/.config/turnstile/config.json x"]:
+                r = self.bash(cmd, cwd); self.assertEqual(r.returncode, 2, cmd); self.assertIn("user-config-write", r.stderr, cmd)
+            for cmd in ["cat ~/.config/turnstile/workspaces.json", "jq .epics ~/.config/turnstile/workspaces.json", "ls -la ~/.config/turnstile", "grep MYD ~/.config/turnstile/workspaces.json",
+                        "sed -n 1,5p ~/.config/turnstile/workspaces.json", "turnstile config set review_skill=/x", "turnstile start MYD-1", "turnstile repo add '{\"name\":\"app\",\"base\":\"main\",\"slack\":\"C1\"}'",
+                        "echo x > ~/.config/other/file", "echo ~/.config/turnstile/workspaces.json", "diff ~/.config/turnstile/config.json /tmp/c.json"]:
+                r = self.bash(cmd, cwd); self.assertEqual(r.returncode, 0, cmd + "\n" + r.stderr)

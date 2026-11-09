@@ -10,7 +10,7 @@ PLAN = """# plan
 {
   "S1": {"title": "Header", "tickets": ["MYD-10", "MYD-11"], "repos": ["jsfiller"], "branch": "epic_myd-1", "after": [], "parallel_with": [],
          "test_cases": ["TP-1"], "figma": ["F:1-2"], "env_slot": {"variant": "v1"}, "human_review_units": [], "human_review": "per_pr"},
-  "S2": {"title": "Results", "tickets": ["MYD-12"], "repos": ["front-link2fill-app"], "branch": "story/s2", "after": ["S1"]}
+  "S2": {"title": "Results", "tickets": ["MYD-12"], "repos": ["docs-platform"], "branch": "story/s2", "after": ["S1"]}
 }
 ```
 """

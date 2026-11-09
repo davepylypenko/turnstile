@@ -47,6 +47,14 @@ def stories_from_plan(text: str, default_mode: str = "stack", flag: Optional[str
                     raise TurnstileError("story %s.%s references unknown story %s" % (sid, key, ref))
     return out
 
+def check_story_repos(planned: dict, repos: dict) -> None:
+    from .repo_cmd import add_hint
+    for sid, s in planned.items():
+        names = s.get("repos") if isinstance(s.get("repos"), list) else [s.get("repos")]
+        for name in names:
+            if not isinstance(name, str) or name not in repos:
+                raise TurnstileError("story %s names repo %s — run: %s" % (sid, name, add_hint(str(name))))
+
 def merge_stories(existing: dict, planned: dict) -> Tuple[dict, List[str]]:
     """Stories past PLANNED keep their state and evidence; their branch cannot change (the stack is on it); a change of
     tickets or repos is allowed with a WARN line (2026-10-14 minor 9)."""
@@ -87,6 +95,7 @@ def run(delivery, io=None, no_commit: bool = False, no_push: bool = False) -> in
                 raise TurnstileError("no plan.md in %s" % delivery)
             text = plan_path.read_text()
             planned = stories_from_plan(text, (data.get("epic") or {}).get("story_mode") or "stack", (data.get("epic") or {}).get("flag"))
+            check_story_repos(planned, (data.get("epic") or {}).get("repos") or {})
             before = set(data.get("stories") or {})
             data["stories"], warnings = merge_stories(data.get("stories") or {}, planned)
             digest = st_mod.digest(text)

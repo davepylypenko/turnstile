@@ -1,6 +1,6 @@
 {
   "name": "turnstile",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Evidence-gated delivery for AI agent teams. No ticket, no entry.",
   "author": { "name": "Davyd Pylypenko" },
   "hooks": "./hooks/hooks.json"

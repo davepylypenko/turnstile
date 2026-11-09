@@ -30,18 +30,30 @@ def delivery_dir(cwd: str) -> pathlib.Path:
 
 def managed(cwd: str, *starts) -> bool:
     """True inside a turnstile workspace: a `.turnstile` marker on or above the session's project dir (`CLAUDE_PROJECT_DIR`), the
-    cwd or any extra start. Outside one every guard is inert (2026-11-04, lead's decision); a marker that is present but broken
-    keeps the guards failing closed, so only the marker's existence is asked here."""
+    cwd or any extra start, or a workspace the user's registry (`turnstile start`) resolves for one of them. Outside one every
+    guard is inert (2026-11-04, lead's decision); a marker that is present but broken keeps the guards failing closed, so only
+    the marker's existence is asked here."""
     sys.path.insert(0, str(plugin_root()))
-    from turnstile_cli.paths import MARKER
+    from turnstile_cli import paths
     anchor = os.environ.get("CLAUDE_PROJECT_DIR")
+    dirs = []
     for s in ([anchor] if anchor else []) + [cwd or "."] + [x for x in starts if x]:
         try:
-            cur = pathlib.Path(os.path.expanduser(s)).resolve()
+            dirs.append(pathlib.Path(os.path.expanduser(s)).resolve())
         except (OSError, RuntimeError, ValueError):
             continue
-        if any((d / MARKER).exists() for d in [cur] + list(cur.parents)):
-            return True
+    if any((d / paths.MARKER).exists() for cur in dirs for d in [cur] + list(cur.parents)):
+        return True
+    reg = paths.load_registry()
+    env_key = os.environ.get(paths.EPIC_ENV)
+    if env_key and env_key in reg["epics"]:
+        return True
+    for cur in dirs:
+        try:
+            if paths.resolve_registry(cur, reg) is not None:
+                return True
+        except Exception:
+            continue
     return False
 
 def load_state(cwd: str):

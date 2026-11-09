@@ -188,10 +188,10 @@ class Attach(unittest.TestCase):
         self.assertEqual((self.ws / ".turnstile").read_text().strip(), "pdffiller-knowledge/context/workitems/demo/delivery")
         text = (self.ws / "CLAUDE.md").read_text(); self.assertIn("MYD-1", text); self.assertIn("Chat with the lead in Ukrainian", text); self.assertIn("turnstile config", text)
         self.assertEqual(json.loads((d / ".sync.json").read_text())["pushed"], True)
-        for needle in ["WORKTREE: %s (epic/myd-1)" % wt, "DELIVERY: %s" % d, "CLAUDE_MD: %s" % (self.ws / "CLAUDE.md"), "NEXT: cd %s && claude" % self.ws,
-                       'NEXT: in that session say "turnstile status"',
+        for needle in ["WORKTREE: %s (epic/myd-1)" % wt, "DELIVERY: %s" % d, "CLAUDE_MD: %s" % (self.ws / "CLAUDE.md"),
                        "OK attach MYD-1", "SYNC: pushed abc123", "== MYD-1", "config: models", "WARN jsfiller#1"]:
             self.assertIn(needle, out, needle)
+        self.assertNotIn("NEXT:", out); self.assertNotIn("&& claude", out)
         self.assertFalse((self.tmp / "none.json").exists())
     def test_attach_refusals_touch_nothing(self):
         (self.ws / ".turnstile").write_text("other/delivery\n"); git = FakeGit(); rc, out = self.attach(git)

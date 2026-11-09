@@ -61,9 +61,22 @@ def build_parser():
     for c in (cs, cu):
         c.add_argument("--epic", action="store_true", help="write epic state (state.json, committed) instead of the user file"); c.add_argument("--no-commit", action="store_true")
     sub.add_parser("sync", help="fetch origin, fast-forward the epic branch and push it (never rebase or force); refuses diverged histories")
-    rp = sub.add_parser("repo", help="edit an epic repo: repo set <name> key=value … (gate, gate_check, slack, ci_ignore, copilot, branch_prefix, base, epic_branch)")
+    rp = sub.add_parser("repo", help="epic repos: repo add '<json>' (clones <org>/<name> when missing, adds the ws/<key> worktree, writes epic.repos.<name>); repo set <name> key=value … (gate, gate_check, slack, ci_ignore, copilot, branch_prefix, base, epic_branch)")
     rsub = rp.add_subparsers(dest="repo_cmd"); p.repo_parser = rp
     rs = rsub.add_parser("set"); rs.add_argument("name"); rs.add_argument("assignments", nargs="+", metavar="key=value"); rs.add_argument("--no-commit", action="store_true"); rs.add_argument("--no-push", action="store_true")
+    ra = rsub.add_parser("add", help="JSON: {name, base, slack[, epic_branch, gate, gate_check, ci_ignore, copilot, branch_prefix, path]}; path = the clone when it is not <clone root>/<name>")
+    ra.add_argument("spec", metavar="json"); ra.add_argument("--no-commit", action="store_true"); ra.add_argument("--no-push", action="store_true")
+    stt = sub.add_parser("start", help="start or continue epic <KEY> from the clone root, the knowledge clone or any repo clone: attaches when origin has epic/<key>, else creates the workspace with the knowledge worktree only (repos come with turnstile repo add)")
+    stt.add_argument("epic", metavar="KEY")
+    for flag, kw in [("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd)"}),
+                     ("--knowledge", {"help": "the knowledge clone (default: <clone root>/pdffiller-knowledge)"}),
+                     ("--workitem", {"help": "the workitem folder under context/workitems (default: the one that mentions the key)"}),
+                     ("--github", {"help": "your GitHub login (default: gh api user)"}), ("--name", {"help": "display name (default: gh api user .name, else the login)"}),
+                     ("--variant", {"help": "your Prometey variant (default: <epic key>-<login>, lower case)"}), ("--desk", {}), ("--board-url", {}),
+                     ("--chat-language", {"help": "default: the user config key chat_language, else English"}),
+                     ("--jira-base-url", {}), ("--story-mode", {"choices": ["stack", "trunk"]}), ("--flag", {})]:
+        stt.add_argument(flag, **kw)
+    stt.add_argument("--no-push", action="store_true")
     at = sub.add_parser("attach", help="continue an existing epic from another machine: <clone root>/<key> with the knowledge worktree of origin/epic/<key>, a worktree per repo, .turnstile, workspace CLAUDE.md, status")
     for flag, kw in [("--epic", {"required": True}), ("--knowledge", {"help": "the knowledge clone (default: <clone root>/pdffiller-knowledge)"}),
                      ("--clone-root", {"help": "the folder that holds the clones (default: detected from the cwd — the knowledge clone's parent, or the cwd when it holds a named clone)"}),
@@ -74,6 +87,7 @@ def build_parser():
                      ("--variant", {"help": "your Prometey variant (default: <epic key>-<login>, lower case)"}), ("--desk", {"help": "your editor desk, e.g. desk05 (default: none)"}),
                      ("--board-url", {"help": "your board artifact url, when it already exists (default: a new artifact on the first publish)"})]:
         at.add_argument(flag, **kw)
+    at.add_argument("--no-push", action="store_true")
     bu = sub.add_parser("board-url", help="record the url of this machine's board artifact for the current member"); bu.add_argument("url"); bu.add_argument("--no-push", action="store_true")
     for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
         sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
@@ -94,6 +108,7 @@ def build_parser():
                      ("--jira-base-url", {"help": "Jira site the board links ticket keys to (default https://pdffiller.atlassian.net; also: turnstile config set jira_base_url=<url> [--epic])"}),
                      ("--models", {"help": "JSON agent → {model, effort} merged over the defaults (model: haiku|sonnet|opus|fable, effort: low|medium|high|xhigh)"})]:
         ini.add_argument(flag, **kw)
+    ini.add_argument("--no-push", action="store_true")
     return p
 
 def main(argv=None):
@@ -114,6 +129,9 @@ def main(argv=None):
         if a.cmd == "attach":
             from .attach_cmd import run as attach_run, AttachOptions
             return attach_run(AttachOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
+        if a.cmd == "start":
+            from .start_cmd import run as start_run, StartOptions
+            return start_run(StartOptions(**{k: v for k, v in vars(a).items() if k not in ("cmd", "delivery")}))
         if a.cmd == "config":
             from . import config_cmd
             try:
@@ -129,13 +147,22 @@ def main(argv=None):
             if a.config_cmd == "apply":
                 return config_cmd.apply(delivery, a.ah_id, no_commit=a.no_commit, no_push=a.no_push)
             return config_cmd.list_(delivery)
-        delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
+        try:
+            delivery = paths.find_delivery(pathlib.Path.cwd(), a.delivery)
+        except TurnstileError:
+            if a.cmd != "status" or a.delivery:
+                raise
+            known = paths.known_keys(pathlib.Path.cwd())
+            print('NO EPIC: say "start epic <KEY>" — known here: %s' % (", ".join(known) or "none")); return 2
+        paths.ensure_registered(delivery)
         if a.cmd == "sync":
             from .sync import run as sync_run
             return sync_run(delivery)
         if a.cmd == "repo":
-            from .repo_cmd import set_ as repo_set
-            return repo_set(delivery, a.name, a.assignments, no_commit=a.no_commit, no_push=a.no_push)
+            from . import repo_cmd
+            if a.repo_cmd == "add":
+                return repo_cmd.add(delivery, a.spec, no_commit=a.no_commit, no_push=a.no_push)
+            return repo_cmd.set_(delivery, a.name, a.assignments, no_commit=a.no_commit, no_push=a.no_push)
         if a.cmd == "board-url":
             from . import members
             return members.board_url(delivery, a.url, no_push=a.no_push)

@@ -352,10 +352,36 @@ def _universal(flats) -> None:
             if name in UNIVERSAL and re.search(rx, flat, re.I | re.M):
                 block("blocked by rule %s. Refused everywhere, also outside a turnstile workspace: the lead performs this action." % name)
 
+# the user's turnstile dir holds the config and the workspace registry the hooks resolve a session's epic through; a shell write
+# there could point a session at a forged delivery, so only turnstile commands write it (config set, start, init, attach, repo add)
+USER_DIR = re.compile(r"(?:~|\$\{?HOME\}?|%s)/\.config/turnstile(?=/|\s|$)" % re.escape(os.path.expanduser("~")))
+INPLACE = re.compile(r"^(?:-[a-zA-Z]*i\S*|--in-place\S*)$")
+
+def _user_dir_write(flat: str, joined: str):
+    if not USER_DIR.search(flat):
+        return None
+    for seg in _segments(flat):
+        if not USER_DIR.search(seg):
+            continue
+        if any(USER_DIR.search(t) for t in REDIRECT_TARGET.findall(HARMLESS_REDIRECTS.sub(" ", seg))):
+            return seg
+        words = _unwrap(seg)
+        head, args = (words[0].rsplit("/", 1)[-1] if words else ""), words[1:]
+        if head in DELETERS or head in DEST_LAST or head in ("tee", "ln", "dd", "truncate", "chmod", "chown") \
+                or (head in ("sed", "perl", "ruby") and any(INPLACE.match(a) for a in args)) \
+                or (head == "sort" and any(a in ("-o", "--output") or a.startswith("--output=") for a in args)) \
+                or (INTERP_OR_SHELL.search(seg) and INLINE_WRITE.search(joined)):
+            return seg
+    return None
+
 def check(cmd: str, cwd: str = ".", role: str = "") -> None:
     joined = cmd.replace("\\\n", " ")
     stripped = re.sub(r"[\"'\\]", "", joined)  # also unquoted: gh "pr" merge, T\URNSTILE_LEAD
     flats = (joined, stripped, re.sub(r"\s+", " ", stripped))
+    hit = _user_dir_write(flats[2], joined)
+    if hit:
+        block("blocked by rule user-config-write. '%s' writes under ~/.config/turnstile/ (the user config and the workspace registry), which only "
+              "turnstile commands write: config set, start, init, attach, repo add. Reads (cat, jq, grep) are fine." % hit[:60])
     if not managed(cwd, *_command_dirs(re.sub(r"[ \t]+", " ", stripped), cwd)):
         _universal(flats); return
     for flat in flats:
@@ -389,7 +415,7 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
             block("blocked by rule %s. '%s' writes into %s outside evidence/, reports/, briefs/ and boards/ (the rest is written by 'turnstile pass' "
                   "and, for plan.md/decisions.md, the Write tool). Reads (cat, grep, jq, git log/diff/show, cd) are fine." % (hit[0], hit[1][:60], mention))
 
-TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "board-url", "repo", "-h", "--help", "--version"}
+TURNSTILE_SUBS = {"pass", "reconcile", "status", "render-board", "jira-synced", "init", "plan-submitted", "bug", "brief", "threads", "pr", "config", "sync", "attach", "start", "board-url", "repo", "-h", "--help", "--version"}
 
 def _turnstile_sub_ok(flat: str) -> bool:
     """R3-1: a turnstile invocation names its subcommand literally; `turnstile $(echo approve)` / `$X` spellings are refused."""

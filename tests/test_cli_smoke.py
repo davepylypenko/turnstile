@@ -7,7 +7,7 @@ class CliSmoke(unittest.TestCase):
         out = subprocess.run([sys.executable, "-m", "turnstile_cli", "--version"],
                              cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.strip(), "turnstile 0.5.4")
+        self.assertEqual(out.stdout.strip(), "turnstile 0.6.0")
 
     def test_bug_without_subcommand_exits_2_with_help(self):
         # 2026-10-14 nit 15
@@ -35,10 +35,21 @@ class CliSmoke(unittest.TestCase):
                              (["pr", "add", "--help"], "--no-push"), (["config", "set", "--help"], "--no-push"), (["bug", "add", "--help"], "--no-push"),
                              (["pr", "add", "--help"], "--stacked-on"), (["bug", "add", "--help"], "--arm"), (["pass", "--help"], "--base-heads"),
                              (["init", "--help"], "--story-mode"), (["init", "--help"], "--flag"), (["init", "--help"], "--clone-root"), (["attach", "--help"], "--clone-root"),
-                             (["jira-synced", "--help"], "--assignee-name"), (["jira-synced", "--help"], "--assignee ")]:
+                             (["jira-synced", "--help"], "--assignee-name"), (["jira-synced", "--help"], "--assignee "),
+                             (["start", "--help"], "--workitem"), (["start", "--help"], "--chat-language"), (["start", "--help"], "--no-push"), (["--help"], "start"),
+                             (["repo", "add", "--help"], "json"), (["repo", "add", "--help"], "--no-push"), (["init", "--help"], "--no-push"), (["attach", "--help"], "--no-push")]:
             out = subprocess.run([sys.executable, "-m", "turnstile_cli"] + args, cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(out.returncode, 0, out.stderr); self.assertIn(needle, out.stdout, " ".join(args))
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "init", "--help"], cwd=ROOT, capture_output=True, text=True)
+        self.assertNotIn("required", out.stdout.split("--repo")[1].split("--variant")[0])
+    def test_status_outside_any_epic_says_no_epic(self):
+        import tempfile
+        env = dict(__import__("os").environ, PYTHONPATH=str(ROOT))
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "status"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 2, out.stderr); self.assertEqual(out.stdout.strip(), 'NO EPIC: say "start epic <KEY>" — known here: none'); self.assertEqual(out.stderr, "")
+        out = subprocess.run([sys.executable, "-m", "turnstile_cli", "sync"], cwd=tempfile.mkdtemp(), capture_output=True, text=True, env=env)
+        self.assertEqual(out.returncode, 2); self.assertIn("MISSING no .turnstile found", out.stdout); self.assertIn("run turnstile start <KEY>", out.stdout)
     def test_shim_forwards(self):
         out = subprocess.run([str(ROOT / "scripts" / "turnstile"), "--version"],
                              cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "turnstile 0.5.4")
+        self.assertEqual(out.stdout.strip(), "turnstile 0.6.0")

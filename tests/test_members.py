@@ -80,10 +80,7 @@ class AttachMembers(unittest.TestCase):
         m = self.members()["Ivanov"]; self.assertEqual((m["name"], m["variant"], m["desk"], m["board"]["artifact_url"]), ("Ivanov", "myd-1-ivanov", None, None))
         self.assertIn("leadlogin", self.members())
         self.assertIn("MEMBER: Ivanov · variant myd-1-ivanov · desk none · board new artifact", out)
-        lines = out.splitlines(); nexts = [ln for ln in lines if ln.startswith("NEXT:")]
-        self.assertEqual(nexts, ["NEXT: cd %s && claude" % self.ws,
-                                 'NEXT: in that session say "turnstile status" — the plugin dispatches the deployer to create your variant and asks the one preferences question'])
-        self.assertEqual(lines[-2:], nexts); self.assertNotIn("ONBOARD:", out)
+        self.assertEqual([ln for ln in out.splitlines() if ln.startswith("NEXT:")], []); self.assertNotIn("&& claude", out); self.assertNotIn("ONBOARD:", out)
         self.assertEqual(json.loads((self.delivery() / ".workspace.json").read_text())["member"], "Ivanov")
         self.assertEqual(len(writer.commits), 1); self.assertEqual(writer.pushes, ["epic/myd-1"])
         self.assertEqual(out.count("MEMBER: Ivanov · variant myd-1-ivanov"), 2)
