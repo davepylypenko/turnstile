@@ -1,7 +1,7 @@
 # Lifecycle — DoR / DoD and the command per transition
 
 Evidence carries the head it was produced for; a push voids it (`turnstile status` shows the drop). Every PR pass checks
-the head and the evidence against GitHub (`IO.github_facts`): CI rollup, the gate's `gate_check` context, Copilot threads,
+the head and the evidence against GitHub (`IO.github_facts`): CI (contexts minus `ci_ignore`), the gate's `gate_check` context, Copilot threads,
 approvals for the head, signed commits, no trailer in commit messages, no generated-with footer in the body, the PR base.
 Every story pass into INTEGRATION_REVIEW (a deploy record), ENV_TESTING and DONE asks GitHub for the head of every PR in
 `evidence.deploy.heads` (`IO.github_head`) and is refused when any differs from the snapshot — a push without `pass pr` cannot

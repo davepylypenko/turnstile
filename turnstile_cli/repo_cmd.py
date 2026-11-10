@@ -1,18 +1,33 @@
-import os, pathlib
+import json, os, pathlib
 from typing import List
 from . import state as st_mod, workspace
 from .errors import TurnstileError
 
 KEYS = ("gate", "gate_check", "slack", "ci_ignore", "copilot", "branch_prefix", "base", "epic_branch")
 NULLABLE = ("gate", "gate_check", "branch_prefix")
+LIST_KEYS = ("ci_ignore",)
+
+def _parse_list(key: str, value: str) -> List[str]:
+    if value.lstrip().startswith("["):
+        try:
+            items = json.loads(value)
+        except ValueError as e:
+            raise TurnstileError("%s=%s is not a JSON list (%s); use %s='[\"a\",\"b\"]' or %s=a,b" % (key, value, e, key, key))
+        if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+            raise TurnstileError("%s takes a JSON list of strings (got %s)" % (key, value))
+        return [x.strip() for x in items if x.strip()]
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+def _fmt(value) -> str:
+    return json.dumps(value) if isinstance(value, list) else str(value)
 
 def _parse(key: str, value: str):
     if key == "copilot":
         if value.lower() not in ("true", "false"):
             raise TurnstileError("copilot takes true or false (got %r)" % value)
         return value.lower() == "true"
-    if key == "ci_ignore":
-        return [x.strip() for x in value.split(",") if x.strip()]
+    if key in LIST_KEYS:
+        return _parse_list(key, value)
     if key in NULLABLE and value.lower() in ("null", "none"):
         return None
     if not value.strip():
@@ -38,7 +53,7 @@ def set_(delivery, name: str, assignments: List[str], io=None, no_commit: bool =
                 raise TurnstileError("%s is not an epic repo (%s)" % (name, ", ".join(sorted(repos)) or "none"))
             repos[name].update(parsed)
             _recompute_next_actions(st.data)
-            summary = "repo %s set %s" % (name, " ".join("%s=%s" % (k, parsed[k]) for k in parsed))
+            summary = "repo %s set %s" % (name, " ".join("%s=%s" % (k, _fmt(parsed[k])) for k in parsed))
             _side_effects(delivery, st, [summary], io, no_commit, no_push)
         print("OK " + summary); return 0
     except TurnstileError as e:

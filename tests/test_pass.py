@@ -585,10 +585,16 @@ class PassCmd(unittest.TestCase):
         data = self.data(); data["epic"]["repos"]["docs-platform"]["ci_ignore"] = ["pdf-review", "gate / gate"]; self.write(data)
         rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
         self.assertEqual(rc, 0, out)
-        self.io.facts["docs-platform#2"]["checks"]["pdf-review"] = "success"  # READY needs the whole rollup, gate included
-        rc, out = run_capture(self.d, "pr", "docs-platform#2", "READY", opts(head="bbbbbbbb22222222", ci="success", deep_review="reports/R.md",
-                                                                             gate="pdf-review:pass", copilot=0), self.io)
+        ready = opts(head="bbbbbbbb22222222", ci="success", deep_review="reports/R.md", gate="pdf-review:pass", copilot=0)
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "READY", ready, self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING gate pdf-review == success on GitHub for head bbbbbbbb22222222 (is failure)", out)
+        self.io.facts["docs-platform#2"]["checks"]["pdf-review"] = "success"
+        self.io.facts["docs-platform#2"]["checks"]["ci / Unit tests"] = "failure"
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "READY", ready, self.io)
         self.assertEqual(rc, 2); self.assertIn("MISSING CI success on GitHub for head bbbbbbbb22222222 (is failure)", out)
+        self.io.facts["docs-platform#2"]["checks"]["ci / Unit tests"] = "success"
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "READY", ready, self.io)
+        self.assertEqual(rc, 0, out)
         # R3-5: a skill gate (pr-review) posts no GitHub context; gate_check: null skips the context check, the report stays required
         self.io.facts["jsfiller#1"] = {"checks": {"ci / Unit tests": "success"}}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
@@ -596,6 +602,19 @@ class PassCmd(unittest.TestCase):
         data = self.data(); data["epic"]["repos"]["jsfiller"]["gate_check"] = None; self.write(data)
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
         self.assertEqual(rc, 0, out)
+
+    def test_an_ignored_cancelled_check_blocks_no_transition(self):
+        # 2026-11-10 (pdffiller#38267): a workflow whose last job is cancelled by design on every run sits in ci_ignore
+        checks = {"pdf-review": "success", "ci / Unit tests": "success", "publish": "pending"}
+        self.io.facts["jsfiller#1"] = {"ci": "pending", "checks": checks, "cancelled": [{"name": "publish", "run": "21"}]}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 2); self.assertIn("MISSING CI success on GitHub for head %s (is pending)" % H, out)
+        data = self.data(); data["epic"]["repos"]["jsfiller"]["ci_ignore"] = ["pdf-review", "publish"]; self.write(data)
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "READY", opts(**READY_OPTS), self.io)
+        self.assertEqual(rc, 0, out)
+        self.story(state="DONE")
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H, ci="success", slack=LINK, reviewers="isachivka"), self.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.data()["prs"]["jsfiller#1"]["state"], "ON_HUMAN_REVIEW")
 
     def test_every_commit_signed_and_base_matches(self):
         # spec §3 DEV DoD (every commit signed) and §4.2 (ticket PRs go into the planned branch), checked against GitHub

@@ -170,11 +170,10 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Option
         e = ev.get(key)
         return e if e and rules.same_head(e.get("head"), h) else None
     # the gate's GitHub context: `gate_check` (null for a skill gate that posts no check, e.g. pr-review), default the gate name
-    gate_check = repo_cfg["gate_check"] if "gate_check" in repo_cfg else repo_cfg.get("gate")
+    gate_check = rules.gate_check(repo_cfg)
     if target in ("AI_REVIEW", "READY", "ON_HUMAN_REVIEW"):
         ci = for_head("ci")
-        # entering AI_REVIEW the gate has not run yet: CI there excludes the gate's contexts; READY onward needs the whole rollup
-        actual_ci = facts.ci_without(repo_cfg.get("ci_ignore", [gate_check] if gate_check else [])) if target == "AI_REVIEW" else facts.ci
+        actual_ci = facts.ci_without(rules.ci_ignore(repo_cfg))
         if ci and ci.get("status") == "success" and actual_ci != "success":
             out.append("MISSING CI success on GitHub for head %s (is %s); evidence says success" % (h, actual_ci))
         if facts.unsigned:

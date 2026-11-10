@@ -44,6 +44,15 @@ def ticket_assignee(prs: Dict[str, dict], ticket: Optional[str]) -> Optional[dic
             return p["jira"]["assignee"]
     return None
 
+def gate_check(repo_cfg: dict) -> Optional[str]:
+    return repo_cfg["gate_check"] if "gate_check" in repo_cfg else repo_cfg.get("gate")
+
+def ci_ignore(repo_cfg: dict) -> List[str]:
+    if "ci_ignore" in repo_cfg:
+        return list(repo_cfg["ci_ignore"] or [])
+    check = gate_check(repo_cfg)
+    return [check] if check else []
+
 def same_head(a: Optional[str], b: Optional[str]) -> bool:
     if not a or not b or len(a) < 8 or len(b) < 8:
         return False

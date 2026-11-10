@@ -64,8 +64,8 @@ class PrFacts:
         return bool(login) and login.lower() in {a.lower() for a in self.approvals}
 
     def ci_without(self, names) -> str:
-        """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
-        the CI that AI_REVIEW requires). Falls back to the rollup when the context list is truncated or holds nothing else."""
+        """CI over the check contexts minus the repo's `ci_ignore` names (the gate's own context by default: it runs in AI_REVIEW).
+        Falls back to the rollup when the context list is truncated or holds nothing else."""
         rest = [v for k, v in self.checks.items() if k not in set(names or [])]
         if not self.checks_complete or not rest:
             return self.ci

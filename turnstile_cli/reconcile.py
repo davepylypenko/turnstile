@@ -117,6 +117,8 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             continue
         st = pr.get("state")
         repo = data["epic"]["repos"].get(pid.split("#", 1)[0], {})
+        ignored = rules.ci_ignore(repo)
+        f_ci = f.ci_without(ignored)
         if f.merged and st != "MERGED":
             msg = "merged on GitHub (%s)" % (f.merged_sha or "")[:8]
             if st == "APPROVED":
@@ -142,9 +144,9 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
                 reason = "push after send (%s)" % f.head[:8]
                 _propose(out, data, pid, "head_changed", msg, "REWORK", 'turnstile pass pr %s REWORK --head %s --reason "%s"' % (pid, f.head, reason), facts=f, reason=reason, head=f.head)
             elif st in ("AI_REVIEW", "READY"):
-                ci = f.ci if f.ci in ("success", "failure") else None
+                ci = f_ci if f_ci in ("success", "failure") else None
                 cmd = "turnstile pass pr %s AI_REVIEW --head %s" % (pid, f.head) + (" --ci %s" % ci if ci else "")
-                _propose(out, data, pid, "head_changed", msg + " (CI %s)" % f.ci, "AI_REVIEW", cmd, facts=f, head=f.head, ci=ci)
+                _propose(out, data, pid, "head_changed", msg + " (CI %s)" % f_ci, "AI_REVIEW", cmd, facts=f, head=f.head, ci=ci)
             elif st == "REWORK":
                 out.append(Proposal(pid, "head_changed", msg + "; record it with the ON_HUMAN_REVIEW pass (--head %s) once gate/copilot are green" % f.head[:12], None))
                 _threads_proposal(out, data, pid, pr, f)
@@ -179,11 +181,13 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             elif check is None and not f.checks_complete:
                 out.append(Proposal(pid, "gate_unknown", "check %s not among the first %d contexts; verify it by hand" % (gate_name, len(f.checks)), None))
         ci = _ev_for_head(pr, "ci")
-        if ci and ci.get("status") == "success" and f.ci == "failure":
+        if ci and ci.get("status") == "success" and f_ci == "failure":
             out.append(Proposal(pid, "ci_red", "CI is red on GitHub but evidence says success", None))
         if st not in ("REWORK", "MERGED"):
             _unclassified_replies(out, data, pid, pr, f)
         for c in f.cancelled:
+            if c["name"] in ignored:
+                continue
             out.append(Proposal(pid, "ci_cancelled_dup", "check %s was CANCELLED with no newer run on head %s: pending, not red — re-run it"
                                 % (c["name"], f.head[:12]), "gh run rerun %s --repo %s/%s" % (c["run"] if c.get("run") else "<run id of %s>" % c["name"],
                                                                                    (data.get("epic") or {}).get("github_org") or "<org>", pid.split("#", 1)[0])))

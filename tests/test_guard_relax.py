@@ -45,6 +45,20 @@ class RepoSet(unittest.TestCase):
         rc, out = out_of(repo_cmd.set_, self.d, "docs-platform", ["gate_check=null"], io=self.p.io)
         self.assertEqual(rc, 0, out); self.assertIsNone(self.repo()["gate_check"])
 
+    def test_ci_ignore_takes_a_json_list_or_a_comma_list(self):
+        rc, out = out_of(repo_cmd.set_, self.d, "docs-platform", ['ci_ignore=["CodeRabbit", "WIP", "gate / gate"]'], io=self.p.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.repo()["ci_ignore"], ["CodeRabbit", "WIP", "gate / gate"])
+        self.assertIn('ci_ignore=["CodeRabbit", "WIP", "gate / gate"]', out)
+        rc, out = out_of(repo_cmd.set_, self.d, "docs-platform", ["ci_ignore=CodeRabbit, WIP,gate / gate"], io=self.p.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.repo()["ci_ignore"], ["CodeRabbit", "WIP", "gate / gate"])
+        rc, out = out_of(repo_cmd.set_, self.d, "docs-platform", ["ci_ignore=[]"], io=self.p.io)
+        self.assertEqual(rc, 0, out); self.assertEqual(self.repo()["ci_ignore"], [])
+        before = (self.d / "state.json").read_text()
+        for bad in ('ci_ignore=["CodeRabbit"', 'ci_ignore=[1, 2]', 'ci_ignore=["a", ["b"]]'):
+            rc, out = out_of(repo_cmd.set_, self.d, "docs-platform", [bad], io=self.p.io)
+            self.assertEqual(rc, 2, bad); self.assertIn("MISSING ci_ignore", out); self.assertIn("JSON list", out)
+        self.assertEqual((self.d / "state.json").read_text(), before)
+
     def test_unknown_repo_key_or_value_is_refused_and_writes_nothing(self):
         before = (self.d / "state.json").read_text()
         for name, args in [("nope", ["gate=x"]), ("docs-platform", ["bogus=1"]), ("docs-platform", ["copilot=maybe"]), ("docs-platform", ["slack="]), ("docs-platform", [])]:

@@ -75,9 +75,9 @@ class Compare(unittest.TestCase):
         props = reconcile.compare(self.data("READY"), self.facts(head="ffffffff66666666", ci="success"))
         self.assertEqual(props[0].kind, "head_changed")
         self.assertEqual(props[0].suggested_cmd, "turnstile pass pr jsfiller#1 AI_REVIEW --head ffffffff66666666 --ci success")
-        props = reconcile.compare(self.data("AI_REVIEW"), self.facts(head="ffffffff66666666", ci="pending"))
+        props = reconcile.compare(self.data("AI_REVIEW"), self.facts(head="ffffffff66666666", ci="pending", checks={"ci": "pending"}))
         self.assertEqual(props[0].kind, "head_changed"); self.assertIsNone(props[0].suggested_cmd); self.assertIn("MISSING", props[0].message)
-        props = reconcile.compare(self.data("AI_REVIEW"), self.facts(head="ffffffff66666666", ci="failure"))
+        props = reconcile.compare(self.data("AI_REVIEW"), self.facts(head="ffffffff66666666", ci="failure", checks={"ci": "failure"}))
         self.assertIsNone(props[0].suggested_cmd)
     def test_head_changed_in_dev_and_rework_has_no_command(self):
         for st in ("DEV", "REWORK"):
@@ -141,7 +141,7 @@ class Compare(unittest.TestCase):
         props = reconcile.compare(d, self.facts(merged=True, merged_sha="abcabcabcabcabca"))
         self.assertEqual(props[0].kind, "merged"); self.assertIn("--merged-sha abcabcabcabcabca", props[0].suggested_cmd)  # --merged-sha overrides the stale value
         d = self.data("READY", gate={"name": "pdf-review", "head": H, "result": "pass"}, ci={"head": H, "status": "success"})
-        f = self.facts(head="ffffffff66666666", ci="failure")
+        f = self.facts(head="ffffffff66666666", ci="failure", checks={"ci": "failure"})
         props = reconcile.compare(d, f)
         self.assertEqual(props[0].kind, "head_changed"); self.assertIsNone(props[0].suggested_cmd)
 
@@ -166,7 +166,7 @@ class Compare(unittest.TestCase):
         self.assertIn("gate_unknown", self.kinds(reconcile.compare(d, f)))
     def test_ci_red_copilot_thread_draft_mismatch_unsigned(self):
         d = self.data("READY", ci={"head": H, "status": "success"}, copilot={"head": H, "open_threads": 0})
-        f = self.facts(human_threads_open=0, ci="failure", copilot_threads_open=2, head_signed=False)
+        f = self.facts(human_threads_open=0, ci="failure", checks={"ci": "failure"}, copilot_threads_open=2, head_signed=False)
         kinds = self.kinds(reconcile.compare(d, f))
         for k in ("ci_red", "copilot_thread", "unsigned"):
             self.assertIn(k, kinds)
@@ -187,6 +187,18 @@ class Compare(unittest.TestCase):
         props = reconcile.compare(d, f); kinds = self.kinds(props)
         self.assertIn("ci_cancelled_dup", kinds); self.assertNotIn("ci_red", kinds)
         self.assertEqual([p.suggested_cmd for p in props if p.kind == "ci_cancelled_dup"], ["gh run rerun 21 --repo pdffiller/jsfiller"])
+    def test_an_ignored_check_never_yields_ci_cancelled_dup_or_ci_red(self):
+        d = self.data("READY", ci={"head": H, "status": "success"}); d["epic"]["repos"]["jsfiller"]["ci_ignore"] = ["pdf-review", "publish"]
+        f = self.facts(human_threads_open=0, ci="pending", checks={"pdf-review": "success", "test": "success", "publish": "pending"},
+                       cancelled=[{"name": "publish", "run": "21"}])
+        kinds = self.kinds(reconcile.compare(d, f))
+        self.assertNotIn("ci_cancelled_dup", kinds); self.assertNotIn("ci_red", kinds)
+        f["jsfiller#1"].checks["publish"] = "failure"; f["jsfiller#1"].ci = "failure"; f["jsfiller#1"].cancelled = []
+        self.assertNotIn("ci_red", self.kinds(reconcile.compare(d, f)))
+        f["jsfiller#1"].checks["test"] = "failure"
+        self.assertIn("ci_red", self.kinds(reconcile.compare(d, f)))
+        f = self.facts(human_threads_open=0, ci="pending", checks={"pdf-review": "success", "test": "pending"}, cancelled=[{"name": "test", "run": "22"}])
+        self.assertIn("ci_cancelled_dup", self.kinds(reconcile.compare(d, f)))
     def test_jira_unsynced(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False
         self.assertIn("jira_unsynced", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0))))
