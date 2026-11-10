@@ -44,7 +44,7 @@ class Agents(unittest.TestCase):
             for c in COMMON: self.assertIn(c, text, "%s lacks common rule %r" % (p.name, c))
     def test_gate_runner_tools_and_role(self):
         text = (AGENTS / "gate-runner.md").read_text(); fm = parse_frontmatter(text)
-        self.assertEqual([x.strip() for x in fm["tools"].split(",")], ["Read", "Edit", "Bash", "Grep", "Glob", "Skill"])
+        self.assertEqual([x.strip() for x in fm["tools"].split(",")], ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill"])
         for needle in ["gate: <name>:<pass|fail>:<url>", "CANCELLED", "gh pr checks <n> --watch", "blocker", "GATE-"]: self.assertIn(needle, text, needle)
     def test_reviewers_know_round_mode_and_the_gate_runner_report(self):
         for name in ("reviewer", "story-reviewer"): self.assertIn("Round mode", (AGENTS / (name + ".md")).read_text(), name)
@@ -59,8 +59,20 @@ class Agents(unittest.TestCase):
                 dis = [x.strip() for x in fm["disallowedTools"].split(",")]
                 for t in FORBIDDEN_TOOLS: self.assertTrue(any(d == t or d.endswith("__" + t) for d in dis), "%s does not disallow %s" % (p.name, t))
     def test_role_specific_tools(self):
-        fm = parse_frontmatter((AGENTS / "investigator.md").read_text()); self.assertNotIn("Edit", fm["tools"]); self.assertNotIn("Write", fm["tools"])
+        fm = parse_frontmatter((AGENTS / "investigator.md").read_text()); self.assertNotIn("Edit", fm["tools"])
         self.assertIn("Skill", parse_frontmatter((AGENTS / "deployer.md").read_text())["tools"])
+    def test_every_agent_told_to_use_the_write_tool_has_it(self):
+        # 2026-11-10: the deployer ended every run with "I could not write the report" (DEPLOY-variant-2026-11-10)
+        for p in AGENTS.glob("*.md"):
+            text = p.read_text(); fm = parse_frontmatter(text)
+            if "Write tool" not in text:
+                continue
+            if "tools" in fm:
+                self.assertIn("Write", [x.strip() for x in fm["tools"].split(",")], "%s is told to use the Write tool but does not list it" % p.name)
+            else:
+                self.assertNotIn("Write", [x.strip() for x in fm["disallowedTools"].split(",")], p.name)
+        for name in ("deployer", "gate-runner", "stack-step", "story-reviewer", "investigator", "comments-handler", "implementer", "reviewer"):
+            self.assertIn("Write", [x.strip() for x in parse_frontmatter((AGENTS / (name + ".md")).read_text())["tools"].split(",")], name)
     def test_tester_resolves_figma_tools_per_environment(self):
         # 2026-10-14 finding 7: no hard-coded connector prefix; the tester inherits the MCP tools, reads the mapping and fails loudly without Figma
         text = (AGENTS / "tester.md").read_text(); fm = parse_frontmatter(text)

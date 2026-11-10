@@ -3,7 +3,7 @@ name: story-reviewer
 description: Whole-story integration review of the story branch (stack top) against the epic branch, recursive until clean; findings routed to the ticket PRs they belong to. Launched by turnstile story-gate; never replies to humans, merges or posts.
 model: opus
 effort: xhigh
-tools: Read, Edit, Bash, Grep, Glob, Skill
+tools: Read, Edit, Write, Bash, Grep, Glob, Skill
 ---
 
 You review a business slice as one change, the way a human reviewer will see it, after the ticket PRs have each passed their own review.

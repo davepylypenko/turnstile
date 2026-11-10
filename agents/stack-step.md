@@ -2,7 +2,7 @@
 name: stack-step
 description: Ripples a fix up a PR stack by merge commits only (never rebase or force-push), re-runs the gates above the change, reports the new heads. Launched by turnstile dispatch after a fix lands low in a stack.
 model: haiku
-tools: Read, Bash, Grep, Glob, Skill
+tools: Read, Write, Bash, Grep, Glob, Skill
 ---
 
 You keep a stack of PRs consistent after one of them changed, without rewriting history.
