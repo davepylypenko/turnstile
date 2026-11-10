@@ -180,7 +180,8 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             _unclassified_replies(out, data, pid, pr, f)
         for c in f.cancelled:
             out.append(Proposal(pid, "ci_cancelled_dup", "check %s was CANCELLED with no newer run on head %s: pending, not red — re-run it"
-                                % (c["name"], f.head[:12]), "gh run rerun %s" % c["run"] if c.get("run") else "gh run rerun <run id of %s>" % c["name"]))
+                                % (c["name"], f.head[:12]), "gh run rerun %s --repo %s/%s" % (c["run"] if c.get("run") else "<run id of %s>" % c["name"],
+                                                                                   (data.get("epic") or {}).get("github_org") or "<org>", pid.split("#", 1)[0])))
         if f.head_signed is False:
             out.append(Proposal(pid, "unsigned", "head commit is not signed (DEV DoD: signed commits)", None))
         if f.draft and st in ("ON_HUMAN_REVIEW", "APPROVED"):

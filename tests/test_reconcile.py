@@ -186,7 +186,7 @@ class Compare(unittest.TestCase):
         f = self.facts(human_threads_open=0, ci="pending", cancelled=[{"name": "lint", "run": "21"}])
         props = reconcile.compare(d, f); kinds = self.kinds(props)
         self.assertIn("ci_cancelled_dup", kinds); self.assertNotIn("ci_red", kinds)
-        self.assertEqual([p.suggested_cmd for p in props if p.kind == "ci_cancelled_dup"], ["gh run rerun 21"])
+        self.assertEqual([p.suggested_cmd for p in props if p.kind == "ci_cancelled_dup"], ["gh run rerun 21 --repo pdffiller/jsfiller"])
     def test_jira_unsynced(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False
         self.assertIn("jira_unsynced", self.kinds(reconcile.compare(d, self.facts(human_threads_open=0))))
