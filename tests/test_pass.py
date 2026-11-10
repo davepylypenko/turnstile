@@ -565,10 +565,10 @@ class PassCmd(unittest.TestCase):
         self.to_human()
         self.io.facts["jsfiller#1"] = {"approvals": []}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
-        self.assertEqual(rc, 2); self.assertIn("MISSING approval by isachivka in GitHub latestReviews for head %s" % H, out)
+        self.assertEqual(rc, 2); self.assertIn("MISSING approval by isachivka as the last review of head %s in the GitHub review history (has none)" % H, out)
         self.io.facts["jsfiller#1"] = {"human_threads_open": 1}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
-        self.assertEqual(rc, 2); self.assertIn("MISSING 0 unresolved human threads on GitHub (has 1)", out)
+        self.assertEqual(rc, 2); self.assertIn("MISSING 0 open human threads on GitHub (has 1 unresolved without a member's reply; 0 answered, awaiting resolve)", out)
         self.io.facts["jsfiller#1"] = {"changes_requested": ["isachivka"]}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io)
         self.assertEqual(rc, 2); self.assertIn("changes requested by isachivka", out)

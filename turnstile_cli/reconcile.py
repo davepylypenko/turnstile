@@ -81,11 +81,16 @@ def _rerequest_proposal(out: List[Proposal], data: dict, pid: str, pr: dict, f: 
     awaiting, org = data.get("awaiting_human"), epic.get("github_org") or ""
     if threads.replies_missing(dict(pr, _id=pid), pid, f.threads, epic, awaiting, org):
         return  # the threads proposal says what is missing first
-    authors = threads.round_authors(pr, f.threads, epic, awaiting)
+    authors, need = threads.to_rerequest(pr, f, epic, awaiting)
     if not authors:
         out.append(Proposal(pid, "push_only", "push-only rework (no reviewer comment since the PR last went to humans): nobody is re-requested; "
                             "the return to ON_HUMAN_REVIEW records reviewer_notified false and the board shows 'reviewers not notified' — the lead decides", None))
         return
+    if not need:
+        out.append(Proposal(pid, "rerequest_done", "thread author(s) %s approved head %s: no re-request (it would reset the approval); pass ON_HUMAN_REVIEW "
+                            "--head %s --ci success --gate … without --rerequested" % (threads.approvers_note(f, authors), f.head[:12], f.head[:12]), None))
+        return
+    authors = need
     why, _ = threads.clean_on_head(f, repo)
     if why:
         out.append(Proposal(pid, "rerequest", "every reviewer thread has its reply; re-request %s once %s on head %s (now: %s)"
@@ -158,10 +163,10 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
         elif st in ("ON_HUMAN_REVIEW", "APPROVED") and _changes_on_head(f):
             reason = "changes requested by %s" % ", ".join(_changes_on_head(f))
             _propose(out, data, pid, "changes_requested", reason, "REWORK", 'turnstile pass pr %s REWORK --reason "%s"' % (pid, reason), facts=f, reason=reason)
-        elif st == "ON_HUMAN_REVIEW" and f.approvals and f.human_threads_open == 0:
-            _propose(out, data, pid, "approved", "approved by %s" % ", ".join(f.approvals), "APPROVED",
-                     "turnstile pass pr %s APPROVED --approvals %s --open-threads 0" % (pid, ",".join(f.approvals)),
-                     facts=f, approvals=",".join(f.approvals), open_threads=0)
+        elif st == "ON_HUMAN_REVIEW" and f.approvals and threads.open_counts(f, data)[0] == 0:
+            answered = threads.open_counts(f, data)[1]
+            _propose(out, data, pid, "approved", "approved by %s" % ", ".join(f.approvals) + (" (%d thread(s) answered, awaiting resolve)" % answered if answered else ""),
+                     "APPROVED", "turnstile pass pr %s APPROVED --approvals %s" % (pid, ",".join(f.approvals)), facts=f, approvals=",".join(f.approvals))
         cp = _ev_for_head(pr, "copilot")
         if cp and cp.get("open_threads") == 0 and f.copilot_threads_open > 0:
             out.append(Proposal(pid, "copilot_thread", "%d open Copilot thread(s) but evidence says 0" % f.copilot_threads_open, None))
@@ -314,6 +319,9 @@ def cli(delivery: pathlib.Path, as_json: bool = False, status: bool = False, bri
             print("story %s [%s]%s %s — %s" % (sid, s.get("state"), " (trunk)" if rules.is_trunk(s) else "", s.get("title"), s.get("next_action", "")))
         for pid, pr in st.data["prs"].items():
             print("pr %-28s [%s] %s" % (pid, pr.get("state"), pr.get("next_action", "")))
+            f = facts.get(pid)
+            if f is not None and f.review_decision == "APPROVED":
+                print("GITHUB: review decision APPROVED — %s (approved head %s: %s)" % (pid, f.head[:12], ", ".join(f.approvals) or "nobody in the review history"))
         print_awaiting(st.data)
     if status:
         dirty = [d for d in uncommitted(delivery) if d != CACHE_NAME]

@@ -217,6 +217,7 @@ class ReworkBackToHumans(unittest.TestCase):
         data["stories"]["S1"]["state"] = "DONE"; (self.d / "state.json").write_text(state.dumps(data))
         self.io.heads["jsfiller#1"] = H2
         self.io.facts["jsfiller#1"]["threads"] = self.io.facts["jsfiller#1"]["threads"][:1] + self.io.facts["jsfiller#1"]["threads"][2:]
+        self.io.facts["jsfiller#1"]["approvals"] = []
     def back(self, **kw):
         return run_capture(self.d, "pr", "jsfiller#1", "ON_HUMAN_REVIEW", opts(head=H2, ci="success", gate="pdf-review:pass", **kw), self.io)
     def rerequested(self, at):

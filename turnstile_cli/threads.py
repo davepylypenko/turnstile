@@ -43,6 +43,15 @@ def settled(t: dict, data: dict) -> bool:
     c = last_comment(t)
     return bool(c and c.get("login") in ours and _ts(c.get("at")) > _ts(last_reviewer_at(t, ours)))
 
+def open_counts(f, data: dict) -> Tuple[int, int]:
+    """(open, answered) over the unresolved human threads: answered ones are `settled`, open ones still wait for a member's reply.
+    Facts without the thread list fall back to the raw unresolved count."""
+    if f.human_threads_open == 0 or not f.threads:
+        return f.human_threads_open, 0
+    unresolved = [t for t in f.threads if t.get("human") and not t.get("resolved")]
+    answered = sum(1 for t in unresolved if settled(t, data))
+    return len(unresolved) - answered, answered
+
 def send_since(pr: dict, awaiting: Optional[List[dict]]) -> Optional[datetime.datetime]:
     """When the PR went to humans: the earlier of `evidence.human.sent_at` and the send entry's `used_at` (the Slack send)."""
     h = (pr.get("evidence") or {}).get("human") or {}
@@ -237,6 +246,8 @@ def request_problems(pr: dict, f, epic: dict, awaiting: Optional[List[dict]], re
     req_at = {k.lower(): v for k, v in (f.review_requested_at or {}).items()}
     reviewed = {k.lower(): v for k, v in (f.review_heads or {}).items()}
     for login in people:
+        if f.approved_by(login):
+            continue
         at = github.ts(req_at.get(login.lower()))
         if at is None:
             out.append("no review request for %s on GitHub" % login); continue
@@ -251,10 +262,19 @@ def request_problems(pr: dict, f, epic: dict, awaiting: Optional[List[dict]], re
             out.append("%s is not in GitHub reviewRequests and has not reviewed head %s" % (login, f.head[:12]))
     return out
 
+def to_rerequest(pr: dict, f, epic: dict, awaiting: Optional[List[dict]]) -> Tuple[List[str], List[str]]:
+    """(thread authors, the ones to re-request): an author whose last review on the current head is APPROVED is left alone — a
+    re-request resets that approval, and the approval is the evidence that they saw the head."""
+    authors = round_authors(pr, f.threads, epic, awaiting)
+    return authors, [a for a in authors if not f.approved_by(a)]
+
+def approvers_note(f, people: List[str]) -> str:
+    return ", ".join(a for a in people if f.approved_by(a))
+
 def rerequest_missing(pr: dict, pid: str, f, epic: dict, awaiting: Optional[List[dict]], org: str, repo_cfg: dict) -> List[str]:
     """REWORK → ON_HUMAN_REVIEW: a thread-driven rework needs `evidence.human.rerequested` for the head, naming exactly the thread
-    authors, and GitHub showing those requests; a push-only rework takes no --rerequested (reviewer_notified: false)."""
-    authors = round_authors(pr, f.threads, epic, awaiting)
+    authors who have not approved it, and GitHub showing those requests; a push-only rework takes no --rerequested (reviewer_notified: false)."""
+    authors, need = to_rerequest(pr, f, epic, awaiting)
     h = (pr.get("evidence") or {}).get("human") or {}
     rr = h.get("rerequested") if rules.same_head((h.get("rerequested") or {}).get("head"), pr.get("head")) else None
     if not authors:
@@ -263,13 +283,20 @@ def rerequest_missing(pr: dict, pid: str, f, epic: dict, awaiting: Optional[List
                     "humans), so nobody is pinged — drop --rerequested %s; the pass records reviewer_notified false and the lead decides"
                     % ",".join(rr["logins"])]
         return []
+    listed = [x for x in (rr or {}).get("logins") or [] if not f.approved_by(x)]
+    if not need:
+        if listed:
+            return ["MISSING nobody to re-request: thread author(s) %s approved head %s and a re-request would reset that approval — drop "
+                    "--rerequested %s" % (approvers_note(f, authors), (pr.get("head") or "")[:12], ",".join(rr["logins"]))]
+        return []
     hint = ("once every thread has its reply and %s on head %s, re-request review from the thread authors: %s — then pass again with "
-            "--rerequested %s" % (signal(repo_cfg), (pr.get("head") or "")[:12], request_route(org, pid, authors), ",".join(authors)))
+            "--rerequested %s" % (signal(repo_cfg), (pr.get("head") or "")[:12], request_route(org, pid, need), ",".join(need)))
     if rr is None:
         return ["MISSING evidence.human.rerequested for head %s (thread-driven rework, lead rule 2026-10-14): %s" % (pr.get("head"), hint)]
-    if {x.lower() for x in rr.get("logins") or []} != {a.lower() for a in authors}:
-        return ["MISSING --rerequested to be exactly the thread authors %s (has %s): %s" % (", ".join(authors), ", ".join(rr.get("logins") or []), hint)]
-    return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, epic, awaiting, repo_cfg, authors)]
+    if {x.lower() for x in listed} != {a.lower() for a in need}:
+        return ["MISSING --rerequested to be exactly the thread authors who have not approved head %s: %s (has %s): %s"
+                % ((pr.get("head") or "")[:12], ", ".join(need), ", ".join(rr.get("logins") or []), hint)]
+    return ["MISSING the re-request on GitHub: %s; %s" % (p, hint) for p in request_problems(pr, f, epic, awaiting, repo_cfg, need)]
 
 def _ids(text: Optional[str]) -> List[str]:
     return [x.strip() for x in (text or "").split(",") if x.strip()]

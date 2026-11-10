@@ -752,6 +752,15 @@ class ReviewWrites(unittest.TestCase):
     def test_self_resolved_reply_passes_at_once(self):
         self.assertAllowed([self.REPLY % "101", "gh api --method POST /repos/pdffiller/jsfiller/pulls/1/comments/101/replies -f body=x"])
 
+    def test_a_reviewer_who_approved_the_head_is_never_re_requested(self):
+        d = self.state(); d["epic"]["reviewers"] = ["isachivka"]; self.write(d)
+        R = "gh api -X %s repos/pdffiller/jsfiller/pulls/1/requested_reviewers -f 'reviewers[]=%s'"
+        r = self.bash(R % ("POST", "isachivka")); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-approver", r.stderr)
+        self.assertIn("turnstile: isachivka approved head aaaaaaaa1111 — a re-request would reset that approval", r.stderr)
+        self.assertBlocked([R % ("POST", "leadlogin") + " -f 'reviewers[]=isachivka'"], "rerequest-approver")
+        self.assertAllowed([R % ("DELETE", "isachivka"), R % ("POST", "leadlogin"), "gh api -X POST repos/pdffiller/other/pulls/1/requested_reviewers -f 'reviewers[]=isachivka'"])
+        r = self.bash(R % ("POST", "isachivka"), gh=False); self.assertEqual(r.returncode, 2); self.assertIn("rerequest-unverified", r.stderr)
+
     def test_needs_lead_reply_waits_for_the_lead_approved_entry_of_that_thread(self):
         r = self.bash(self.REPLY % "201"); self.assertEqual(r.returncode, 2); self.assertIn("reply-needs-lead", r.stderr)
         self.assertIn("ah-3", r.stderr); self.assertIn("TURNSTILE_LEAD=1 turnstile approve", r.stderr)

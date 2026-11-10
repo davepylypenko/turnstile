@@ -688,6 +688,32 @@ def _reviewer_requests(flat: str, cwd: str) -> None:
         why = _reviewer_verdict(m.group(1), [p for p in people if p != COPILOT], cwd)
         if why:
             block(why)
+        if _method(seg) == "POST":
+            why = _approver_verdict(m.group(2), m.group(3), [p for p in people if p != COPILOT], cwd)
+            if why:
+                block(why)
+
+def _approver_verdict(repo: str, number: str, people, cwd: str):
+    """A reviewer whose last review on the current head is APPROVED is never re-requested: the request resets that approval."""
+    if not people:
+        return None
+    try:
+        data = load_state(cwd)
+    except Exception:
+        return None
+    pid = "%s#%s" % (repo, number)
+    if pid not in (data.get("prs") or {}):
+        return None
+    github, _ = _turnstile_modules()
+    try:
+        f = github.fetch(pid, (data.get("epic") or {}).get("github_org") or "")
+    except Exception as e:
+        return "blocked by rule rerequest-unverified. Cannot read %s on GitHub (%s) to check whether a named reviewer approved its head; failing closed." % (pid, e)
+    for login in people:
+        if f.approved_by(login):
+            return ("blocked by rule rerequest-approver. turnstile: %s approved head %s — a re-request would reset that approval; their approval is the "
+                    "evidence that they saw the head, so return the PR to ON_HUMAN_REVIEW without re-requesting them." % (login, f.head[:12]))
+    return None
 
 # 2026-10-14 review: a quote-aware word scan of the raw command for what the quote-stripped regexes cannot see — a gh word the
 # shell computes (`gh $(echo pr) comment`, `$(which gh) pr …`), `gh pr create --reviewer`, `gh pr|issue close|reopen --comment`,

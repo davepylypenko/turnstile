@@ -10,6 +10,7 @@ QUERY = """query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){ p
   isDraft merged mergeCommit{oid} headRefOid headRefName baseRefName reviewDecision body
   allCommits: commits(last:100){totalCount nodes{commit{oid message signature{isValid}}}}
   latestReviews(first:30){nodes{author{__typename login} state commit{oid} submittedAt}}
+  reviews(last:50){nodes{author{__typename login} state commit{oid} submittedAt}}
   reviewRequests(first:50){nodes{requestedReviewer{__typename ... on User{login}}}}
   timelineItems(last:50, itemTypes:[REVIEW_REQUESTED_EVENT]){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login}}}}}
   reviewThreads(first:100){nodes{id isResolved comments(first:100){totalCount nodes{databaseId author{__typename login} createdAt}}}}
@@ -22,6 +23,7 @@ RUN_RX = re.compile(r"/actions/runs/(\d+)")
 FAILURE = {"failure", "cancelled", "timed_out", "action_required", "error", "startup_failure", "stale"}
 PENDING = {"pending", "in_progress", "queued", "expected", "waiting", "requested", "none"}
 RANK = {"failure": 3, "pending": 2, "success": 1, "skipped": 0}
+VERDICTS = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
 
 @dataclass
 class PrFacts:
@@ -56,6 +58,10 @@ class PrFacts:
     copilot_review_at: Optional[str] = None
     check_times: Dict[str, str] = field(default_factory=dict)
     cancelled: List[dict] = field(default_factory=list)  # [{name, run}]: CANCELLED runs with no newer run on the head (to re-run)
+    review_decision: Optional[str] = None
+
+    def approved_by(self, login: Optional[str]) -> bool:
+        return bool(login) and login.lower() in {a.lower() for a in self.approvals}
 
     def ci_without(self, names) -> str:
         """CI over the check contexts minus the repo gate's own contexts (the gate runs in AI_REVIEW, so it cannot be part of
@@ -149,6 +155,18 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
             approvals.append(login)
         if r.get("state") == "CHANGES_REQUESTED":
             changes.append(login); changes_heads[login] = oid or ""
+    verdict_on_head: Dict[str, str] = {}
+    history = [(ts(r.get("submittedAt")) or datetime.datetime.min, i, r) for i, r in enumerate((pr.get("reviews") or {}).get("nodes") or [])]
+    for _, _, r in sorted(history, key=lambda x: x[:2]):
+        if is_bot(r.get("author")):
+            continue
+        login, oid = (r.get("author") or {}).get("login", ""), (r.get("commit") or {}).get("oid")
+        if not login or not same_head(oid, head):
+            continue
+        review_heads[login] = oid
+        if r.get("state") in VERDICTS:
+            verdict_on_head[login] = r["state"]
+    approvals = sorted({l for l in approvals if verdict_on_head.get(l, "APPROVED") == "APPROVED"} | {l for l, v in verdict_on_head.items() if v == "APPROVED"})
     human_open = copilot_open = 0
     threads = []
     for t in (pr.get("reviewThreads") or {}).get("nodes") or []:
@@ -185,8 +203,8 @@ def parse(pr_id: str, pr: dict) -> PrFacts:
                    copilot_review_at=copilot_at, check_times=check_times, cancelled=cancelled, threads=threads, trailered=trailered, body_footer=bool(FOOTER_RX.search(pr.get("body") or "")),
                    base=pr.get("baseRefName"), branch=pr.get("headRefName"), unsigned=unsigned, id=pr_id, head=head, merged=bool(pr.get("merged")),
                    merged_sha=(pr.get("mergeCommit") or {}).get("oid"), draft=bool(pr.get("isDraft")), ci=ci, checks=checks,
-                   checks_complete=checks_complete, approvals=sorted(approvals), changes_requested=sorted(changes), changes_requested_heads=changes_heads,
-                   human_threads_open=human_open, copilot_threads_open=copilot_open,
+                   checks_complete=checks_complete, approvals=approvals, changes_requested=sorted(changes), changes_requested_heads=changes_heads,
+                   human_threads_open=human_open, copilot_threads_open=copilot_open, review_decision=pr.get("reviewDecision"),
                    head_signed=(bool(sig.get("isValid")) if isinstance(sig, dict) else None))
 
 def fetch(pr_id: str, org: str) -> PrFacts:

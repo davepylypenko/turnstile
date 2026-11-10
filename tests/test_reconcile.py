@@ -89,7 +89,7 @@ class Compare(unittest.TestCase):
         f = self.facts(); t = f["jsfiller#1"].threads[0]
         t["comments"] = [{"id": "1", "login": "lMakDen", "at": "2026-10-12T09:00:00Z", "bot": False},
                          {"id": "2", "login": "leadlogin", "at": "2026-10-12T10:00:00Z", "bot": False}]
-        self.assertEqual(self.kinds(reconcile.compare(d, f)), [])
+        props = reconcile.compare(d, f); self.assertEqual(self.kinds(props), ["approved"]); self.assertIn("1 thread(s) answered, awaiting resolve", props[0].message)
         t["comments"].append({"id": "3", "login": "lMakDen", "at": "2026-10-12T11:00:00Z", "bot": False})
         props = reconcile.compare(d, f); self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)
     def test_a_needs_lead_thread_the_lead_answered_in_person_is_not_a_human_thread_discrepancy(self):
@@ -99,7 +99,7 @@ class Compare(unittest.TestCase):
         t["comments"] = [{"id": "1", "login": "lMakDen", "at": "2026-10-12T09:00:00Z", "bot": False}]
         self.assertEqual(self.kinds(reconcile.compare(d, f)), ["human_thread"])
         t["comments"].append({"id": "2", "login": "vereta", "at": "2026-10-12T10:00:00Z", "bot": False})
-        self.assertEqual(self.kinds(reconcile.compare(d, f)), [])
+        self.assertEqual(self.kinds(reconcile.compare(d, f)), ["approved"])
         t["comments"].append({"id": "3", "login": "lMakDen", "at": "2026-10-12T11:00:00Z", "bot": False})
         self.assertEqual(self.kinds(reconcile.compare(d, f)), ["human_thread"])
     def test_changes_requested_on_an_older_head_do_not_reopen_rework(self):
@@ -134,7 +134,7 @@ class Compare(unittest.TestCase):
         self.assertEqual(self.kinds(props), ["changes_requested"]); self.assertIn('REWORK --reason "changes requested by isachivka"', props[0].suggested_cmd)
     def test_approved_with_no_threads(self):
         props = reconcile.compare(self.data("ON_HUMAN_REVIEW", human=HUMAN), self.facts(human_threads_open=0))
-        self.assertEqual(props[0].kind, "approved"); self.assertIn("--approvals isachivka --open-threads 0", props[0].suggested_cmd)
+        self.assertEqual(props[0].kind, "approved"); self.assertEqual(props[0].suggested_cmd, "turnstile pass pr jsfiller#1 APPROVED --approvals isachivka")
     def test_dry_run_applies_the_github_facts_checks(self):
         # the approved proposal carries facts.approvals, so it passes; a merged proposal whose state says a different merged_sha is dropped
         d = self.data("APPROVED"); d["prs"]["jsfiller#1"]["merged_sha"] = "1111111122222222"

@@ -207,10 +207,11 @@ def _facts_mismatches(pr: dict, target: str, facts, repo_cfg: dict, data: Option
     if target == "APPROVED":
         human = ev.get("human") or {}
         for login in human.get("approvals") or []:
-            if login not in facts.approvals:
-                out.append("MISSING approval by %s in GitHub latestReviews for head %s (has %s)" % (login, h, ", ".join(facts.approvals) or "none"))
-        if facts.human_threads_open != 0:
-            out.append("MISSING 0 unresolved human threads on GitHub (has %d)" % facts.human_threads_open)
+            if not facts.approved_by(login):
+                out.append("MISSING approval by %s as the last review of head %s in the GitHub review history (has %s)" % (login, h, ", ".join(facts.approvals) or "none"))
+        open_, answered = threads.open_counts(facts, data or {})
+        if open_ != 0:
+            out.append("MISSING 0 open human threads on GitHub (has %d unresolved without a member's reply; %d answered, awaiting resolve)" % (open_, answered))
         if facts.changes_requested:
             out.append("MISSING no changes requested on GitHub (changes requested by %s)" % ", ".join(facts.changes_requested))
     if target == "MERGED":
@@ -236,10 +237,21 @@ def _verify_against_github(pr: dict, ident: str, target: str, repo_cfg: dict, or
     if not rules.same_head(facts.head, h):
         raise TurnstileError("head %s on GitHub for %s: it is %s (push changed it? pass --head %s)" % (h, ident, facts.head, facts.head[:12]))
     ev["head_verified"] = {"head": h, "verified": True, "at": _now()}
-    rr = (ev.get("human") or {}).get("rerequested")
-    if rr and target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK":  # GitHub's spelling of the logins
-        authors = {a.lower(): a for a in threads.round_authors(pr, facts.threads, (data or {}).get("epic") or {}, (data or {}).get("awaiting_human"))}
-        rr["logins"] = sorted({authors.get(x.lower(), x) for x in rr.get("logins") or []}, key=str.lower)
+    if target == "ON_HUMAN_REVIEW" and pr.get("state") == "REWORK":
+        human = ev.setdefault("human", {})
+        rr = human.get("rerequested")
+        authors, need = threads.to_rerequest(pr, facts, (data or {}).get("epic") or {}, (data or {}).get("awaiting_human"))
+        spelling = {a.lower(): a for a in authors}
+        if rr:
+            rr["logins"] = sorted({spelling.get(x.lower(), x) for x in rr.get("logins") or []}, key=str.lower)
+        elif authors and not need:
+            human["rerequested"] = {"logins": [], "head": h, "at": _now_s(), "approved": authors}
+    if target == "APPROVED":
+        open_, answered = threads.open_counts(facts, data or {})
+        human = ev.setdefault("human", {})
+        if o.open_threads is None:
+            human["open_threads"] = open_
+        human["answered_threads"] = answered
     return _facts_mismatches(pr, target, facts, repo_cfg, data)
 
 def _verify_story_heads(story: dict, sid: str, data: dict, o: Options, io: IO, notes: List[str]) -> List[str]:
@@ -522,9 +534,12 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     human = pr.setdefault("evidence", {}).setdefault("human", {})
                     human["sent_head"] = pr.get("head"); human["returned_at"] = _now_s()
                     rr = human.get("rerequested")
-                    if rr and rules.same_head(rr.get("head"), pr.get("head")):
+                    if rr and rules.same_head(rr.get("head"), pr.get("head")) and rr.get("logins"):
                         human["reviewer_notified"] = True
                         extra.append("re-requested review from %s on head %s (thread-driven rework; reviewer notified)" % (", ".join(rr.get("logins") or []), pr.get("head")))
+                    elif rr and rules.same_head(rr.get("head"), pr.get("head")):
+                        human["reviewer_notified"] = True
+                        extra.append("thread author(s) %s approved head %s: not re-requested (a re-request would reset the approval)" % (", ".join(rr.get("approved") or []), pr.get("head")))
                     else:  # push-only rework (lead rule 2026-10-14): nobody is pinged; the board shows it and the lead decides
                         human.pop("rerequested", None); human["reviewer_notified"] = False
                         extra.append("reviewers not notified: push-only rework of %s (no reviewer comment since it last went to humans); the lead decides" % ident)

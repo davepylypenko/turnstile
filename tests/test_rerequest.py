@@ -65,6 +65,7 @@ class Back(unittest.TestCase):
         data["stories"]["S1"]["state"] = "DONE"; self.write(data)
         self.io.heads["jsfiller#1"] = H2
         f = self.io.facts["jsfiller#1"]; f["threads"] = [f["threads"][0], f["threads"][2]]  # PRRT_a (isachivka 11:00) + the Copilot thread
+        f["approvals"] = []
     def write(self, data):
         (self.d / "state.json").write_text(json.dumps(data))
     def back(self, **kw):
@@ -160,7 +161,7 @@ class Reconcile(unittest.TestCase):
     def facts(self, **kw):
         f = github.parse("jsfiller#1", PAYLOAD); f.head = H2
         f.threads = [th("PRRT_a", cm("isachivka", self.T, 101), cm("agentlogin", "2026-10-13T13:00:00Z", 102))]
-        f.human_threads_open = 1; f.checks = {"pdf-review": "success"}
+        f.human_threads_open = 1; f.checks = {"pdf-review": "success"}; f.approvals = []
         for k, v in kw.items(): setattr(f, k, v)
         return {"jsfiller#1": f}
     def kinds(self, props):
