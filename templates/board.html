@@ -30,6 +30,7 @@ svg.sbar { display:block; width:100%; margin:4px 0 } svg.sbar rect { stroke:var(
 svg.sbar rect[data-state] { cursor:pointer } svg.sbar rect[data-state]:focus-visible { stroke:var(--accent); outline:none }
 .keys { color:var(--muted); font-size:12px } .keys span { display:inline-block; margin-right:10px; white-space:nowrap } .keys i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:4px; vertical-align:baseline }
 .bar-cell { min-width:200px } tr.aged td { background:var(--aged) } td.num { text-align:right; font-variant-numeric:tabular-nums }
+details { margin-top:12px } summary { cursor:pointer; color:var(--muted); font-size:13px }
 </style>
 </head>
 <body>
@@ -71,7 +72,10 @@ function note(p) {
     if (nl) out.push(nl + ' thread(s) need the lead');
   }
   if (p.state === 'ON_HUMAN_REVIEW' && h.reviewer_notified === false) out.push('reviewers not notified (push-only rework: the lead decides)');
-  if (p.state === 'ON_HUMAN_REVIEW' && h.reviewer_notified === true && h.rerequested) out.push('re-requested ' + (h.rerequested.logins || []).join(', ') + ' on ' + short(h.rerequested.head));
+  if (p.state === 'ON_HUMAN_REVIEW' && h.reviewer_notified === true && h.rerequested) out.push((h.rerequested.logins || []).length ? 're-requested ' + h.rerequested.logins.join(', ') + ' on ' + short(h.rerequested.head)
+    : 'not re-requested: ' + (h.rerequested.approved || []).join(', ') + ' approved ' + short(h.rerequested.head));
+  if ((h.approvals || []).length) out.push('approved by ' + h.approvals.join(', '));
+  if (h.answered_threads > 0) out.push(h.answered_threads + ' thread(s) answered, awaiting resolve');
   if (p.state === 'READY' && p.blocked_by) out.push('waits for ' + p.blocked_by);
   if (p.last_reason) out.push(p.last_reason);
   return out.join(' · ');
@@ -86,8 +90,7 @@ const short = h => h ? String(h).slice(0, 8) : '—';
 const pressed = k => (view.tab === 'prs' && view.state === k) || (view.tab === 'bugs' && view.open && k === 'bugs');
 function tiles() {
   const prs = Object.values(STATE.prs || {});
-  const n = { stories: Object.keys(STATE.stories || {}).length, bugs: openBugs(),
-              awaiting: (STATE.awaiting_human || []).filter(a => a.type !== 'send' && !a.approved_at && !a.voided_at && !a.consumed_at).length };
+  const n = { stories: Object.keys(STATE.stories || {}).length, bugs: openBugs(), awaiting: (STATE.awaiting_human || []).filter(openEntry).length };
   PR_STATES.forEach(s => { n[s] = prs.filter(p => p.state === s).length; });
   document.querySelectorAll('#tiles .tile').forEach(b => {
     const k = b.dataset.tile, on = pressed(k);
@@ -251,15 +254,27 @@ async function connectBugsDb() {
     db.collection('bugs').onSnapshot(snap => { const next = {}; for (const d of snap.docs) { if (d.exists) next[d.id] = d.data(); } bugOverrides = next; renderBugs(); }, () => {});
   } catch (e) { /* no db in this view */ }
 }
+const openEntry = a => a.type !== 'send' && !a.voided_at && !a.consumed_at && (!a.approved_at || (a.type === 'reply' && !a.posted_at));
+const approveLine = a => '! TURNSTILE_LEAD=1 turnstile approve ' + a.id;
+function awaitingRow(a) {
+  const subject = esc(a.pr || a.story || a.payload) + (a.thread ? ' ' + esc(a.thread) : '') + (a.ticket || ((STATE.prs || {})[a.pr] || {}).ticket ? ' ' + ticket(a.ticket || STATE.prs[a.pr].ticket) : '');
+  const draft = a.type === 'reply' ? (a.draft ? '<br><span class="muted">' + esc(String(a.draft).slice(0, 160)) + '</span>' : a.payload ? '<br><span class="muted">draft in ' + esc(a.payload) + '</span>' : '') : '';
+  const status = a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>'
+    : a.approved_at ? 'approved ' + esc(a.approved_at) + (a.type === 'reply' ? ' <span class="muted">· reply not posted yet</span>' : '') : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>';
+  return '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.type) + '</td><td class="k">' + subject + draft + '</td><td class="muted">' + esc(a.created_at) + '</td><td class="k">' + (a.approved_at || a.voided_at ? '' : esc(approveLine(a))) + '</td><td>' + status + '</td></tr>';
+}
 function awaiting() {
-  document.getElementById('awaiting').innerHTML = '<div class="scroll"><table><thead><tr><th>Id</th><th>Owner</th><th>Type</th><th>PR / story</th><th>Created</th><th>Approved</th></tr></thead><tbody>' +
-    (STATE.awaiting_human || []).map(a => '<tr><td class="k">' + esc(a.id) + '</td><td>' + esc(a.owner) + '</td><td>' + esc(a.type) + '</td><td class="k">' + esc(a.pr || a.story) + (a.thread ? ' ' + esc(a.thread) : '') + (a.ticket || ((STATE.prs || {})[a.pr] || {}).ticket ? ' ' + ticket(a.ticket || STATE.prs[a.pr].ticket) : '') + '</td><td class="muted">' + esc(a.created_at) + '</td><td>' + (a.voided_at ? '<span class="muted">voided</span>' : a.consumed_at ? esc(a.approved_at) + ' <span class="muted">(used)</span>' : a.approved_at ? esc(a.approved_at) : a.type === 'send' ? '<span class="muted">legacy send entry</span>' : '<b>pending</b>') + '</td></tr>').join('') + '</tbody></table></div>';
+  const all = STATE.awaiting_human || [], open = all.filter(openEntry), history = all.filter(a => !openEntry(a));
+  const table = rows => '<div class="scroll"><table><thead><tr><th>Id</th><th>Kind</th><th>Subject</th><th>Created</th><th>Approve line</th><th>Status</th></tr></thead><tbody>' + rows.map(awaitingRow).join('') + '</tbody></table></div>';
+  document.getElementById('awaiting').innerHTML = (open.length ? table(open) : '<p class="muted">nothing waits for a human</p>') +
+    (history.length ? '<details><summary>History (' + history.length + ')</summary>' + table(history) + '</details>' : '');
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => { view.tab = b.dataset.tab; show(); writeHash(); }));
 document.querySelectorAll('#tiles .tile').forEach(b => b.addEventListener('click', () => tileClick(b.dataset.tile)));
 function legend() {
   document.getElementById('legend').innerHTML = '<b>Jira mapping:</b> ' + PR_STATES.map(s => badge(s) + ' → ' + esc(JIRA[s])).join(' &nbsp; ') +
-    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry; once every thread has its reply and Copilot (or the gate) is clean on the head, the agents re-request the thread authors on GitHub. A push-only rework pings nobody: its row reads "reviewers not notified" and the lead decides.' +
+    '<br><b>Gates:</b> ✓ evidence for the current head · ✗ stale or failed · — none. REWORK rows read "reviewer not notified" until replies are posted: self-resolved threads get the agent\'s reply at once, threads that need the lead wait for the lead\'s word on their own reply entry; once every thread has its reply and Copilot (or the gate) is clean on the head, the agents re-request the thread authors on GitHub. A push-only rework pings nobody: its row reads "reviewers not notified" and the lead decides. A thread author who approved the head is never re-requested. Answered threads the reviewer has not resolved do not hold APPROVED back: the row reads "n thread(s) answered, awaiting resolve".' +
+    '<br><b>Awaiting humans:</b> only what still needs a person — open entries with their approve line, and approved replies not yet on GitHub; everything approved, used or voided sits under History.' +
     '<br><b>Bugs:</b> todo → ai (an agent is fixing) → testing (deployed, waiting for a re-test) → done. The dropdown writes to the board database; the orchestrator folds it back with <span class="k">turnstile bug set</span>.' +
     '<br><b>Progress:</b> a snapshot of state.json — completion and bars by state (click a story\'s segment to filter the PRs tab), gates per story, and days in state for every open PR (from state_since; older records fall back to the newest of rework_since, the send and the head check). READY / ON_HUMAN_REVIEW / REWORK rows at 3+ days are tinted.';
 }

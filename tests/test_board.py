@@ -80,7 +80,7 @@ class Board(unittest.TestCase):
             self.assertIn(s, tpl, s)
         for s in ("Jira mapping", "reviewer not notified", "role=\"tablist\"", "aria-selected", "PLANNED:'var(--planned)'", "todo:'var(--todo)'",
                   "(r.cases || {}).fail", "<th>Note</th>", "--merged:#4b5563",
-                  "a.type !== 'send' && !a.approved_at", "a.type === 'send' ? '<span class=\"muted\">legacy send entry</span>'"):
+                  "const openEntry = a => a.type !== 'send' && !a.voided_at && !a.consumed_at && (!a.approved_at || (a.type === 'reply' && !a.posted_at))", "a.type === 'send' ? '<span class=\"muted\">legacy send entry</span>'"):
             self.assertIn(s, tpl, s)
         d = pathlib.Path(tempfile.mkdtemp())
         data = json.loads(json.dumps(FIX)); data["stories"]["S1"]["evidence"] = {"env_test": {"report": "r"}}
