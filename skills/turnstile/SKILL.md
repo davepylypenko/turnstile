@@ -177,7 +177,8 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
    at once through the guarded REST replies route. `needs_lead` (decision, direction, a recorded decision, another team) → a
    `reply` entry per thread; show the members the draft and the approve line; once approved, post exactly that text (yourself or a
    `COMMENTS-<n>-r2` dispatch with `approved_replies=<ah-ids>`). A reviewer's follow-up needs a new classification first.
-   The reply comes from any member's login (`epic.members`), the lead's or the agent login.
+   The reply comes from any member's login (`epic.members`), the lead's or the agent login. A thread whose latest comment is a
+   member's reply (the lead answering in person included) counts as answered without an entry.
 3. Gate and Copilot on the new head (no new deep review); `turnstile status` lists what the threads still need.
 4. Re-request (lead rule 2026-10-14: "replied to all comments and Copilot passed again → ping the reviewer to look again"): once
    every thread has its reply and Copilot reviewed the GitHub head with 0 open threads (repos without Copilot: the gate check

@@ -779,6 +779,12 @@ class ReviewWrites(unittest.TestCase):
         threads[0]["comments"]["totalCount"] = 2; self.save()
         r = self.bash(self.REPLY % "101"); self.assertEqual(r.returncode, 2); self.assertIn("reply-reclassify", r.stderr); self.assertIn("2026-10-13T13:00:00Z", r.stderr)
         r = self.bash(self.REPLY % "101", gh=False); self.assertEqual(r.returncode, 2); self.assertIn("GitHub", r.stderr)
+        threads[0]["comments"]["nodes"].append({"databaseId": 103, "author": {"__typename": "User", "login": "leadlogin"}, "createdAt": "2026-10-13T13:30:00Z"})
+        threads[0]["comments"]["totalCount"] = 3; self.save()
+        self.assertAllowed([self.REPLY % "101"])  # settled: the lead answered the follow-up in person
+        threads[1]["comments"]["nodes"].append({"databaseId": 202, "author": {"__typename": "User", "login": "leadlogin"}, "createdAt": "2026-10-13T13:30:00Z"})
+        threads[1]["comments"]["totalCount"] = 2; self.save()
+        r = self.bash(self.REPLY % "201"); self.assertEqual(r.returncode, 2); self.assertIn("reply-needs-lead", r.stderr)  # the state routes stay
 
     def test_resolving_human_threads_is_refused_bot_threads_pass(self):
         q = "gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: \"%s\"}) { thread { isResolved } } }'"

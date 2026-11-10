@@ -92,6 +92,16 @@ class Compare(unittest.TestCase):
         self.assertEqual(self.kinds(reconcile.compare(d, f)), [])
         t["comments"].append({"id": "3", "login": "lMakDen", "at": "2026-10-12T11:00:00Z", "bot": False})
         props = reconcile.compare(d, f); self.assertEqual(self.kinds(props), ["human_thread"]); self.assertIn("REWORK", props[0].suggested_cmd)
+    def test_a_needs_lead_thread_the_lead_answered_in_person_is_not_a_human_thread_discrepancy(self):
+        d = self.data("ON_HUMAN_REVIEW", human=HUMAN); d["epic"]["members"] = {"vereta": {"name": "Vlad"}}
+        f = self.facts(); t = f["jsfiller#1"].threads[0]
+        d["prs"]["jsfiller#1"]["threads"] = {t["id"]: {"class": "needs_lead", "comment_id": "1", "last_reviewer_at": "2026-10-12T09:00:00Z"}}
+        t["comments"] = [{"id": "1", "login": "lMakDen", "at": "2026-10-12T09:00:00Z", "bot": False}]
+        self.assertEqual(self.kinds(reconcile.compare(d, f)), ["human_thread"])
+        t["comments"].append({"id": "2", "login": "vereta", "at": "2026-10-12T10:00:00Z", "bot": False})
+        self.assertEqual(self.kinds(reconcile.compare(d, f)), [])
+        t["comments"].append({"id": "3", "login": "lMakDen", "at": "2026-10-12T11:00:00Z", "bot": False})
+        self.assertEqual(self.kinds(reconcile.compare(d, f)), ["human_thread"])
     def test_changes_requested_on_an_older_head_do_not_reopen_rework(self):
         # 2026-10-14: after the rework the PR is back on ON_HUMAN_REVIEW with a new head; the reviewer's old CHANGES_REQUESTED stays in
         # latestReviews until they re-review, and must not send the PR back to REWORK (it still blocks APPROVED)

@@ -31,6 +31,18 @@ def last_reviewer_at(t: dict, ours) -> Optional[str]:
     rc = reviewer_comments(t, ours)
     return max(rc, key=lambda c: _ts(c.get("at"))).get("at") if rc else None
 
+def last_comment(t: dict) -> Optional[dict]:
+    hc = [c for c in t.get("comments") or [] if not c.get("bot") and c.get("login")]
+    return max(hc, key=lambda c: _ts(c.get("at"))) if hc else None
+
+def settled(t: dict, data: dict) -> bool:
+    """A human thread whose latest comment is a member's (`members.our_logins`: the lead, the agent login, any `epic.members`
+    login) and newer than the reviewer's last comment: answered, whatever its classification and whether or not a `reply` entry
+    exists or was approved. A reviewer follow-up newer than that reply un-settles it."""
+    ours = members.our_logins(data)
+    c = last_comment(t)
+    return bool(c and c.get("login") in ours and _ts(c.get("at")) > _ts(last_reviewer_at(t, ours)))
+
 def send_since(pr: dict, awaiting: Optional[List[dict]]) -> Optional[datetime.datetime]:
     """When the PR went to humans: the earlier of `evidence.human.sent_at` and the send entry's `used_at` (the Slack send)."""
     h = (pr.get("evidence") or {}).get("human") or {}
@@ -60,10 +72,13 @@ def reply_route(org: str, pid: str, comment_id) -> str:
     repo, n = pid.split("#", 1)
     return "gh api -X POST repos/%s/%s/pulls/%s/comments/%s/replies -f body=…" % (org or "<org>", repo, n, comment_id or "<comment id>")
 
-def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, ours: set, awaiting, org: str) -> Optional[str]:
+def _thread_missing(pid: str, pr: dict, t: dict, agent: str, epic: dict, awaiting, org: str) -> Optional[str]:
+    ours = members.our_logins({"epic": epic})
     tid, lr = t.get("id"), last_reviewer_at(t, ours)
     if t.get("truncated"):
         return "MISSING thread %s has more than 100 comments; the facts are truncated, so its replies are verified by hand (the lead decides)" % tid
+    if settled(t, {"epic": epic}):
+        return None
     rec = (pr.get("threads") or {}).get(tid)
     if rec is None:
         return ("MISSING classification of thread %s (opened by %s at %s): the comments-handler records it with turnstile threads %s "
@@ -71,14 +86,9 @@ def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, ours: se
     if _ts(lr) > _ts(rec.get("last_reviewer_at")):
         return ("MISSING re-classification of thread %s: the reviewer commented at %s, after it was classified %s on %s (turnstile threads %s …)"
                 % (tid, lr, rec.get("class"), rec.get("last_reviewer_at"), pid))
-    replies = [c for c in t.get("comments") or [] if c.get("login") in ours and _ts(c.get("at")) > _ts(lr)]
     if rec.get("class") == SELF:
-        if not replies:
-            return ("MISSING reply by %s on self_resolved thread %s newer than the reviewer's last comment (%s): post it now with %s"
-                    % (agent, tid, lr, reply_route(org, pid, rec.get("comment_id") or t.get("comment_id"))))
-        return None
-    if lead and lead != agent and any(c.get("login") == lead for c in replies):
-        return None  # the lead answered in person
+        return ("MISSING reply by %s on self_resolved thread %s newer than the reviewer's last comment (%s): post it now with %s"
+                % (agent, tid, lr, reply_route(org, pid, rec.get("comment_id") or t.get("comment_id"))))
     e = approved_reply(awaiting, pid, tid)
     if e is None:
         pending = open_replies(awaiting, pid, tid)
@@ -86,16 +96,14 @@ def _thread_missing(pid: str, pr: dict, t: dict, agent: str, lead: str, ours: se
         return ("MISSING the lead's word on needs_lead thread %s: %s, then the approved reply goes out (%s)"
                 % (tid, LEAD_HINT % ah if ah else "no reply entry is open; record the thread with turnstile threads %s --needs-lead %s" % (pid, tid),
                    reply_route(org, pid, rec.get("comment_id"))))
-    if not any(_ts(c.get("at")) >= _ts(e.get("approved_at")) for c in replies):
-        return ("MISSING reply on needs_lead thread %s after the lead approved %s at %s (newer than the reviewer's last comment %s): %s"
-                % (tid, e.get("id"), e.get("approved_at"), lr, reply_route(org, pid, rec.get("comment_id"))))
-    return None
+    return ("MISSING reply on needs_lead thread %s after the lead approved %s at %s (newer than the reviewer's last comment %s): %s"
+            % (tid, e.get("id"), e.get("approved_at"), lr, reply_route(org, pid, rec.get("comment_id"))))
 
 def replies_missing(pr: dict, pid: str, facts_threads: List[dict], epic: dict, awaiting: Optional[List[dict]], org: str) -> List[str]:
-    """Spec §3 REWORK DoD after 2026-10-14: every human thread opened since the send, and every unresolved one, has a reply
-    newer than its last reviewer comment — from the agent for self_resolved threads, after the lead's approved `reply`
-    entry (or from the lead in person) for needs_lead ones. Fails closed without logins or a send time."""
-    agent, lead = logins(epic.get("roles"))
+    """Spec §3 REWORK DoD after 2026-10-14: every human thread opened since the send, and every unresolved one, is `settled`
+    (a member's reply newer than its last reviewer comment), or else: from the agent for self_resolved threads, after the
+    lead's approved `reply` entry for needs_lead ones. Fails closed without logins or a send time."""
+    agent, _ = logins(epic.get("roles"))
     if not agent:
         return ["MISSING epic.roles.agent_github or epic.roles.lead_github (the GitHub login the replies come from)"]
     since = send_since(pr, awaiting)
@@ -104,7 +112,7 @@ def replies_missing(pr: dict, pid: str, facts_threads: List[dict], epic: dict, a
     ours = members.our_logins({"epic": epic})
     for t in facts_threads or []:
         if in_scope(t, since, ours):
-            m = _thread_missing(pid, pr, t, agent, lead, ours, awaiting, org)
+            m = _thread_missing(pid, pr, t, agent, epic, awaiting, org)
             if m:
                 out.append(m)
     return out
@@ -147,7 +155,7 @@ def reply_refusal(data: dict, org: str, repo: str, number: str, comment_id: str,
     if t is None:
         return "blocked by rule reply-unverified. Thread %s of %s is not on GitHub; failing closed." % (tid, pid)
     lr = last_reviewer_at(t, members.our_logins(data))
-    if _ts(lr) > _ts(rec.get("last_reviewer_at")):
+    if _ts(lr) > _ts(rec.get("last_reviewer_at")) and not settled(t, data):
         return ("blocked by rule reply-reclassify. The reviewer commented on thread %s at %s, after it was classified %s (%s): re-classify it with "
                 "turnstile threads %s before replying — a pushback may need the lead." % (tid, lr, rec.get("class"), rec.get("last_reviewer_at"), pid))
     return None
@@ -306,7 +314,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
             both = sorted(set(sids) & set(lids))
             if both:
                 raise TurnstileError("thread id(s) %s listed as both --self-resolved and --needs-lead" % ", ".join(both))
-            picked: Dict[str, Tuple[str, dict]] = {}
+            picked: Dict[str, Tuple[str, dict]] = {}; already: List[str] = []
             for cls, ids in ((SELF, sids), (LEAD, lids)):
                 for ident in ids:
                     t = _find(facts.threads, ident)
@@ -320,6 +328,10 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                         raise TurnstileError("thread %s listed as both --self-resolved and --needs-lead (via %s)" % (t["id"], ident))
                     prev = (pr.get("threads") or {}).get(t["id"]) or {}
                     if cls == SELF and prev.get("class") == LEAD and prev.get("last_reviewer_at") == last_reviewer_at(t, ours):
+                        if settled(t, data):
+                            c = last_comment(t)
+                            already.append("settled: thread %s answered by %s at %s" % (t["id"], c.get("login"), c.get("at")))
+                            continue
                         # 2026-10-14 review: a downgrade voided the lead's entry and unlocked the reply; only a newer reviewer comment
                         # reopens the call — until then the lead approves the thread's reply entry or answers in person
                         pending = open_replies(awaiting, pid, t["id"])
@@ -327,6 +339,10 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                                              "the lead settles it (%s, or answers on the thread in person)"
                                              % (t["id"], prev.get("last_reviewer_at"), LEAD_HINT % (pending[-1]["id"] if pending else "<ah-id>")))
                     picked[t["id"]] = (cls, t)
+            if not picked:
+                for line in already:
+                    print(line)
+                print("OK threads %s: already settled, nothing written" % pid); return 0
             now = _now_s(); recs = pr.setdefault("threads", {}); extra: List[str] = []; asks: List[str] = []; replies_now: List[str] = []
             for tid, (cls, t) in picked.items():
                 lr = last_reviewer_at(t, ours)
@@ -353,7 +369,7 @@ def run(delivery, pid: str, self_resolved: Optional[str], needs_lead: Optional[s
                        if m.startswith("MISSING classification") or m.startswith("MISSING re-classification")]
             pass_cmd._recompute_next_actions(data)
             pass_cmd._side_effects(delivery, st, [summary] + extra, io, no_commit, no_push)
-        for line in replies_now + asks:
+        for line in already + replies_now + asks:
             print(line)
         for m in pending:
             print("WARN " + m[len("MISSING "):])

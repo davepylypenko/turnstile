@@ -38,21 +38,12 @@ def _propose(out: List[Proposal], data: dict, pid: str, kind: str, message: str,
         out.append(Proposal(pid, kind, message, cmd))
 
 def _threads_waiting_for_us(data: dict, f: github.PrFacts) -> int:
-    """Unresolved human threads whose last reviewer comment has no newer reply from the agents or the lead. A thread answered
-    after the reviewer's last word stays unresolved until the reviewer resolves it; it does not reopen REWORK (2026-10-14)."""
+    """Unresolved human threads with a reviewer comment that are not `threads.settled`. A thread answered after the reviewer's
+    last word stays unresolved until the reviewer resolves it; it does not reopen REWORK (2026-10-14)."""
     if f.human_threads_open == 0 or not f.threads:
         return f.human_threads_open
     ours = members.our_logins(data)
-    n = 0
-    for t in f.threads:
-        if not t.get("human") or t.get("resolved"):
-            continue
-        last = threads.last_reviewer_at(t, ours)
-        if last is None:
-            continue
-        if not any(c.get("login") in ours and threads._ts(c.get("at")) > threads._ts(last) for c in t.get("comments") or []):
-            n += 1
-    return n
+    return sum(1 for t in f.threads if t.get("human") and not t.get("resolved") and threads.reviewer_comments(t, ours) and not threads.settled(t, data))
 
 def _changes_on_head(f: github.PrFacts) -> List[str]:
     """CHANGES_REQUESTED reviews on the current head (a review without a recorded commit counts). One on an older head was answered

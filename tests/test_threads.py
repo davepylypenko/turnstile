@@ -71,21 +71,28 @@ class RepliesMissing(unittest.TestCase):
         t["comments"].append(cm("agentlogin", "2026-10-13T11:30:00Z", 104)); self.assertEqual(self.miss([t]), [])
     def test_needs_lead_waits_for_an_approved_reply_entry_and_a_reply_after_it(self):
         self.pr["threads"]["PRRT_b"] = classified("needs_lead", "2026-10-13T11:00:00Z")
+        unanswered = th("PRRT_b", self.REVIEW)
+        out = self.miss([unanswered]); self.assertTrue(out and "no reply entry is open" in out[0] and "--needs-lead PRRT_b" in out[0], out)
         entry = {"id": "ah-4", "owner": "lead", "type": "reply", "pr": "jsfiller#1", "thread": "PRRT_b", "last_reviewer_at": "2026-10-13T11:00:00Z",
                  "created_at": "2026-10-13T13:00Z", "payload": None, "approved_at": None}
         self.awaiting.append(entry)
-        replied = th("PRRT_b", self.REVIEW, cm("agentlogin", "2026-10-13T13:30:00Z", 102))
-        out = self.miss([replied]); self.assertTrue(out and "ah-4" in out[0] and "TURNSTILE_LEAD=1 turnstile approve ah-4" in out[0], out)
+        out = self.miss([unanswered]); self.assertTrue(out and "ah-4" in out[0] and "TURNSTILE_LEAD=1 turnstile approve ah-4" in out[0], out)
         entry["approved_at"] = "2026-10-13T14:00Z"
-        out = self.miss([replied]); self.assertTrue(out and "after" in out[0], out)  # the reply went out before the lead's word
+        out = self.miss([unanswered]); self.assertTrue(out and "after the lead approved ah-4" in out[0], out)
         self.assertEqual(self.miss([th("PRRT_b", self.REVIEW, cm("agentlogin", "2026-10-13T14:00:20Z", 102))]), [])
-        entry["voided_at"] = "2026-10-13T14:10Z"
-        self.assertTrue(self.miss([th("PRRT_b", self.REVIEW, cm("agentlogin", "2026-10-13T14:00:20Z", 102))]))
-    def test_the_lead_replying_in_person_settles_a_needs_lead_thread(self):
+    def test_a_members_reply_settles_a_needs_lead_thread_without_an_entry(self):
         self.pr["threads"]["PRRT_b"] = classified("needs_lead", "2026-10-13T11:00:00Z")
         self.assertEqual(self.miss([th("PRRT_b", self.REVIEW, cm("leadlogin", "2026-10-13T12:00:00Z", 102))]), [])
-        same = dict(ROLES, agent_github="leadlogin")  # one account for the lead and the agents: the entry is the only proof of the lead's word
-        self.assertTrue(self.miss([th("PRRT_b", self.REVIEW, cm("leadlogin", "2026-10-13T12:00:00Z", 102))], roles=same))
+        same = dict(ROLES, agent_github="leadlogin")  # one account for the lead and the agents (pdffiller#38201, 2026-11-10)
+        self.assertEqual(self.miss([th("PRRT_b", self.REVIEW, cm("leadlogin", "2026-10-13T12:00:00Z", 102))], roles=same), [])
+        other = th("PRRT_b", self.REVIEW, cm("vereta", "2026-10-13T12:00:00Z", 102))
+        self.assertTrue(self.miss([other]))
+        self.assertEqual(self.miss([other], members={"vereta": {"name": "Vlad"}}), [])
+        follow_up = th("PRRT_b", self.REVIEW, cm("leadlogin", "2026-10-13T12:00:00Z", 102), cm("isachivka", "2026-10-13T12:30:00Z", 103))
+        out = self.miss([follow_up]); self.assertEqual(len(out), 1); self.assertIn("re-classif", out[0])
+        self.pr["threads"]["PRRT_b"] = classified("needs_lead", "2026-10-13T12:30:00Z")
+        out = self.miss([follow_up]); self.assertEqual(len(out), 1); self.assertIn("the lead's word", out[0])
+        follow_up["comments"].append(cm("leadlogin", "2026-10-13T12:45:00Z", 104)); self.assertEqual(self.miss([follow_up]), [])
     def test_scope_is_every_thread_since_the_send_and_every_unresolved_one(self):
         old_resolved = th("PRRT_o", cm("isachivka", "2026-10-12T09:00:00Z", 90), resolved=True)
         old_open = th("PRRT_u", cm("isachivka", "2026-10-12T09:00:00Z", 91))
@@ -104,6 +111,23 @@ class RepliesMissing(unittest.TestCase):
         self.pr = rework_pr(); self.pr["threads"]["PRRT_a"] = classified("self_resolved", "2026-10-13T11:00:00Z")
         t = th("PRRT_a", self.REVIEW, cm("agentlogin", "2026-10-13T11:05:00Z", 102)); t["truncated"] = True
         self.assertTrue(any("100 comments" in m for m in self.miss([t])))
+
+class Settled(unittest.TestCase):
+    DATA = {"epic": {"roles": ROLES, "members": {"vereta": {}}}}
+    R = cm("isachivka", "2026-10-13T11:00:00Z", 101)
+    def test_latest_comment_by_a_member_newer_than_the_reviewers_last_word(self):
+        for login in ("leadlogin", "agentlogin", "vereta"):
+            self.assertTrue(threads.settled(th("PRRT_a", self.R, cm(login, "2026-10-13T11:05:00Z", 102)), self.DATA), login)
+        self.assertFalse(threads.settled(th("PRRT_a", self.R), self.DATA))
+        self.assertFalse(threads.settled(th("PRRT_a", self.R, cm("someoneelse", "2026-10-13T11:05:00Z", 102)), self.DATA))
+        self.assertFalse(threads.settled(th("PRRT_a", cm("leadlogin", "2026-10-13T10:30:00Z", 100), self.R), self.DATA))
+        self.assertFalse(threads.settled(th("PRRT_a", self.R, cm("leadlogin", "2026-10-13T11:00:00Z", 102)), self.DATA))
+    def test_a_reviewer_follow_up_unsettles_and_a_bot_comment_does_not_count(self):
+        t = th("PRRT_a", self.R, cm("leadlogin", "2026-10-13T11:05:00Z", 102), cm("isachivka", "2026-10-13T11:20:00Z", 103))
+        self.assertFalse(threads.settled(t, self.DATA))
+        t["comments"].append(cm("vereta", "2026-10-13T11:30:00Z", 104)); self.assertTrue(threads.settled(t, self.DATA))
+        t["comments"].append(cm("github-actions", "2026-10-13T11:40:00Z", 105, bot=True)); self.assertTrue(threads.settled(t, self.DATA))
+        self.assertFalse(threads.settled(t, {"epic": {"roles": {"lead_github": None}}}))
 
 class ThreadsCmd(unittest.TestCase):
     def setUp(self):
@@ -162,11 +186,23 @@ class ThreadsCmd(unittest.TestCase):
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_b"]["class"], "self_resolved")
     def test_a_needs_lead_thread_cannot_be_downgraded_by_an_agent(self):
         # 2026-10-14 review: re-classifying needs_lead → self_resolved on the same reviewer comment voided the lead's entry and unlocked the reply
-        self.go(lead_ids="PRRT_b"); ah = self.replies()[0]["id"]; commits = len(self.io.commits)
-        rc, out = self.go(self_ids="PRRT_b"); self.assertEqual(rc, 2, out); self.assertIn("needs_lead", out); self.assertIn(ah, out)
+        self.go(lead_ids="PRRT_a"); ah = self.replies()[0]["id"]; commits = len(self.io.commits)
+        rc, out = self.go(self_ids="PRRT_a"); self.assertEqual(rc, 2, out); self.assertIn("needs_lead", out); self.assertIn(ah, out)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_a"]["class"], "needs_lead")
+        self.assertFalse(self.replies()[0].get("voided_at")); self.assertEqual(len(self.io.commits), commits)
+        rc, out = self.go(self_ids="101"); self.assertEqual(rc, 2, out)  # by a REST comment id too
+    def test_a_settled_needs_lead_thread_is_reported_instead_of_refused(self):
+        self.go(lead_ids="PRRT_b"); commits = len(self.io.commits)
+        self.io.facts["jsfiller#1"]["threads"][1]["comments"].append(cm("leadlogin", "2026-10-13T12:00:00Z", 203))
+        rc, out = self.go(self_ids="PRRT_b"); self.assertEqual(rc, 0, out)
+        self.assertIn("settled: thread PRRT_b answered by leadlogin at 2026-10-13T12:00:00Z", out); self.assertIn("nothing written", out)
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_b"]["class"], "needs_lead")
         self.assertFalse(self.replies()[0].get("voided_at")); self.assertEqual(len(self.io.commits), commits)
-        rc, out = self.go(self_ids="202"); self.assertEqual(rc, 2, out)  # by a REST comment id too
+        rc, out = self.go(self_ids="PRRT_a,PRRT_b"); self.assertEqual(rc, 0, out)
+        self.assertIn("settled: thread PRRT_b", out); self.assertIn("self_resolved PRRT_a; needs_lead none", out)
+        self.io.facts["jsfiller#1"]["threads"][1]["comments"].append(cm("lMakDen", "2026-10-13T12:30:00Z", 204))
+        rc, out = self.go(self_ids="PRRT_b"); self.assertEqual(rc, 0, out)  # a newer reviewer word: a new call
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["threads"]["PRRT_b"]["class"], "self_resolved")
     def test_without_ids_it_lists_and_writes_nothing(self):
         rc, out = self.go(); self.assertEqual(rc, 0, out)
         self.assertIn("PRRT_a", out); self.assertIn("unclassified", out); self.assertNotIn("PRRT_c", out)
@@ -200,7 +236,6 @@ class ReworkBackToHumans(unittest.TestCase):
         self.assertIn("no --slack", out)
     def test_needs_lead_entries_are_consumed_when_the_pr_returns(self):
         self.t.go(lead_ids="PRRT_a"); ah = self.t.replies()[0]["id"]
-        self.io.facts["jsfiller#1"]["threads"][0]["comments"].append(cm("agentlogin", "2026-10-13T13:00:00Z", 102))
         rc, out = self.back(); self.assertEqual(rc, 2); self.assertIn(ah, out)
         with env(TURNSTILE_LEAD="1"):
             self.assertEqual(pass_cmd.approve(self.d, ah, self.io), 0)
@@ -209,6 +244,19 @@ class ReworkBackToHumans(unittest.TestCase):
         self.rerequested("2099-01-01T00:00:00Z")
         rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 0, out)
         self.assertTrue(next(a for a in self.t.replies() if a["id"] == ah)["consumed_at"])
+    def test_the_lead_answering_in_person_returns_the_pr_without_an_entry(self):
+        self.t.go(lead_ids="PRRT_a"); ah = self.t.replies()[0]["id"]
+        data = self.t.data(); data["awaiting_human"] = [a for a in data["awaiting_human"] if a["id"] != ah]
+        (self.d / "state.json").write_text(state.dumps(data))
+        rc, out = self.back(); self.assertEqual(rc, 2); self.assertIn("no reply entry is open", out)
+        comments = self.io.facts["jsfiller#1"]["threads"][0]["comments"]
+        comments.append(cm("leadlogin", "2026-10-13T13:00:00Z", 102))
+        self.rerequested("2026-10-13T13:05:00Z")
+        comments.append(cm("isachivka", "2026-10-13T13:10:00Z", 103))
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 2); self.assertIn("PRRT_a", out)
+        comments.pop()
+        rc, out = self.back(rerequested="isachivka"); self.assertEqual(rc, 0, out)
+        self.assertEqual(self.t.data()["prs"]["jsfiller#1"]["evidence"]["human"]["sent_head"], H2)
     def test_rework_opens_no_blanket_reply_entry(self):
         data = self.t.data(); data["prs"]["jsfiller#1"]["state"] = "ON_HUMAN_REVIEW"; data["prs"]["jsfiller#1"]["head"] = H
         data["prs"]["jsfiller#1"]["evidence"]["head_verified"] = {"head": H, "verified": True}; (self.d / "state.json").write_text(state.dumps(data))
