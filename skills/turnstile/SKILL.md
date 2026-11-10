@@ -186,6 +186,8 @@ Lead rule 2026-10-14: a thread the agent resolved itself is answered at once; on
    repos/<org>/<repo>/pulls/<n>/requested_reviewers -f 'reviewers[]=<login>'` for the thread authors (the reviewers who commented on the
    threads in this round). The comments-handler (or you) runs it — no lead approval, and the guard checks only the login (`epic.members`
    or `epic.reviewers`, no team, no bot), not the PR state; the pass then verifies the rule against GitHub. Slack sends go out on the lead's word in chat only.
+   Never re-request a thread author whose last review on the current head is APPROVED (the guard refuses it: a re-request resets that
+   approval, and the approval is the evidence); `status` drops them from the list and the pass takes no `--rerequested` for them.
 5. `pass pr … ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` — no Slack message, no `--slack`: the replies
    and the re-request are the notification; the pass checks GitHub (`reviewRequests`, request newer than the replies). A push-only
    rework (no reviewer comment since the PR last went to humans) takes no `--rerequested`: it records `reviewer_notified: false`,
