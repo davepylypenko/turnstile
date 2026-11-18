@@ -77,3 +77,28 @@ class PrAdd(unittest.TestCase):
     def test_unapproved_plan_refused(self):
         d = self.data(); d["awaiting_human"][0]["approved_at"] = None; (self.d / "state.json").write_text(state.dumps(d))
         rc, out = self.add(); self.assertEqual(rc, 2); self.assertIn("lead approval of plan.md", out)
+
+class PrRetarget(PrAdd):
+    def retarget(self, pr="jsfiller#7"):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = pr_cmd.retarget(self.d, pr, io=self.io)
+        return rc, buf.getvalue()
+    def test_retarget_updates_the_base_writes_the_ledger_and_commits(self):
+        self.assertEqual(self.add()[0], 0)
+        self.io.facts["jsfiller#7"]["base"] = "feature/MYD-10"
+        rc, out = self.retarget(); self.assertEqual(rc, 0, out); self.assertIn("OK pr retarget jsfiller#7: epic_myd-1 → feature/MYD-10", out)
+        self.assertEqual(self.data()["prs"]["jsfiller#7"]["base"], "feature/MYD-10")
+        self.assertIn("pr jsfiller#7 retargeted", (self.d / "ledger.md").read_text()); self.assertIn("retargeted", self.io.commits[-1])
+    def test_retarget_is_a_noop_when_the_base_matches(self):
+        self.assertEqual(self.add()[0], 0); n = len(self.io.commits)
+        rc, out = self.retarget(); self.assertEqual(rc, 0, out); self.assertIn("already epic_myd-1", out); self.assertEqual(len(self.io.commits), n)
+    def test_retarget_refuses_a_wrong_base_unknown_pr_and_merged_and_writes_nothing(self):
+        self.assertEqual(self.add()[0], 0); before = (self.d / "state.json").read_text(); n = len(self.io.commits)
+        self.io.facts["jsfiller#7"]["base"] = "develop"; rc, out = self.retarget(); self.assertEqual(rc, 2); self.assertIn("not on the story branch epic_myd-1", out)
+        self.io.facts["jsfiller#7"]["base"] = "feature/MYD-10"; self.io.facts["jsfiller#7"]["merged"] = True; rc, out = self.retarget(); self.assertEqual(rc, 2); self.assertIn("already merged", out)
+        rc, out = self.retarget("jsfiller#99"); self.assertEqual(rc, 2); self.assertIn("unknown PR", out)
+        self.assertEqual((self.d / "state.json").read_text(), before); self.assertEqual(len(self.io.commits), n)
+    def test_retarget_in_trunk_mode_wants_the_repo_base(self):
+        d = self.data(); d["stories"]["S1"]["mode"] = "trunk"; (self.d / "state.json").write_text(state.dumps(d))
+        self.io.facts["jsfiller#7"]["base"] = "develop"; self.assertEqual(self.add()[0], 0)
+        self.io.facts["jsfiller#7"]["base"] = "main"; rc, out = self.retarget(); self.assertEqual(rc, 2); self.assertIn("not on the repo base develop", out)

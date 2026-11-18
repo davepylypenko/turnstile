@@ -314,7 +314,7 @@ class BashGuard(unittest.TestCase):
                             "turnstile plan-submitted",
                             "turnstile bug add --story S1 --title x --source y", "turnstile bug set b01 --state done",
                             "turnstile brief tester ENV-S1 --var story_id=S1", "turnstile config list", "turnstile config set models.reviewer=sonnet:medium",
-                            "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11",
+                            "turnstile config set review_skill=/my-review --epic", "turnstile pr add jsfiller#2 --story S1 --ticket MYD-11", "turnstile pr retarget jsfiller#2",
                             "turnstile sync", "turnstile attach --knowledge ../k --epic MYD-1 --workspace ."])
 
     def test_lead_marker_is_refused_as_an_assignment_or_use_not_as_prose(self):

@@ -355,7 +355,7 @@ never runs it.
 
 ### Commands
 
-`start <KEY>` (one command for a new or an existing epic, from the clone root or any clone under it; registers the workspace), `init`, `attach`, `repo add '<json>'` / `repo set <name> key=value …`, `plan-submitted` (refuses a story whose repo is not in `epic.repos`), `pr add` (a new PR enters as DEV from its GitHub facts), `config list|set|unset|apply` (per-person and per-epic models, review skills and the send skill; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
+`start <KEY>` (one command for a new or an existing epic, from the clone root or any clone under it; registers the workspace), `init`, `attach`, `repo add '<json>'` / `repo set <name> key=value …`, `plan-submitted` (refuses a story whose repo is not in `epic.repos`), `pr add` (a new PR enters as DEV from its GitHub facts), `pr retarget <repo#n>` (refreshes the recorded base of a PR retargeted on GitHub), `config list|set|unset|apply` (per-person and per-epic models, review skills and the send skill; the epic layer waits for the lead), `pass` (the writer of transitions), `approve` (lead only), `threads` (thread classification from
 GitHub facts), `jira-synced` (validated against the PR's state; `--assignee <accountId> [--assignee-name "<name>"]` records who holds the ticket — the take-up, or a hand-over made by hand; the plugin never moves a ticket away from its holder), `brief` (renders an agent brief; refuses unfilled placeholders and, for every agent but the investigator, an unapproved
 plan), `bug add|set`, `reconcile` (read-only, `--json`), `status`, `render-board`.
 
