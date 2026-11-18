@@ -98,6 +98,10 @@ class PrRetarget(PrAdd):
         self.io.facts["jsfiller#7"]["base"] = "feature/MYD-10"; self.io.facts["jsfiller#7"]["merged"] = True; rc, out = self.retarget(); self.assertEqual(rc, 2); self.assertIn("already merged", out)
         rc, out = self.retarget("jsfiller#99"); self.assertEqual(rc, 2); self.assertIn("unknown PR", out)
         self.assertEqual((self.d / "state.json").read_text(), before); self.assertEqual(len(self.io.commits), n)
+    def test_retarget_cli_parses_no_commit_and_no_push(self):
+        from turnstile_cli.main import build_parser
+        a = build_parser().parse_args(["pr", "retarget", "jsfiller#7", "--no-push"])
+        self.assertEqual((a.ident, a.no_commit, a.no_push), ("jsfiller#7", False, True))
     def test_retarget_in_trunk_mode_wants_the_repo_base(self):
         d = self.data(); d["stories"]["S1"]["mode"] = "trunk"; (self.d / "state.json").write_text(state.dumps(d))
         self.io.facts["jsfiller#7"]["base"] = "develop"; self.assertEqual(self.add()[0], 0)

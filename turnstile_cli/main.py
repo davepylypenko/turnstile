@@ -90,7 +90,7 @@ def build_parser():
         at.add_argument(flag, **kw)
     at.add_argument("--no-push", action="store_true")
     bu = sub.add_parser("board-url", help="record the url of this machine's board artifact for the current member"); bu.add_argument("url"); bu.add_argument("--no-push", action="store_true")
-    for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
+    for sp in (ps, js, ba, bs, pa, pt, th, br, pl, cs, cu):
         sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
     ini = sub.add_parser("init", help="create the epic workspace <clone root>/<key>: the knowledge worktree, a worktree per repo and the delivery/ skeleton")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}),
