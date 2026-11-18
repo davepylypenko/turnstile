@@ -45,6 +45,7 @@ def build_parser():
     prp = sub.add_parser("pr", help="register a PR of the epic (DEV) from its GitHub facts"); psub = prp.add_subparsers(dest="pr_cmd"); p.pr_parser = prp
     pa = psub.add_parser("add"); pa.add_argument("ident"); pa.add_argument("--story", required=True); pa.add_argument("--ticket", required=True)
     pa.add_argument("--no-commit", action="store_true"); pa.add_argument("--owner", help="the member (GitHub login) who owns the PR (default: this machine's member)"); pa.add_argument("--stacked-on", help="trunk mode: the open PR of the story this PR deliberately stacks on (its base must be that PR's branch)")
+    pt = psub.add_parser("retarget", help="refresh the recorded base of a PR retargeted on GitHub"); pt.add_argument("ident"); pt.add_argument("--no-commit", action="store_true")
     th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
     th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
     th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
@@ -89,7 +90,7 @@ def build_parser():
         at.add_argument(flag, **kw)
     at.add_argument("--no-push", action="store_true")
     bu = sub.add_parser("board-url", help="record the url of this machine's board artifact for the current member"); bu.add_argument("url"); bu.add_argument("--no-push", action="store_true")
-    for sp in (ps, js, ba, bs, pa, th, br, pl, cs, cu):
+    for sp in (ps, js, ba, bs, pa, pt, th, br, pl, cs, cu):
         sp.add_argument("--no-push", action="store_true", help="commit without pushing the epic branch (recorded as NOT PUSHED; READY/ON_HUMAN_REVIEW/APPROVED/MERGED/DONE then need turnstile sync)")
     ini = sub.add_parser("init", help="create the epic workspace <clone root>/<key>: the knowledge worktree, a worktree per repo and the delivery/ skeleton")
     for flag, kw in [("--epic", {"required": True}), ("--workitem", {"required": True}),
@@ -182,7 +183,9 @@ def main(argv=None):
                 return bug_cmd.set_(delivery, a.bug_id, state=a.state, pr=a.pr, note=a.note, no_push=a.no_push)
             return 2
         if a.cmd == "pr":
-            from .pr_cmd import add as pr_add
+            from .pr_cmd import add as pr_add, retarget as pr_retarget
+            if a.pr_cmd == "retarget":
+                return pr_retarget(delivery, a.ident, no_commit=a.no_commit, no_push=a.no_push)
             return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on, owner=a.owner)
         if a.cmd == "threads":
             from .threads import run as threads_run
