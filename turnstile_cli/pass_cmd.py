@@ -520,10 +520,10 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                     pr["state_since"] = _now()
                 if o.reason:
                     pr["last_reason"] = o.reason
-                jira_target = rules.JIRA_FOR_PR_STATE[target]
+                jira_targets = rules.jira_targets(pr, target)
                 jira_line = None
-                if (pr.get("jira") or {}).get("status") != jira_target:
-                    pr["jira"] = dict(pr.get("jira") or {}, status=jira_target, synced=False)
+                if (pr.get("jira") or {}).get("status") not in jira_targets:
+                    pr["jira"] = dict(pr.get("jira") or {}, status=jira_targets[0], synced=False)
                     jira_line = jira_instruction(pr, data["prs"])
                 if target == "ON_HUMAN_REVIEW" and src == "READY":
                     for a in awaiting:
@@ -636,11 +636,14 @@ def run(delivery: pathlib.Path, kind: str, ident: str, target: str, o: Options, 
                 raise TurnstileError("kind must be pr or story")
             _ensure_start_story_entries(data)
             _recompute_next_actions(data)
+            epic_line = _epic_jira(data)
             _side_effects(delivery, st, [summary] + extra, io, o.no_commit, o.no_push, gated=gated)
         for n in notes:
             print(n)
         if jira_line:
             print(jira_line)
+        if epic_line:
+            print(epic_line)
         print(members.board_line(data, delivery))
         print("OK " + summary)
         return 0
@@ -654,8 +657,28 @@ CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 def jira_instruction(pr: dict, prs: Optional[Dict[str, dict]] = None) -> str:
     jira = pr.get("jira") or {}
+    if rules.jira_targets(pr) == (rules.RELEASE_STATUS, rules.NO_RELEASE_STATUS):
+        return ("JIRA: %s → %s when the ticket has a fixVersion (getJiraIssue fields fixVersions); without one ask the lead: "
+                "ships in a release → the lead sets the fixVersion, then %s; does not ship → %s" % (pr["ticket"], rules.RELEASE_STATUS,
+                rules.RELEASE_STATUS, rules.NO_RELEASE_STATUS))
     taken = pr.get("state") == "MERGED" or jira.get("assignee") or rules.ticket_assignee(prs, pr.get("ticket"))
     return "JIRA: %s → %s%s" % (pr["ticket"], jira.get("status"), "" if taken else " · assignee: you")
+
+def epic_instruction(data: dict) -> str:
+    e = data.get("epic") or {}
+    targets = rules.epic_targets(data)
+    if len(targets) > 1:
+        return ("JIRA: %s (epic) → every story DONE and every PR MERGED; no epic.flag, so ask the lead: an A/B test follows → %s; "
+                "no test → %s" % (e.get("key"), targets[0], targets[1]))
+    return "JIRA: %s (epic) → %s" % (e.get("key"), (e.get("jira") or {}).get("status"))
+
+def _epic_jira(data: dict) -> Optional[str]:
+    e = data.get("epic") or {}
+    targets = rules.epic_targets(data)
+    if not targets or (e.get("jira") or {}).get("status") in targets:
+        return None
+    e["jira"] = dict(e.get("jira") or {}, status=targets[0], synced=False)
+    return epic_instruction(data)
 
 def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO] = None, no_push: bool = False,
                 assignee: Optional[str] = None, assignee_name: Optional[str] = None) -> int:
@@ -670,10 +693,19 @@ def jira_synced(delivery: pathlib.Path, ident: str, status: str, io: Optional[IO
             raise TurnstileError("--assignee-name must be 1-128 characters without control characters (has %r)" % assignee_name)
         with st_mod.locked(delivery):
             st = st_mod.load(delivery / "state.json")
+            if ident == "epic":
+                if assignee:
+                    raise TurnstileError("the epic has no assignee record: --assignee goes with a PR")
+                e = st.data["epic"]; expected = rules.epic_targets(st.data)
+                if status not in expected:
+                    raise TurnstileError("Jira status for epic %s is %s, not %r" % (e.get("key"), " or ".join(map(repr, expected)) or "not due", status))
+                e["jira"] = dict(e.get("jira") or {}, status=status, synced=True)
+                _side_effects(delivery, st, ["jira %s (epic) → %s (synced)" % (e.get("key"), status)], io, False, no_push)
+                print("OK jira epic synced"); return 0
             pr = st_mod.pr(st, ident)
-            expected = rules.JIRA_FOR_PR_STATE.get(pr.get("state"))
-            if status != expected:
-                raise TurnstileError("Jira status for %s in state %s is %r, not %r" % (ident, pr.get("state"), expected, status))
+            expected = rules.jira_targets(pr)
+            if status not in expected:
+                raise TurnstileError("Jira status for %s in state %s is %s, not %r" % (ident, pr.get("state"), " or ".join(map(repr, expected)), status))
             pr["jira"] = dict(pr.get("jira") or {}, status=status, synced=True)
             summary = "jira %s → %s (synced)" % (pr["ticket"], status)
             if assignee:

@@ -215,6 +215,14 @@ class Compare(unittest.TestCase):
         self.assertEqual(len(props), 1); self.assertIn('"On Review"', props[0].suggested_cmd)
         d["prs"]["jsfiller#1"]["state"] = "MERGED"
         self.assertNotIn("jira_unassigned", self.kinds(reconcile.compare(d, f)))
+    def test_jira_unsynced_after_the_merge_offers_both_statuses(self):
+        d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["state"] = "MERGED"; d["prs"]["jsfiller#1"]["jira"]["synced"] = False
+        props = [p for p in reconcile.compare(d, self.facts(human_threads_open=0, merged=True)) if p.kind == "jira_unsynced"]
+        self.assertEqual([p.suggested_cmd for p in props], ['turnstile jira-synced jsfiller#1 "Ready for RC | On Hold"'])
+    def test_epic_jira_unsynced(self):
+        d = self.data("AI_REVIEW"); d["epic"]["jira"] = {"status": "Delivery", "synced": False}
+        props = [p for p in reconcile.compare(d, self.facts(human_threads_open=0)) if p.kind == "jira_unsynced" and p.pr == "epic"]
+        self.assertEqual([p.suggested_cmd for p in props], ['turnstile jira-synced epic "Delivery"'])
     def test_unsynced_and_unassigned_make_one_proposal(self):
         d = self.data("AI_REVIEW"); d["prs"]["jsfiller#1"]["jira"]["synced"] = False; del d["prs"]["jsfiller#1"]["jira"]["assignee"]
         props = [p for p in reconcile.compare(d, self.facts(human_threads_open=0)) if p.kind.startswith("jira_")]

@@ -4,9 +4,37 @@ from .errors import TurnstileError
 
 PR_STATES = ["DEV", "AI_REVIEW", "READY", "ON_HUMAN_REVIEW", "REWORK", "APPROVED", "MERGED"]
 STORY_STATES = ["PLANNED", "IN_PROGRESS", "INTEGRATION_REVIEW", "ENV_TESTING", "DONE"]
-JIRA_FOR_PR_STATE = {"DEV": "In progress", "AI_REVIEW": "In progress", "READY": "In progress",
-                     "ON_HUMAN_REVIEW": "On Review", "REWORK": "On Review", "APPROVED": "On Review",
-                     "MERGED": "On Hold"}
+SUBTASK_TYPES = ("Sub-task", "Story Bug")
+RELEASE_STATUS, NO_RELEASE_STATUS = "Ready for RC", "On Hold"
+JIRA_FLOWS = {
+    "issue": {"DEV": ("In progress",), "AI_REVIEW": ("In progress",), "READY": ("In progress",),
+              "ON_HUMAN_REVIEW": ("On Review",), "REWORK": ("On Review",), "APPROVED": ("On Review",),
+              "MERGED": (RELEASE_STATUS, NO_RELEASE_STATUS)},
+    "subtask": {"DEV": ("In progress",), "AI_REVIEW": ("In progress",), "READY": ("In progress",),
+                "ON_HUMAN_REVIEW": ("In Review",), "REWORK": ("In Review",), "APPROVED": ("In Review",),
+                "MERGED": ("Ready For Test",)},
+}
+EPIC_DELIVERY, EPIC_AB_TEST, EPIC_DONE = "Delivery", "Ready for AB Test", "Done"
+
+def jira_flow(issue_type: Optional[str]) -> str:
+    return "subtask" if (issue_type or "").strip().lower() in {t.lower() for t in SUBTASK_TYPES} else "issue"
+
+def jira_targets(pr: dict, state: Optional[str] = None) -> tuple:
+    return JIRA_FLOWS[jira_flow((pr.get("jira") or {}).get("issue_type"))].get(state or pr.get("state"), ())
+
+def epic_finish_targets(data: dict) -> tuple:
+    return (EPIC_AB_TEST,) if (data.get("epic") or {}).get("flag") else (EPIC_AB_TEST, EPIC_DONE)
+
+def epic_targets(data: dict) -> tuple:
+    if epic_delivered(data):
+        return epic_finish_targets(data)
+    if any(s.get("state") != "PLANNED" for s in (data.get("stories") or {}).values()):
+        return (EPIC_DELIVERY,)
+    return ()
+
+def epic_delivered(data: dict) -> bool:
+    stories = (data.get("stories") or {}).values(); prs = (data.get("prs") or {}).values()
+    return bool(stories) and all(s.get("state") == "DONE" for s in stories) and all(p.get("state") == "MERGED" for p in prs)
 
 # target -> allowed sources. AI_REVIEW re-enters itself: a push is a new head and the old evidence is void.
 PR_FROM = {

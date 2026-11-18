@@ -26,7 +26,7 @@ reviewers who commented on the threads in this round — `gh api -X POST repos/<
 | **ON_HUMAN_REVIEW** | the message went out through the send skill (`<send_skill> <pr url>`, `turnstile config list`, default `/send-pr-review`; told the explicit `epic.repos.<repo>.slack` channel — the explicit channel wins over its routing; not installed → `references/slack.md` templates and ask the lead) on the lead's word in chat (the plugin records it and never blocks); head unchanged since READY | ≥ 1 approval for the head; 0 unresolved human threads; no changes requested | `turnstile pass pr <id> ON_HUMAN_REVIEW --head <sha> --slack <permalink> --reviewers a,b` → Jira On Review; `evidence.human.sent_at` is the time in the Slack permalink (`--sent-at <iso>` corrects a record); reviewers are requested with `gh api … requested_reviewers` for `epic.members` / `epic.reviewers` logins |
 | **REWORK** | push after send, new human thread, or changes requested | fixes pushed; gate + Copilot green on the new head (deep review is **not** repeated: `rework_since` is set); every human thread opened since the send (`evidence.human.sent_at`) and every unresolved one is classified (`turnstile threads`, from GitHub facts) and has a reply on GitHub newer than its last reviewer comment: the reply comes from any member's login (`epic.members`), the lead's or the agent login: `self_resolved` → the agent's reply (`epic.roles.agent_github`, default the lead's login), posted at once; `needs_lead` → posted after a member approved that thread's `reply` entry; a thread whose latest comment is a member's reply (the lead answering in person included) counts as answered without an entry; a reviewer comment newer than the classification needs a new one. No Slack message, no blanket approval. Thread-driven rework (a reviewer commented on a thread since the PR last went to humans: the send or `returned_at`): after the replies and a clean head (Copilot's review of the GitHub head with 0 open threads, else the gate check green on it; with neither, the review-request event alone) the thread authors are re-requested on GitHub (`requested_reviewers`, exactly them, no lead approval) and the pass needs `--rerequested <logins>`, verified against GitHub (`reviewRequests` or a review of the head, and a request event newer than the replies and the clean signal). Push-only rework: no re-request, no `--rerequested` | `turnstile pass pr <id> REWORK --head <sha> --reason "<thread id or push>"` (opens no entry); `turnstile threads <id> --self-resolved <ids> --needs-lead <ids> --report reports/COMMENTS-<n>.md` (one `reply` entry per needs_lead thread); back with `turnstile pass pr <id> ON_HUMAN_REVIEW --head <new> --ci success --gate … --rerequested <logins>` (no `--slack`: refused; sets `sent_head`, consumes the thread entries, records `evidence.human.rerequested` and `reviewer_notified: true`; push-only: without `--rerequested`, records `reviewer_notified: false` and the board reads "reviewers not notified" — the lead decides) |
 | **APPROVED** | ON_HUMAN_REVIEW done: an approval counts when the reviewer's last review on the current head is APPROVED in the GitHub review history (`reviews`, not only `latestReviews`, which a re-request wipes), and an unresolved thread blocks only while it is not `settled` — answered threads awaiting the reviewer's Resolve do not hold APPROVED back (`evidence.human.open_threads` / `answered_threads`) | lead merged | `turnstile pass pr <id> APPROVED --approvals a,b` (`--open-threads N` overrides the recorded count) → opens `merge` |
-| **MERGED** | squash-merged by the lead | — | `turnstile pass pr <id> MERGED --merged-sha <sha>` → Jira On Hold; unblocks dependants; notes the story |
+| **MERGED** | squash-merged by the lead | — | `turnstile pass pr <id> MERGED --merged-sha <sha>` → Jira Ready for RC with a fixVersion, else the lead decides (On Hold when it does not ship); sub-task Ready For Test; unblocks dependants; notes the story |
 
 AI review order on one head: repo gate by the `gate-runner` (`pdf-review`, `pr-review`, `review`, `run-lint` +
 `run-unit-tests`; a skill gate has `gate_check: null` and the report is the evidence; its `reports/GATE-<n>.md` gate line is the
@@ -59,7 +59,22 @@ run covers `control_cases`, its parity may be `not_testable_here`); **DONE** nee
 
 ## Jira mapping (printed by `pass`, performed through the Atlassian MCP, recorded with `jira-synced`)
 
-DEV / AI_REVIEW / READY → In progress · ON_HUMAN_REVIEW / REWORK / APPROVED → On Review · MERGED → On Hold.
+The workflow follows the ticket's issue type, recorded by `pr add --issue-type` (no type recorded: the issue workflow).
+
+| PR state | Story, Task, Bug and every other non-sub-task type | Sub-task, Story Bug |
+|---|---|---|
+| DEV / AI_REVIEW / READY | In progress | In progress |
+| ON_HUMAN_REVIEW / REWORK / APPROVED | On Review | In Review |
+| MERGED | Ready for RC when the ticket has a fixVersion; without one the lead decides: ships → set the fixVersion, then Ready for RC; does not ship → On Hold | Ready For Test |
+
+Every target is one transition away in the pdfFiller workflows (On Review → Ready for RC / On Hold, In Review → Ready For Test).
+Pick the Jira transition by the name of its target status, never by status category: Merged, Ready for RC and the Deployed
+statuses all carry the done category. `jira-synced` accepts any status the PR's state allows and refuses the rest.
+
+The epic (`jira-synced epic "<status>"`, never an assignee): `Delivery` once a story leaves PLANNED; when every story is DONE and
+every PR MERGED, `Ready for AB Test` with `epic.flag`, without it the lead chooses `Ready for AB Test` or `Done`. `reconcile`
+lists an unsynced epic or MERGED ticket as `jira_unsynced`.
+
 A ticket is assigned to the person whose session takes it into work: while no PR of the ticket has a recorded assignee the
 `JIRA:` line ends with ` · assignee: you` (never on MERGED) and `reconcile` lists `jira_unassigned` (or folds it into the
 `jira_unsynced` proposal while the status is not synced either). First read the issue's current assignee (`getJiraIssue` with

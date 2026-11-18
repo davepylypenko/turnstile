@@ -45,6 +45,7 @@ def build_parser():
     prp = sub.add_parser("pr", help="register a PR of the epic (DEV) from its GitHub facts"); psub = prp.add_subparsers(dest="pr_cmd"); p.pr_parser = prp
     pa = psub.add_parser("add"); pa.add_argument("ident"); pa.add_argument("--story", required=True); pa.add_argument("--ticket", required=True)
     pa.add_argument("--no-commit", action="store_true"); pa.add_argument("--owner", help="the member (GitHub login) who owns the PR (default: this machine's member)"); pa.add_argument("--stacked-on", help="trunk mode: the open PR of the story this PR deliberately stacks on (its base must be that PR's branch)")
+    pa.add_argument("--issue-type", help="the ticket's Jira issue type (getJiraIssue fields issuetype): Sub-task and Story Bug follow the sub-task workflow (In Review, Ready For Test), any other type the issue workflow (On Review, Ready for RC / On Hold)")
     th = sub.add_parser("threads", help="classify human review threads from GitHub facts: self_resolved (reply at once) / needs_lead (the lead's word)")
     th.add_argument("pr"); th.add_argument("--self-resolved", default="", help="comma-separated thread ids (PRRT_…) or REST comment ids fixed or justified in code")
     th.add_argument("--needs-lead", default="", help="comma-separated thread ids or REST comment ids that need the lead's decision (opens one reply entry each)")
@@ -183,7 +184,7 @@ def main(argv=None):
             return 2
         if a.cmd == "pr":
             from .pr_cmd import add as pr_add
-            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on, owner=a.owner)
+            return pr_add(delivery, a.ident, a.story, a.ticket, no_commit=a.no_commit, no_push=a.no_push, stacked_on=a.stacked_on, owner=a.owner, issue_type=a.issue_type)
         if a.cmd == "threads":
             from .threads import run as threads_run
             return threads_run(delivery, a.pr, a.self_resolved, a.needs_lead, report=a.report, no_commit=a.no_commit, no_push=a.no_push)

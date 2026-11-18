@@ -111,6 +111,10 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
         if rules.is_trunk(s) and s.get("state") == "IN_PROGRESS" and mine and all(p.get("state") == "MERGED" for p in mine.values()):
             out.append(Proposal(sid, "trunk_merged", "every PR of %s merged into the base: deploy the base and record it" % sid,
                                 "turnstile pass story %s INTEGRATION_REVIEW --build <build> --head <base sha> [--base-heads repo=sha,…]" % sid))
+    epic = data.get("epic") or {}
+    if (epic.get("jira") or {}).get("synced") is False:
+        out.append(Proposal("epic", "jira_unsynced", "Jira epic %s not moved to %s" % (epic.get("key"), " or ".join(rules.epic_targets(data))),
+                            'turnstile jira-synced epic "%s"' % " | ".join(rules.epic_targets(data))))
     for pid, pr in data["prs"].items():
         f = facts.get(pid)
         if f is None:
@@ -127,9 +131,12 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
             else:
                 out.append(Proposal(pid, "merged", msg + " but state is %s: anomaly, merged without APPROVED; the lead decides" % st, None))
             continue
-        if st == "MERGED":
-            continue
         jira = pr.get("jira") or {}
+        if st == "MERGED":
+            if jira.get("synced") is False:
+                out.append(Proposal(pid, "jira_unsynced", "Jira not moved after the merge (%s)" % " or ".join(rules.jira_targets(pr)),
+                                    'turnstile jira-synced %s "%s"' % (pid, " | ".join(rules.jira_targets(pr)))))
+            continue
         unassigned = not jira.get("assignee") and not rules.ticket_assignee(data["prs"], pr.get("ticket"))
         assignee_flags = ' --assignee <accountId> --assignee-name "<name>"' if unassigned else ""
         if jira.get("synced") is False:
@@ -137,7 +144,7 @@ def compare(data: dict, facts: Dict[str, github.PrFacts]) -> List[Proposal]:
                                 'turnstile jira-synced %s "%s"%s' % (pid, jira.get("status"), assignee_flags)))
         elif unassigned:
             out.append(Proposal(pid, "jira_unassigned", "Jira assignee not recorded for %s" % pr.get("ticket"),
-                                'turnstile jira-synced %s "%s"%s' % (pid, rules.JIRA_FOR_PR_STATE.get(st), assignee_flags)))
+                                'turnstile jira-synced %s "%s"%s' % (pid, rules.jira_targets(pr)[0], assignee_flags)))
         if not rules.same_head(f.head, pr.get("head")):
             msg = "head is %s, state has %s" % (f.head[:8], (pr.get("head") or "")[:8])
             if st in ("ON_HUMAN_REVIEW", "APPROVED"):
