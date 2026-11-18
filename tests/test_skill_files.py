@@ -77,7 +77,7 @@ class SkillFiles(unittest.TestCase):
         text = (SKILL / "SKILL.md").read_text(); readme = (ROOT / "README.md").read_text()
         self.assertTrue(readme.index("## Start or join an epic in three lines") < readme.index("## Install"))
         quick = readme.split("## Install")[0]
-        for needle in ["claude plugin install turnstile@turnstile", "the folder with your clones", "pdffiller-knowledge", '"Start epic MYD-X"', '"Continue epic MYD-X"', "turnstile start"]: self.assertIn(needle, quick, needle)
+        for needle in ["claude plugin install turnstile@turnstile", "the folder with your clones", "pdffiller-knowledge", '"Start epic PDF-X"', '"Continue epic PDF-X"', "turnstile start"]: self.assertIn(needle, quick, needle)
         self.assertNotIn("turnstile attach", quick); self.assertNotIn("turnstile init", quick)
         for needle in ["ONBOARD:", "PLUGIN:", "without asking", "NEXT: turnstile status", "NEXT: kickoff", "OK start <KEY>"]: self.assertIn(needle, text, needle)
     def test_start_is_the_one_entry_point_and_nobody_is_told_to_cd(self):
@@ -86,7 +86,7 @@ class SkillFiles(unittest.TestCase):
         fm = parse_frontmatter(text)
         for trigger in ["start epic", "continue epic", "почни епік", "продовж епік"]: self.assertIn(trigger, fm["description"], trigger)
         self.assertNotIn("init epic", fm["description"])
-        for needle in ["turnstile start <KEY>", "Start epic MYD-X", "Continue epic MYD-X", "почни епік MYD-X", "продовж епік MYD-X", "this session", "references/workspace.md",
+        for needle in ["turnstile start <KEY>", "Start epic PDF-X", "Continue epic PDF-X", "почни епік PDF-X", "продовж епік PDF-X", "this session", "references/workspace.md",
                        "turnstile repo add", "gh repo clone", "one message", "defaults apply if you only approve", "config list", "pass story S1 IN_PROGRESS --approved", "knowledge worktree only",
                        "~/.config/turnstile/workspaces.json", 'NO EPIC: say "start epic <KEY>"', "chat_language"]:
             self.assertIn(needle, text, needle)
@@ -95,7 +95,7 @@ class SkillFiles(unittest.TestCase):
         for doc in docs:
             self.assertNotIn("cd <workspace> && claude", doc); self.assertNotIn("start a new Claude session", doc); self.assertNotIn("hooks load per folder", doc)
         self.assertNotIn("&& claude", text)
-        for needle in ["turnstile start MYD-1", "turnstile repo add", "registers the workspace", "workspaces.json", "user-config-write", "`start <KEY>`", "repo add '<json>'"]: self.assertIn(needle, readme, needle)
+        for needle in ["turnstile start PDF-1", "turnstile repo add", "registers the workspace", "workspaces.json", "user-config-write", "`start <KEY>`", "repo add '<json>'"]: self.assertIn(needle, readme, needle)
         self.assertIn("turnstile repo add", (REFS / "kickoff.md").read_text()); self.assertIn("one message", (REFS / "kickoff.md").read_text())
         for needle in ["turnstile repo add", "workspaces.json", "turnstile start {{epic_key}}"]: self.assertIn(needle, ws, needle)
     def test_init_from_the_clone_root_is_documented(self):
@@ -105,7 +105,7 @@ class SkillFiles(unittest.TestCase):
             self.assertNotIn("cannot drive", doc)
             for needle in ["clone root", "ws/<key", "origin/<base>", ".workspace.json", "--var repo=<name>"]:
                 self.assertIn(needle, doc, needle)
-        for needle in ["← clone root", "← created by start", "worktree ws/myd-1 from origin/develop", "epic.repos.<r>.path", "never from `ws/*`"]: self.assertIn(needle, readme, needle)
+        for needle in ["← clone root", "← created by start", "worktree ws/pdf-1 from origin/develop", "epic.repos.<r>.path", "never from `ws/*`"]: self.assertIn(needle, readme, needle)
         for needle in ["{{repos}}", "{{ws_branch}}", "never from", "--var repo=<name>"]: self.assertIn(needle, ws, needle)
         self.assertIn("{{repo_path}}", (REFS / "briefs" / "implementer.md").read_text()); self.assertIn("never from the worktree's own `ws/*`", (REFS / "briefs" / "implementer.md").read_text())
         for name in ("deployer", "investigator", "tester", "story-reviewer"): self.assertIn("{{repo_paths}}", (REFS / "briefs" / (name + ".md")).read_text(), name)

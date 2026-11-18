@@ -46,10 +46,10 @@ When the line says `assignee: you` (or `status` lists `jira_unassigned`), first 
 with `atlassianUserInfo` (no arguments; `account_id`, `name`), set it with `editJiraIssue` (`fields: {"assignee": {"accountId": "<account_id>"}}`) and run
 `turnstile jira-synced <repo#n> "<status>" --assignee <account_id> --assignee-name "<name>"`; held by someone → leave Jira alone, record that person with the same flags.
 Plain `turnstile jira-synced <repo#n> "<status>"` once it is recorded. The ticket stays with whoever took it into work; the line is plain on MERGED and when a PR of the ticket already
-carries an assignee. It also prints `BOARD: publish <delivery>/boards/<login>.html → <url>`: the member's own file (their stories, PRs, bugs and awaiting entries) and the board artifact of this machine's member (`epic.members.<login>.board`; Artifact tool, that `url`; a first publish loads `artifact-capabilities`
+carries an assignee. A line naming two statuses (MERGED: `fixVersions` set → `Ready for RC`, empty → ask the lead; the epic's last step) and the epic's own `JIRA: <epic> (epic) → …` line (recorded with `turnstile jira-synced epic "<status>"`) follow `references/lifecycle.md` § Jira mapping. It also prints `BOARD: publish <delivery>/boards/<login>.html → <url>`: the member's own file (their stories, PRs, bugs and awaiting entries) and the board artifact of this machine's member (`epic.members.<login>.board`; Artifact tool, that `url`; a first publish loads `artifact-capabilities`
 and declares `db` + `user`; with no url the line says `new artifact … — then: turnstile board-url <url>`, and you run that after the publish). A deploy record (`pass story … INTEGRATION_REVIEW --build --head`)
 stores `deploy.variant` and `deploy.by` of the member. On `MISSING …` nothing was written: get the evidence, do not argue with the gate. A PR the implementer opened enters the state as `DEV` with
-`turnstile pr add <repo#n> --story <S> --ticket <KEY>` (head, branch, base from GitHub; refused without the brief or when the base is neither the story branch nor another PR of the story).
+`turnstile pr add <repo#n> --story <S> --ticket <KEY> --issue-type "<issuetype>"` (the issue type from `getJiraIssue` `fields: ["issuetype"]`: it picks the Jira workflow, `references/lifecycle.md` § Jira mapping; head, branch, base from GitHub; refused without the brief or when the base is neither the story branch nor another PR of the story).
 **Sending a READY PR to humans:** invoke the configured send skill — `<send_skill> <pr url> …` (`send_skill` in `turnstile config list`, default `/send-pr-review`); it picks the channel
 and the format and shows the draft; when the epic sets `epic.repos.<repo>.slack`, tell it that channel explicitly (the explicit channel wins over the skill's own routing). The lead's word
 in chat is still the only gate. Then `turnstile pass pr <repo#n> ON_HUMAN_REVIEW --head <sha> --slack <permalink> --reviewers a,b`. When the skill is not installed (`start`/`status`
@@ -57,7 +57,7 @@ say so), the templates in `references/slack.md` are the fallback and you ask the
 
 ## start (a new or an existing epic, from wherever the session is)
 
-"Start epic MYD-X", "Continue epic MYD-X", "почни епік MYD-X", "продовж епік MYD-X" → `turnstile start <KEY>` from the folder the session is in: the **clone root** (the folder
+"Start epic PDF-X", "Continue epic PDF-X", "почни епік PDF-X", "продовж епік PDF-X" → `turnstile start <KEY>` from the folder the session is in: the **clone root** (the folder
 holding `pdffiller-knowledge/`, `jsfiller/`, …), the knowledge clone, any repo clone under the root or an existing workspace. No `cd`, no other flag (`references/workspace.md`: the
 flags, `init`/`attach`/`repo add`, `init --models`, the registry, `--delivery`). It looks up `origin/epic/<key>`: present → attaches (`<root>/<key-lower>` with the knowledge worktree, a `ws/<key-lower>`
 worktree per `epic.repos` clone cut from `origin/<base>`, `.turnstile`, `.workspace.json` (this machine's paths and `member`; `brief --var repo=<name>` renders them), the workspace `CLAUDE.md`,
@@ -92,7 +92,7 @@ runs at its default effort and the `AGENT:` line prints that resolved effort. Ne
 ## members
 
 Every developer runs `turnstile start <KEY>` on their own machine (onboarding is three lines: `claude plugin install turnstile@turnstile`, open Claude in the folder with the clones, say "Continue epic <KEY>").
-It writes `epic.members.<login>` (login from `gh api user`; variant default `<key lower>-<login lower>`, e.g. `myd-16539-ivanov`; desk and board url optional), commits and pushes it so every machine sees it, records
+It writes `epic.members.<login>` (login from `gh api user`; variant default `<key lower>-<login lower>`, e.g. `pdf-1-ivanov`; desk and board url optional), commits and pushes it so every machine sees it, records
 `member` in `.workspace.json`, and prints `MEMBER: <login> · variant <v> · desk <d|none> · board <url|new artifact>`; running it again with the same login updates only the flags passed, never duplicates. The variant is
 created by the deployer through the prometey-variant skill (`ONBOARD:` in `status`): every developer deploys to their own variant, so deploys never overwrite another one's.
 `turnstile board-url <https://claude.ai/artifact/… | https://claude.ai/code/artifact/…>` records the member's board artifact (the lead's also lands in `epic.board`) and that the variant exists. Any member approves from their own terminal.

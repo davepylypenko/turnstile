@@ -1,6 +1,6 @@
 import contextlib, io as _io, json, os, pathlib, shutil, tempfile, unittest
 from unittest import mock
-from turnstile_cli import pass_cmd, state
+from turnstile_cli import pass_cmd, rules, state
 from turnstile_cli import sync
 from turnstile_cli.errors import TurnstileError
 from turnstile_cli.github import PrFacts
@@ -244,7 +244,7 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
         self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
-        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Hold\n", out); self.assertNotIn("assignee", out)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → Ready for RC when the ticket has a fixVersion", out); self.assertNotIn("assignee", out)
         self.assertNotIn("assignee", self.data()["prs"]["jsfiller#1"]["jira"])
 
     def test_jira_assignee_survives_into_merged(self):
@@ -252,9 +252,9 @@ class PassCmd(unittest.TestCase):
         self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
         self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
         rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
-        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → On Hold\n", out); self.assertNotIn("assignee", out)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → Ready for RC when the ticket has a fixVersion", out); self.assertNotIn("assignee", out)
         self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"],
-                         {"status": "On Hold", "synced": False, "assignee": {"account_id": "5f1a0000acc0", "name": "Lead Example", "at": "2026-10-13T10:00Z"}})
+                         {"status": "Ready for RC", "synced": False, "assignee": {"account_id": "5f1a0000acc0", "name": "Lead Example", "at": "2026-10-13T10:00Z"}})
 
     def test_one_ticket_on_several_prs_is_taken_up_once(self):
         # the assignee recorded on jsfiller#1 counts for every PR of MYD-10
@@ -398,8 +398,55 @@ class PassCmd(unittest.TestCase):
         rc = pass_cmd.run(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
         self.assertEqual(rc, 0)
         self.assertIn("unblocked for sending by jsfiller#1: docs-platform#2", (self.d / "ledger.md").read_text())
-        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "On Hold")
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "Ready for RC")
         self.assertNotIn("re-evaluate the story DoD", (self.d / "ledger.md").read_text())  # docs-platform#2 is still DEV
+
+    def merge_jsfiller(self):
+        self.to_human()
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
+        return run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
+
+    def test_merged_ticket_goes_to_ready_for_rc_with_a_fix_version_else_on_hold(self):
+        rc, out = self.merge_jsfiller()
+        self.assertEqual(rc, 0)
+        self.assertIn("JIRA: MYD-10 → Ready for RC when the ticket has a fixVersion (getJiraIssue fields fixVersions); without one ask the lead: "
+                      "ships in a release → the lead sets the fixVersion, then Ready for RC; does not ship → On Hold\n", out)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "jsfiller#1", "On Review", self.io), 2)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "jsfiller#1", "On Hold", self.io), 0)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "On Hold")
+        self.assertEqual(pass_cmd.jira_synced(self.d, "jsfiller#1", "Ready for RC", self.io), 0)
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "Ready for RC")
+
+    def test_sub_task_follows_the_sub_task_workflow(self):
+        data = self.data(); data["prs"]["jsfiller#1"]["jira"]["issue_type"] = "Sub-task"; self.write(data)
+        self.to_human()
+        self.assertEqual(self.data()["prs"]["jsfiller#1"]["jira"]["status"], "In Review")
+        self.assertEqual(pass_cmd.jira_synced(self.d, "jsfiller#1", "On Review", self.io), 2)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "jsfiller#1", "In Review", self.io), 0)
+        self.assertEqual(pass_cmd.run(self.d, "pr", "jsfiller#1", "APPROVED", opts(approvals="isachivka", open_threads=0), self.io), 0)
+        self.io.facts["jsfiller#1"] = {"merged": True, "merged_sha": "abcabcabcabcabca"}
+        rc, out = run_capture(self.d, "pr", "jsfiller#1", "MERGED", opts(merged_sha="abcabcabcabcabca"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-10 → Ready For Test\n", out)
+
+    def test_epic_enters_delivery_once_and_leaves_it_when_everything_is_merged(self):
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); self.assertIn("JIRA: MYD-1 (epic) → Delivery\n", out)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "epic", "Done", self.io), 2)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "epic", "Delivery", self.io, assignee="5f1a0000acc1"), 2)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "epic", "Delivery", self.io), 0)
+        self.assertEqual(self.data()["epic"]["jira"], {"status": "Delivery", "synced": True})
+        rc, out = run_capture(self.d, "pr", "docs-platform#2", "AI_REVIEW", opts(head="bbbbbbbb22222222", ci="success"), self.io)
+        self.assertEqual(rc, 0); self.assertNotIn("(epic)", out)
+        data = self.data(); data["prs"]["docs-platform#2"]["state"] = "MERGED"; self.write(data)
+        rc, out = self.merge_jsfiller()
+        self.assertEqual(rc, 0)
+        self.assertIn("JIRA: MYD-1 (epic) → every story DONE and every PR MERGED; no epic.flag, so ask the lead: an A/B test follows → "
+                      "Ready for AB Test; no test → Done\n", out)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "epic", "Delivery", self.io), 2)
+        self.assertEqual(pass_cmd.jira_synced(self.d, "epic", "Done", self.io), 0)
+        data = self.data(); data["epic"]["flag"] = "myd-1-flag"
+        self.assertEqual(rules.epic_targets(data), ("Ready for AB Test",))
 
     def test_merged_last_pr_of_a_story_notes_the_story_dod(self):
         data = self.data(); data["prs"]["docs-platform#2"]["state"] = "MERGED"; self.write(data)
