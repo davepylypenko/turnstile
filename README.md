@@ -165,7 +165,7 @@ refused until `turnstile sync` (never rebase, never force). `turnstile pr add` a
   Tester credentials never touch a file: the tester reads `TURNSTILE_TEST_PASSWORD` or the keychain item
   `turnstile-test-password` at login (`skills/turnstile/references/env/pdffiller-dev.md` § Credentials).
 - Hooks that record Slack sends (never blocking them) and block merges, reviewer requests, force pushes, PR comments,
-  review submissions, resolving human threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
+  review submissions (the orchestrator may approve with no body on the lead's word in chat; subagents never), resolving human threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
   a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead), and the re-request
   of a REWORK PR's thread authors passes once every thread has its reply and the head is clean (lead rule 2026-10-14).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
@@ -400,7 +400,8 @@ The hook list below describes a workspace session:
   2.1.x sends `agent_id`/`agent_type` for every subagent tool call; it ignores `hooks` in plugin agent frontmatter, so
   `TURNSTILE_ROLE` is only for tests and non-plugin agents) `git push`, `git commit`,
   `gh pr|issue comment|review|create|edit|close|reopen|merge|ready` and `gh api` writes are refused too.
-  **PR conversation (2026-10-14), for every caller:** `gh pr comment`, `gh issue comment` and `issues/<n>/comments` /
+  **PR conversation (2026-10-14), for every caller (one exception, 2026-11-23: the orchestrator may approve with no body, `--approve`
+  or `-f event=APPROVE` alone, on the lead's word in chat; a subagent never):** `gh pr comment`, `gh issue comment` and `issues/<n>/comments` /
   `issues/comments/<id>` writes (`issue-comment`; a body — inline, `--body-file` or `-F body=@file` — that carries the repo
   gate's `<!-- pdf-review:… -->` / `<!-- crit-review:… -->` marker passes, a DELETE never), `gh pr review` and
   `pulls/<n>/reviews…` writes (`review-submission`), `pulls/<n>/comments` writes incl. `in_reply_to` and

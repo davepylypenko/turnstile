@@ -11,7 +11,7 @@ Review threads (lead rule 2026-10-14): `turnstile threads <repo#n> --self-resolv
 thread's class on the PR from GitHub facts, bound to the reviewer's last comment. The Bash guard lets a reply through only on the
 REST replies route, for a classified thread of an epic PR in any state, `self_resolved` at once and `needs_lead` after the lead approved that
 thread's `reply` entry, and only while GitHub shows no newer reviewer comment; issue comments, review submissions and resolving a
-human thread are refused for everyone. Re-request (lead rule 2026-10-14): once every thread has its reply and Copilot reviewed the
+human thread are refused for everyone (one exception, 2026-11-23: the orchestrator approves with no body on the lead's word in chat; subagents never). Re-request (lead rule 2026-10-14): once every thread has its reply and Copilot reviewed the
 GitHub head with 0 open threads (repos without Copilot: the gate check green on it), the agents re-request review from exactly the
 reviewers who commented on the threads in this round — `gh api -X POST repos/<org>/<repo>/pulls/<n>/requested_reviewers -f
 'reviewers[]=<login>'`, no lead approval (the guard allows that POST and no other human request). A push-only rework pings nobody.
