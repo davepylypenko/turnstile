@@ -128,8 +128,8 @@ class BashGuard(unittest.TestCase):
                             "gh pr view 1 --json mergeable,reviewRequests", "gh run list --branch x", "gh pr list --search 'delivery gate S10 parallel_with PATCH draft reply'"])
         self.assertBlocked(["gh pr merge 1", "gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
                             "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
-                            "gh pr comment 1 --body hi", "gh pr review 1 --approve", "gh api -X POST repos/pdffiller/r/issues/1/comments -f body=x",
-                            "gh api -X POST repos/pdffiller/r/pulls/1/reviews -f event=APPROVE", "turnstile approve ah-1"])
+                            "gh pr comment 1 --body hi", "gh pr review 1 --comment -b x", "gh api -X POST repos/pdffiller/r/issues/1/comments -f body=x",
+                            "gh api -X POST repos/pdffiller/r/pulls/1/reviews -f event=COMMENT", "turnstile approve ah-1"])
 
     def test_computed_graphql_reads_pass_and_computed_mutations_do_not(self):
         self.assertAllowed(['gh api graphql -f query="query { repository(owner: \"o\", name: \"$R\") { id } }"', 'gh api graphql -f query="{ viewer { login } }"'])
@@ -681,7 +681,8 @@ def gql_thread(tid, comments, resolved=False):
         for cid, login, at in comments]}}
 
 class ReviewWrites(unittest.TestCase):
-    """2026-10-14: issue comments, review submissions and review comments are refused for every caller (the repo gate's marker
+    """2026-10-14: issue comments, review submissions and review comments are refused for every caller (2026-11-23: the orchestrator may
+    submit a body-less approve; a subagent never) (the repo gate's marker
     comments excepted); a reply goes through the REST replies route to a thread classified in state.json — self_resolved at once,
     needs_lead after the lead approved its own `reply` entry; resolving is allowed for bot (Copilot) threads only."""
     T1 = "2026-10-13T11:00:00Z"
@@ -726,9 +727,28 @@ class ReviewWrites(unittest.TestCase):
                             "gh api -X POST repos/pdffiller/jsfiller/issues/1/comments -f body=x", "gh api repos/pdffiller/jsfiller/issues/1/comments -f body=x",
                             "gh api -X PATCH repos/pdffiller/jsfiller/issues/comments/9 -f body=x", "gh api -X DELETE repos/pdffiller/jsfiller/issues/comments/9",
                             "curl -s -X POST https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments -d '{\"body\":\"x\"}'"], "issue-comment")
-        self.assertBlocked(["gh pr review 1 --approve", "gh pr review 1 --comment -b ok", "gh pr -R pdffiller/jsfiller review 1 --request-changes -b x",
-                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE", "gh api repos/pdffiller/jsfiller/pulls/1/reviews/5/events -f event=COMMENT",
+        self.assertBlocked(["gh pr review 1 --comment -b ok", "gh pr review 1 --comment", "gh pr -R pdffiller/jsfiller review 1 --request-changes -b x",
+                            "gh pr review 1 --request-changes", "gh pr review 1", "gh pr review 1 --approve -b ok", "gh pr review 1 --approve --body ok",
+                            "gh pr review 1 -a -F body.md", "gh pr review 1 --approve --body-file body.md", "gh pr review 1 --approve --comment",
+                            "gh pr review 1 --approve; gh pr review 2 --comment -b x",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=COMMENT",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=REQUEST_CHANGES -f body=x",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE -f body=x",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE -F body=@body.md",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews --input body.json",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews",
+                            "gh api -X PUT repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews/5/events -f event=APPROVE",
+                            "gh api repos/pdffiller/jsfiller/pulls/1/reviews/5/events -f event=COMMENT",
                             "gh api -X PUT repos/pdffiller/jsfiller/pulls/1/reviews/5/dismissals -f message=x"], "review-submission")
+        self.assertAllowed(["gh pr review 1 --approve", "gh pr review 1 -a", "gh pr review 1 -R pdffiller/jsfiller --approve",
+                            "gh pr -R pdffiller/jsfiller review 1 --approve", "gh pr review --repo pdffiller/jsfiller 1 --approve",
+                            "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE",
+                            "gh api repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE"])
+        for role in ("comments-handler", "gate-runner", "reviewer", "implementer", "story-reviewer"):
+            for cmd in ["gh pr review 1 --approve", "gh pr review 1 -R pdffiller/jsfiller --approve",
+                        "gh api -X POST repos/pdffiller/jsfiller/pulls/1/reviews -f event=APPROVE"]:
+                r = self.bash(cmd, agent_type="turnstile:" + role); self.assertEqual(r.returncode, 2, role + " " + cmd); self.assertIn("review-submission", r.stderr, cmd)
         self.assertBlocked(["gh api -X POST repos/pdffiller/jsfiller/pulls/1/comments -f body=x -F in_reply_to=101",
                             "gh api -X PATCH repos/pdffiller/jsfiller/pulls/comments/101 -f body=x", "gh api -X DELETE repos/pdffiller/jsfiller/pulls/comments/101"],
                            "review-comment")
@@ -848,7 +868,8 @@ class ThreadRulesBypasses(unittest.TestCase):
     def test_attached_flag_values_are_writes(self):
         self.blocked(["gh api repos/pdffiller/jsfiller/issues/1/comments -fbody=x", "gh api repos/pdffiller/jsfiller/issues/1/comments -Fbody=@body.json",
                       "curl -s https://api.github.com/repos/pdffiller/jsfiller/issues/1/comments -d@body.json"], "issue-comment")
-        self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/reviews -fevent=APPROVE"], "review-submission")
+        self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/reviews -fevent=APPROVE -fbody=x", "gh api repos/pdffiller/jsfiller/pulls/1/reviews -fevent=COMMENT"], "review-submission")
+        r = self.r.bash("gh api repos/pdffiller/jsfiller/pulls/1/reviews -fevent=APPROVE"); self.assertEqual(r.returncode, 0, r.stderr)
         self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/comments -fbody=x -Fin_reply_to=201"], "review-comment")
         self.blocked(["gh api repos/pdffiller/jsfiller/pulls/1/comments/201/replies -fbody=x"], "reply-needs-lead")
     def test_non_canonical_computed_and_repository_id_routes_are_refused_for_writes(self):
@@ -921,7 +942,7 @@ class OutsideWorkspace(unittest.TestCase):
         p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}; p.update(payload)
         return hook("guard_bash.py", p, cwd, env=env)
 
-    GUARDED = ["gh pr merge 14", "gh pr merge 13", "gh pr edit 13 --add-reviewer x", "gh pr comment 13 --body x", "gh pr review 13 --approve",
+    GUARDED = ["gh pr merge 14", "gh pr merge 13", "gh pr edit 13 --add-reviewer x", "gh pr comment 13 --body x", "gh pr review 13 --comment -b x",
                "gh api -X POST repos/pdffiller/jsfiller/pulls/13/comments/201/replies -f body=x",
                "gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t=PRRT_x",
                "gh api -X POST repos/pdffiller/jsfiller/pulls/13/requested_reviewers -f 'reviewers[]=isachivka'",

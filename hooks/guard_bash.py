@@ -386,7 +386,7 @@ def check(cmd: str, cwd: str = ".", role: str = "") -> None:
         _universal(flats); return
     for flat in flats:
         _check(flat, role)
-    _review_writes(stripped, cwd)
+    _review_writes(stripped, cwd, role)
     _reviewer_requests(re.sub(r"[ \t]+", " ", stripped), cwd)
     _cli_words(joined)
     _interpreter_heredocs(joined)
@@ -465,13 +465,15 @@ def _check(flat: str, role: str = "") -> None:
                 block("blocked by rule %s. Commits carry no trailer and PR bodies no generated-with footer." % name)
 
 # Lead rule 2026-10-14: PR conversation writes. Issue comments, review submissions and review comments (and their edits) are refused
-# for every caller — the repo gate's own marker comments excepted. A reply to a reviewer thread goes only through the REST replies
+# for every caller — the repo gate's own marker comments excepted; 2026-11-23 exception: the orchestrator may submit a body-less approve. A reply to a reviewer thread goes only through the REST replies
 # route and only to a thread classified in state.json: `self_resolved` at once, `needs_lead` after the lead approved that thread's
 # `reply` entry; GitHub must show no reviewer comment newer than the classification. Resolving is allowed for bot threads only.
 GATE_MARKER = re.compile(r"<!--\s*(?:pdf-review|crit-review):[a-z-]+\s*-->")
 GH_API = re.compile(GH + r"api\b")
 ISSUE_COMMENT_CLI = re.compile(GH + r"(?:" + PR + r"|issue(?:\s+(?:-R|--repo)(?:\s+|=)\S+)*\s+)comment\b")
 REVIEW_CLI = re.compile(GH + PR + r"review\b")
+REVIEW_NOT_APPROVE_ONLY = re.compile(r"^(?:--(?:body|body-file|comment|request-changes)(?:=|$)|-(?!R)[A-Za-z]*[bFcr])")
+REST_FIELD = re.compile(r"(?:^|\s)(?:-[fF]\s*|--(?:field|raw-field)(?:\s+|=))([\w\[\]]+)=(\S*)")
 GQL_REVIEW_WRITES = re.compile(r"\b(?:addPullRequestReview(?:Comment|Thread|ThreadReply)?|submitPullRequestReview|updatePullRequestReview(?:Comment)?"
                                r"|deletePullRequestReview(?:Comment)?|dismissPullRequestReview|addComment|updateIssueComment|deleteIssueComment"
                                r"|(?:un)?minimizeComment)\b")
@@ -571,9 +573,23 @@ def _resolve_check(flat: str) -> None:
             block("blocked by rule resolve-human-thread. Thread %s was opened by %s, a human: only the reviewer or the lead resolves it; %s."
                   % (tid, author.get("login") or "?", REPLY_HINT))
 
-def _review_writes(flat: str, cwd: str) -> None:
-    if REVIEW_CLI.search(flat):
-        block("blocked by rule review-submission. Review submissions (approve / comment / request changes) are refused for every caller; " + REPLY_HINT + ".")
+REVIEW_REFUSED = ("blocked by rule review-submission. Only the orchestrator approves, and only with no body (gh pr review <n> --approve, or REST "
+                  "-f event=APPROVE alone) on the lead's word in chat; comments, change requests, dismissals and any review from a subagent are refused; ")
+
+def _approve_only_cli(seg: str) -> bool:
+    m = REVIEW_CLI.search(seg)
+    words = seg[m.end():].split()
+    return any(w in ("--approve", "-a") for w in words) and not any(REVIEW_NOT_APPROVE_ONLY.match(w) for w in words)
+
+def _approve_only_rest(seg: str, method: str, org: str, repo: str, parts) -> bool:
+    fields = REST_FIELD.findall(seg)
+    return (method == "POST" and bool(GH_API.search(seg)) and len(parts) == 2 and parts[0].isdigit() and not COMPUTED.search(org + repo)
+            and fields == [("event", "APPROVE")] and len(PARAMS.findall(seg)) == 1)
+
+def _review_writes(flat: str, cwd: str, role: str = "") -> None:
+    for seg in _segments(flat):
+        if REVIEW_CLI.search(seg) and (role or not _approve_only_cli(seg)):
+            block(REVIEW_REFUSED + REPLY_HINT + ".")
     if ISSUE_COMMENT_CLI.search(flat) and not _gate_comment(flat, cwd):
         _issue_comment_refused()
     if not (GH_API.search(flat) or "api.github.com" in flat):
@@ -622,7 +638,9 @@ def _review_writes(flat: str, cwd: str) -> None:
                     block("blocked by rule commit-comment. Commit comments, their edits and deletions are refused for every caller (they show in "
                           "the PR conversation); " + REPLY_HINT + ".")
                 if rk == "review":
-                    block("blocked by rule review-submission. Review submissions are refused for every caller; " + REPLY_HINT + ".")
+                    if role or not _approve_only_rest(seg, method, org, repo, parts):
+                        block(REVIEW_REFUSED + REPLY_HINT + ".")
+                    continue
                 if rk == "review-comment":
                     block("blocked by rule review-comment. New review comments and edits or deletions of review comments are refused "
                           "(in_reply_to included); " + REPLY_HINT + ".")
