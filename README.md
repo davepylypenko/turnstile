@@ -165,7 +165,8 @@ refused until `turnstile sync` (never rebase, never force). `turnstile pr add` a
   Tester credentials never touch a file: the tester reads `TURNSTILE_TEST_PASSWORD` or the keychain item
   `turnstile-test-password` at login (`skills/turnstile/references/env/pdffiller-dev.md` § Credentials).
 - Hooks that record Slack sends (never blocking them) and block merges, reviewer requests, force pushes, PR comments,
-  review submissions (the orchestrator may approve with no body on the lead's word in chat; subagents never), resolving human threads and manual state edits unless the lead approved that exact action; a reply to a reviewer thread passes only for
+  review submissions (the orchestrator may approve with no body on the lead's word in chat; subagents never), resolving human threads and manual state edits unless the lead approved that exact action
+  (opt-in `lead_word=merge,reply` in the lead's user config, 2026-11-27: the orchestrator also merges with `gh pr merge` and replies on any review thread on the lead's word in chat; subagents never); a reply to a reviewer thread passes only for
   a classified thread (at once when the agent resolved it, with the lead's word when it needs the lead), and the re-request
   of a REWORK PR's thread authors passes once every thread has its reply and the head is clean (lead rule 2026-10-14).
 - Story gates: whole-story deep review and environment testing against the test plan and the Figma design, before
