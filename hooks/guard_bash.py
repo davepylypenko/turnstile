@@ -447,13 +447,44 @@ def _lead_word(action: str) -> bool:
     from turnstile_cli import config
     return action in config.lead_word_actions()
 
+MERGE_REPO = re.compile(r"(?:^|\s)(?:-R|--repo)(?:\s+|=)([\w.-]+)/([\w.-]+)(?=\s|$)")
+MERGE_NUMBER = re.compile(r"(?:^|\s)(\d+)(?=\s|$)")
+
+def _merge_target(seg: str):
+    m = MERGE_CLI.search(seg)
+    repo = MERGE_REPO.search(seg)
+    num = MERGE_NUMBER.search(seg[m.end():])
+    return (repo.group(1), repo.group(2), num.group(1)) if repo and num else None
+
+def _merge_unapproved(org: str, repo: str, number: str):
+    """Lead rule 2026-11-27: a merge needs at least one human approval on the current head (the author cannot approve)."""
+    try:
+        sys.path.insert(0, str(plugin_root()))
+        from turnstile_cli import github
+        facts = github.fetch("%s#%s" % (repo, number), org)
+    except Exception as e:
+        return "cannot read the reviews of %s/%s#%s on GitHub (%s); failing closed" % (org, repo, number, e)
+    if not facts.approvals:
+        return "%s/%s#%s has no human approval on its current head" % (org, repo, number)
+    return None
+
 def _lead_word_merge(flat: str, role: str) -> bool:
-    """Lead rule 2026-11-27 (opt-in, user config lead_word=merge): the orchestrator runs `gh pr merge` on the lead's word in chat.
-    Subagents, --admin / --auto and a computed PR are refused; GraphQL and REST merges stay refused."""
+    """Lead rule 2026-11-27 (opt-in, user config lead_word=merge): the orchestrator runs `gh pr merge <n> --repo <org>/<repo>` on the
+    lead's word in chat, only when a human approved the current head. Subagents, --admin / --auto, a computed or implicit PR, and
+    GraphQL and REST merges stay refused."""
     if role or not _lead_word("merge"):
         return False
     segs = [s for s in _segments(flat) if MERGE_CLI.search(s)]
-    return bool(segs) and not any(MERGE_REFUSED_FLAG.search(s) or COMPUTED.search(s[MERGE_CLI.search(s).end():]) for s in segs)
+    if not segs or any(MERGE_REFUSED_FLAG.search(s) or COMPUTED.search(s[MERGE_CLI.search(s).end():]) for s in segs):
+        return False
+    for s in segs:
+        target = _merge_target(s)
+        if target is None:
+            block("blocked by rule merge-target. Name the PR literally: gh pr merge <n> --repo <org>/<repo>, so the guard can check its approvals.")
+        why = _merge_unapproved(*target)
+        if why:
+            block("blocked by rule merge-unapproved. %s: request the review and wait for an approval before merging." % why)
+    return True
 
 def _check(flat: str, role: str = "") -> None:
     for name, rx in ROLE_RULES.get(role, []):

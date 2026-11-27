@@ -1,6 +1,6 @@
-import json, os, pathlib, shutil, tempfile, unittest
+import copy, json, os, pathlib, shutil, tempfile, unittest
 
-from tests.test_hooks import FIX, hook
+from tests.test_hooks import CANNED_GH, FIX, ROOT, hook
 from turnstile_cli import config
 from turnstile_cli.errors import TurnstileError
 
@@ -9,13 +9,23 @@ REPLY = "gh api -X POST repos/pdffiller/other/pulls/7/comments/101/replies -f bo
 
 
 class LeadWordGuard(unittest.TestCase):
-    """Lead rule 2026-11-27: with lead_word in the lead's user config, the orchestrator merges with `gh pr merge` and replies on any
-    review thread on the lead's word in chat; subagents, --admin/--auto, computed PRs and GraphQL/REST merges stay refused."""
+    """Lead rule 2026-11-27: with lead_word in the lead's user config, the orchestrator merges with `gh pr merge <n> --repo <org>/<repo>`
+    when a human approved the current head, and replies on any review thread, on the lead's word in chat; subagents, --admin/--auto,
+    computed or implicit PRs, unapproved PRs and GraphQL/REST merges stay refused."""
 
     def setUp(self):
         self.ws = pathlib.Path(tempfile.mkdtemp()); d = self.ws / "delivery"; d.mkdir()
         shutil.copy(FIX, d / "state.json"); (self.ws / ".turnstile").write_text("delivery\n")
         self.cfg = pathlib.Path(tempfile.mkdtemp()) / "config.json"
+        approved = json.loads((ROOT / "tests" / "fixtures" / "gh_pr_13222.json").read_text())
+        unapproved = copy.deepcopy(approved)
+        for key in ("latestReviews", "reviews"):
+            nodes = (unapproved.get(key) or {}).get("nodes") or []
+            for r in nodes:
+                if r.get("state") == "APPROVED":
+                    r["state"] = "COMMENTED"
+        self.bin = pathlib.Path(tempfile.mkdtemp()); (self.bin / "gh").write_text(CANNED_GH); (self.bin / "gh").chmod(0o755)
+        (self.bin / "responses.json").write_text(json.dumps({"prs": {"jsfiller#13": approved, "jsfiller#14": unapproved}}))
 
     def bash(self, cmd, actions=None, **payload):
         if actions is None:
@@ -23,7 +33,8 @@ class LeadWordGuard(unittest.TestCase):
         else:
             self.cfg.write_text(json.dumps({"lead_word": actions}))
         p = {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(self.ws)}; p.update(payload)
-        return hook("guard_bash.py", p, self.ws, env={"TURNSTILE_USER_CONFIG": str(self.cfg), "PATH": "/usr/bin:/bin"})
+        path = os.pathsep.join([str(self.bin), "/usr/bin", "/bin"])
+        return hook("guard_bash.py", p, self.ws, env={"TURNSTILE_USER_CONFIG": str(self.cfg), "PATH": path})
 
     def assertBlocked(self, cmd, rule, actions=None, **payload):
         r = self.bash(cmd, actions, **payload); self.assertEqual(r.returncode, 2, cmd); self.assertIn(rule, r.stderr, cmd)
@@ -35,12 +46,22 @@ class LeadWordGuard(unittest.TestCase):
         self.assertBlocked(MERGE, "rule merge")
         self.assertBlocked(MERGE, "rule merge", ["reply"])
 
-    def test_orchestrator_merges_on_the_lead_word(self):
-        for cmd in [MERGE, "gh pr merge 13 --squash", "gh -R pdffiller/jsfiller pr merge 13 --merge --delete-branch", "gh pr merge 13 -R o/r --squash && echo ok"]:
+    def test_orchestrator_merges_an_approved_pr_on_the_lead_word(self):
+        for cmd in [MERGE, "gh -R pdffiller/jsfiller pr merge 13 --merge --delete-branch", "gh pr merge 13 -R pdffiller/jsfiller --squash && echo ok",
+                    "gh pr merge 13 --repo=pdffiller/jsfiller --squash"]:
             self.assertAllowed(cmd, ["merge"])
 
+    def test_an_unapproved_pr_is_refused(self):
+        self.assertBlocked("gh pr merge 14 --repo pdffiller/jsfiller --squash", "merge-unapproved", ["merge"])
+        self.assertBlocked("gh pr merge 15 --repo pdffiller/jsfiller --squash", "merge-unapproved", ["merge"])  # unreadable: fails closed
+
+    def test_the_pr_is_named_literally(self):
+        self.assertBlocked("gh pr merge 13 --squash", "merge-target", ["merge"])
+        self.assertBlocked("gh pr merge --repo pdffiller/jsfiller --squash", "merge-target", ["merge"])
+
     def test_risky_merges_stay_refused(self):
-        for cmd in ["gh pr merge 13 --squash --admin", "gh pr merge 13 --auto --squash", "gh pr merge $N --squash", "gh pr merge `echo 1`"]:
+        for cmd in ["gh pr merge 13 --repo pdffiller/jsfiller --squash --admin", "gh pr merge 13 --repo pdffiller/jsfiller --auto --squash",
+                    "gh pr merge $N --repo pdffiller/jsfiller --squash", "gh pr merge `echo 1`"]:
             self.assertBlocked(cmd, "rule merge", ["merge"])
         self.assertBlocked("gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'",
                            "graphql-merge-or-ready", ["merge"])
