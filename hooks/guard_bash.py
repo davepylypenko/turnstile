@@ -439,6 +439,22 @@ def _turnstile_sub_ok(flat: str) -> bool:
             return False
     return True
 
+MERGE_CLI = re.compile(GH + PR + r"merge\b", re.I)
+MERGE_REFUSED_FLAG = re.compile(r"(?:^|\s)(?:--admin|--auto|--disable-auto)\b")
+
+def _lead_word(action: str) -> bool:
+    sys.path.insert(0, str(plugin_root()))
+    from turnstile_cli import config
+    return action in config.lead_word_actions()
+
+def _lead_word_merge(flat: str, role: str) -> bool:
+    """Lead rule 2026-11-27 (opt-in, user config lead_word=merge): the orchestrator runs `gh pr merge` on the lead's word in chat.
+    Subagents, --admin / --auto and a computed PR are refused; GraphQL and REST merges stay refused."""
+    if role or not _lead_word("merge"):
+        return False
+    segs = [s for s in _segments(flat) if MERGE_CLI.search(s)]
+    return bool(segs) and not any(MERGE_REFUSED_FLAG.search(s) or COMPUTED.search(s[MERGE_CLI.search(s).end():]) for s in segs)
+
 def _check(flat: str, role: str = "") -> None:
     for name, rx in ROLE_RULES.get(role, []):
         if re.search(rx, flat, re.I | re.M):
@@ -456,6 +472,8 @@ def _check(flat: str, role: str = "") -> None:
             block("blocked by rule lead-approve. 'turnstile approve' is the lead's action. " + LEAD_HINT)
     for name, rx in RULES:
         if re.search(rx, flat, re.I | re.M):
+            if name == "merge" and _lead_word_merge(flat, role):
+                continue
             block("blocked by rule %s. The lead performs this action, or approve it through turnstile." % name)
     if re.search(r"pulls/\d+/merge\b", flat) and re.search(WRITE_FLAGS, flat):
         block("blocked by rule rest-merge. The lead merges.")
@@ -630,6 +648,8 @@ def _review_writes(flat: str, cwd: str, role: str = "") -> None:
                 if COMPUTED.search("/".join([org, repo, parts[0], parts[2]])):
                     block("blocked by rule rest-computed-route. A thread reply names its org, repo, PR number and comment id literally "
                           "(repos/<org>/<repo>/pulls/<n>/comments/<id>/replies), so the guard can check the thread; a computed route is refused.")
+                if not role and _lead_word("reply"):
+                    continue
                 why = _reply_verdict(org, repo, parts[0], parts[2], cwd)
                 if why:
                     block(why)

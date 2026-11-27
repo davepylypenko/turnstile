@@ -43,6 +43,8 @@ def set_(delivery: Optional[pathlib.Path], assignment: str, epic: bool = False, 
             raise TurnstileError("config set needs key=value (keys: %s)" % config.KEYS_HELP)
         key, value = assignment.split("=", 1); key = key.strip()
         section, agent = config.parse_key(key)
+        if key == "lead_word" and epic:
+            raise TurnstileError("lead_word is the lead's own setting: turnstile config set lead_word=merge,reply (no --epic)")
         if key == "flag" and not epic:
             raise TurnstileError("flag is epic state (one flag per epic): turnstile config set flag=<name> --epic")
         reset = value.strip() == "default"
